@@ -1,222 +1,141 @@
 ---
 name: review-pr-comments
-description: "Fetch PR review comments from bots and humans, triage as valid/false-positive, auto-fix valid issues, reply to resolved threads, push, and keep rechecking until the PR is stably clean rather than stopping after one quick pass."
+description: "Fetch PR review comments from bots and humans, triage as fix/false-positive/out-of-scope/needs-discussion/informational, apply valid same-PR fixes, reply to processed threads, push to the PR branch, and keep rechecking until the latest head is stably clean. Use when the user asks to review PR comments, check PR feedback, handle reviews, address comments, triage a PR, or fix PR comments."
 user-invocable: true
 argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 ---
 
 # Review PR Comments
 
-Automated PR comment triage and resolution loop. Fetches comments from all reviewers (Devin, CodeRabbit, Ultracite, Copilot, Coderabbit, humans), classifies them, fixes valid issues, replies to threads, and loops until the PR is clean.
+This skill is the dedicated entrypoint for the PR comment loop. Load `../references/pr-comment-loop.md` before classifying or replying to comments. Load `../references/github-comment-fetching.md` when you need exact GitHub API endpoints or unresolved-thread queries.
 
-## When to use
+## Modes
 
-Use when the user says "review pr comments", "check pr feedback", "handle pr reviews", "address comments", "triage pr", "fix pr comments", or wants to process review feedback on one or more PRs.
+Start in **default single-PR mode** unless the user explicitly asks otherwise.
+
+- **Default single-PR mode:** may fix comments in files that belong to the current PR, reply to processed comments, commit, and push to the same PR branch.
+- **Expanded mode:** requires explicit user confirmation before doing any of these: processing `all`, creating follow-up PRs, touching files outside the PR diff, switching branches, modifying `main`, or opening more than one PR.
+
+When a requested action crosses modes, stop and ask for confirmation before changing files.
 
 ## Inputs
 
-- `$ARGUMENTS` — PR number, full PR URL, or `all` (processes all open PRs for current repo)
-- If no argument given, detect from current branch (`gh pr view --json number -q .number`)
+- `$ARGUMENTS` can be a PR number, full PR URL, or `all`.
+- With no argument, detect the PR from the current branch: `gh pr view --json number -q .number`.
+- `all` means multi-PR expanded mode. List candidate PRs and confirm before processing.
 
-## Phase 1: Discovery
+## Preflight
 
-1. Determine target PR(s):
-   - Single PR: from argument or current branch
-   - `all`: `gh pr list --author @me --state open --json number,title,headRefName` — list and confirm with user
-2. For each PR, fetch **all** comments:
-   ```
-   gh api repos/{owner}/{repo}/pulls/{number}/comments
-   gh api repos/{owner}/{repo}/pulls/{number}/reviews
-   gh api repos/{owner}/{repo}/issues/{number}/comments
-   ```
-3. Filter out already-resolved threads (unless user passes `--include-resolved`)
-4. Group comments by author and thread
+Fail early with a clear blocker instead of discovering environment problems after edits.
 
-## Phase 2: Classification
+1. Verify GitHub CLI access: `gh auth status` and `gh repo view`.
+2. Verify repository state: `git status`, current branch, remote, and push permission.
+3. Refuse to work directly on `main` unless the user explicitly asked.
+4. Resolve the target PR or confirm expanded mode for `all`.
+5. Read repo instruction files: `AGENTS.md`, `CLAUDE.md`, or project-local equivalents.
+6. Identify the project quality gate from repo instructions, lockfiles, and package scripts. If unknown, ask the user.
+7. Fetch the PR diff file list before classification.
 
-Classify each comment into one of five categories:
+## Discovery
 
-| Category | Action | Criteria |
-|----------|--------|----------|
-| **Fix** | Auto-fix in code | Clear, actionable code change request with specific file/line in this PR's diff |
-| **Out of Scope** | Open follow-up PR | Valid finding, but the file/line is not part of this PR's diff |
-| **False Positive** | Reply and dismiss | Bot flagging something that's intentional or incorrect |
-| **Needs Discussion** | Flag for user | Ambiguous, architectural, or requires human judgment |
-| **Informational** | Acknowledge | Praise, status updates, or non-actionable observations |
+Use `../references/github-comment-fetching.md` for the exact commands.
 
-**Out-of-scope detection.** Before classifying as Fix, run `gh pr diff <num> --name-only` and check whether the comment's `path` is in that list. If not, the finding is Out of Scope — do not silently dismiss it. See Phase 4b.
+Fetch all review surfaces for the target PR:
 
-### Bot-specific triage heuristics
+- PR review comments
+- PR reviews
+- issue timeline comments
+- unresolved review threads
+- latest-head checks and mergeability state
 
-Different bots have different false-positive profiles. Apply these priors:
+Filter out already-resolved or outdated comments unless the user asks to include them. Group comments by thread and author.
 
-- **CodeRabbit** (`coderabbit-ai[bot]`): High-quality suggestions but sometimes flags intentional patterns. Check if the suggestion conflicts with project conventions (CLAUDE.md rules). Nitpick-level comments are usually safe to dismiss.
-- **Devin** (`devin-ai-integration[bot]`): Implementation-focused. Usually actionable but may suggest changes outside PR scope — flag those as Needs Discussion.
-- **Ultracite** (`ultracite[bot]}`, `UltraCite`): Linting/style focused. Cross-reference with Biome config — if Biome doesn't flag it, likely false positive.
-- **Copilot** (`copilot[bot]`): Variable quality. Validate each suggestion against actual code context.
-- **SonarQube/SonarCloud**: Security/reliability focused. Take security findings seriously; code smell findings may be false positives.
-- **Human reviewers**: **Always treat as valid** unless obviously a question or praise. Human feedback is never auto-dismissed.
+## Classification
 
-### Classification rules
+Use the categories from `../references/pr-comment-loop.md`:
 
-1. Read the file and surrounding context before classifying — never classify from comment text alone
-2. If a bot suggests something that contradicts CLAUDE.md or project conventions, classify as False Positive
-3. If a suggestion would change behavior (not just style), classify as Needs Discussion unless you're confident it's correct
-4. If multiple bots flag the same thing, weight it more toward Fix
+| Category | Action |
+|---|---|
+| Fix | Apply a minimal same-PR code change. |
+| Out of Scope | Confirm the finding, then ask before follow-up work unless already in expanded mode. |
+| False Positive | Reply with concise reasoning. |
+| Needs Discussion | Do not reply automatically; flag for the user. |
+| Informational | Optionally react; no text reply required. |
 
-## Phase 3: Execute Immediately
+Bot detection should be generic: treat `user.login` values containing `bot` as bots, plus known automation accounts such as CodeRabbit, Codex/OpenAI, Devin, Copilot, Sonar, Greptile, Korbit, and Ultracite. Everything else is human feedback. Human feedback is authoritative unless it is clearly a question or praise.
 
-Do NOT ask for confirmation. Directly apply fixes and dismiss false positives. Only flag "Needs Discussion" items for the user at the end.
+Before classifying any code suggestion, read the target file and surrounding context. If a suggestion conflicts with repo instruction files or local conventions, classify it as False Positive and explain why.
 
-Print a brief triage summary as you go (one line per comment), then immediately start fixing.
-
-## Phase 4: Execute Fixes
+## Execution
 
 For each Fix item:
 
-1. Read the target file
-2. Apply the minimal change that satisfies the comment
-3. Stage only the changed file
-4. **Do NOT commit yet** — batch all fixes into logical commits at the end
+1. Read the file and surrounding context.
+2. Apply the smallest change that satisfies the comment.
+3. Stage only the changed files for that fix group.
+4. Batch related fixes into conventional commits.
+5. Run the project quality gate identified during preflight.
 
-After all fixes applied:
+For Out of Scope findings:
 
-1. Group fixes by scope/type into conventional commits
-2. Commit each group: `fix(scope): address review comment — <brief description>`
-3. Run project lint/build to verify fixes don't break anything
-4. If lint/build fails, fix the issue and add to the commit
+- Verify the bug/risk exists before treating it as real.
+- Low-severity unrelated nits can be deferred with a reply.
+- Follow-up branches/PRs require expanded-mode confirmation.
+- Never open follow-up PRs that depend on unmerged parent-PR changes.
 
-## Phase 4b: Out-of-Scope Follow-Up PRs
+## Replies
 
-For each Out of Scope item, do not bury it in a dismissal. Open a follow-up PR so the finding can't be forgotten.
+Reply once per processed finding. Do not bundle unrelated comments.
 
-1. **Verify the finding is real** — read the file and confirm the bug/risk exists. If it doesn't reproduce, reclassify as False Positive.
-2. **Group by file/concern.** Multiple out-of-scope comments touching the same file or theme go into ONE follow-up PR.
-3. **Branch from `origin/main`** (not from the current PR's branch — keeps the follow-up reviewable in isolation):
-   ```bash
-   git fetch origin main
-   git checkout -b fix/<short-slug> origin/main
-   ```
-4. **Apply the minimal fix** and commit with conventional format.
-5. **Open the PR** with a body that:
-   - Links back to the parent comment via permalink (`#issuecomment-XXXXX` or `#discussion_rXXXXX`)
-   - States explicitly "addresses out-of-scope finding from #<parent-pr>"
-   - Includes a short test plan
-6. **Reply on the parent PR** with the new PR's number so reviewers can see the trail: *"Out of scope here; followed up in #NNNN."*
+- **Fix:** say what changed and reference the commit.
+- **Out of Scope:** say whether it was deferred or link the follow-up PR.
+- **False Positive:** give the reason.
+- **Needs Discussion:** do not reply automatically.
+- **Informational:** optional thumbs-up reaction.
 
-**Guardrails:**
-- If the out-of-scope finding is **low severity** (style nit, doc typo on an unrelated file), skip the follow-up PR and instead reply on the parent PR explaining why it was deferred. Don't spam PRs for trivia.
-- If a single triage round would produce **more than 2 follow-up PRs**, stop and confirm with the user before opening any of them — that volume usually means the bot is reviewing against the wrong base or the parent PR has bigger problems.
-- Never open follow-up PRs for findings classified as False Positive or Informational.
-- Never open follow-up PRs that depend on changes still being made on the parent PR — wait for the parent to merge first.
+For top-level issue comments, quote and link the parent so the timeline stays legible:
 
-## Phase 5: Reply to Comments
+```markdown
+> [Reviewer note](https://github.com/.../#issuecomment-XXXXX)
+> one-line excerpt
 
-For each processed comment, post a reply on the PR thread:
-
-- **Fix**: Reply with what was changed. Example: *"Fixed — added null check for `user.profile` before accessing `.avatar`. See commit abc1234."*
-- **Out of Scope**: Reply with the follow-up PR number. Example: *"Out of scope for this PR (file not in diff); followed up in #NNNN."*
-- **False Positive**: Reply with reasoning. Example: *"This is intentional — we avoid `useMemo` here because the computation is trivial and memoization would add unnecessary overhead per our performance guidelines."*
-- **Needs Discussion**: Do not reply — flag in the summary for the user to handle manually
-- **Informational**: Optionally react with a thumbs-up, no text reply needed
-
-**Reply formatting (top-level issue comments only).** GitHub's issue-comments endpoint has no threading. When a bot posts a top-level comment (e.g. Codex), start your reply with a short blockquote of the parent and a permalink so the timeline stays legible:
-
-```
-> [Codex P2 — Use bunx for Inngest CLI startup](https://github.com/.../#issuecomment-XXXXX)
-> <one-line excerpt of the original>
-
-Addressed in commit abc1234 — <one-line of what changed>.
+Addressed in commit abc1234 - short explanation.
 ```
 
-One reply per finding — don't bundle multiple Codex/CodeRabbit items into a single comment.
+For threaded review comments, use the pull review comment reply endpoint from `../references/github-comment-fetching.md`.
 
-Use `gh api` to post replies:
-```
-gh api repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies -f body="..."
-```
+## Push And Recheck
 
-For review comments that are part of a review thread, use the correct reply endpoint:
-```
-gh api repos/{owner}/{repo}/pulls/{number}/comments -f body="..." -f in_reply_to={comment_id}
-```
+After committing fixes:
 
-## Phase 6: Push & Loop
+1. Pull/rebase or merge the latest target branch according to repo convention.
+2. Resolve conflicts if any.
+3. Rerun the quality gate.
+4. Push normally. Never force push unless the user explicitly asks.
+5. Re-fetch comments, unresolved threads, checks, and mergeability.
 
-1. Push all commits to the PR branch
-2. **Immediately sync with the latest `main` before starting the final recheck cycle**:
-   ```bash
-   git fetch origin main
-   git merge --no-edit origin/main
-   ```
-   - If this produces conflicts, resolve them now
-   - After resolving conflicts, stage the resolutions, complete the merge commit, rerun the project quality gate, and push again
-   - Never leave the branch behind `main` and still call it done
-3. Enter a bounded recheck loop for **up to ~20 minutes after each push**. Do not do a single blind sleep and stop.
-4. Use a backoff schedule for rechecks: ~90s, ~3m, ~5m, then every ~5m until clean or timeout
-5. On every recheck, inspect **all** of the following:
-   - New comments from bots triggered by the push
-   - CI failures or still-pending checks for the latest head commit
-   - New human comments that arrived during processing
-   - **Unresolved review threads** — do not rely on flat comment lists alone
-   - PR mergeability/state in GitHub — the branch must not be in a conflicted or stale merge state
-6. If new actionable comments exist, go back to Phase 2. After the next push, restart the recheck timer from the beginning.
-7. If GitHub reports merge conflicts or the branch is behind `main`, fetch `main`, merge it, resolve conflicts, rerun validation, push, and restart the recheck timer
-8. Only stop when you have a **stable clean pass**:
-   - No new actionable comments on the latest head
-   - No unresolved review threads
-   - No pending or failing checks that are still relevant to the latest head
-   - Branch is synced with the latest `main`
-   - GitHub reports the PR as mergeable / not conflicted
-   - Two consecutive clean rechecks, so slower bot reviewers have a chance to appear
-9. If the ~20 minute limit is reached, stop and report exactly what is still pending or unresolved instead of pretending the loop is done
+Stop only after two consecutive clean rechecks on the latest head:
 
-## Phase 7: Summary Report
+- no actionable comments
+- no unresolved review threads
+- no pending/failing relevant checks
+- branch is current with target
+- GitHub reports the PR mergeable/not conflicted
 
-Print a final report:
+Use a progress guard instead of a fixed timer. If checks or reviews do not change over repeated rechecks, or auth/rate limits block inspection, stop and report the exact blocker.
 
-```
-PR #123 — Review Complete (stable clean pass reached)
-=====================================
-Fixed: 7 comments (5 bot, 2 human)
-Dismissed: 4 false positives
-Out-of-scope follow-ups: 2 (#456, #457)
-Needs attention: 1 discussion item
-CI: passing
-Merge-ready: yes
+## Summary Report
 
+End with:
+
+```markdown
+PR #123 - Review Complete
+Fixed:
+Dismissed:
+Out-of-scope:
+Needs attention:
+CI:
+Merge-ready:
 Commits:
-  abc1234 fix(dashboard): address null check and unused import
-  def5678 fix(api): add input validation per review
-
-Follow-up PRs:
-  #456 fix(auth): default bearer when token present (Codex P2 from #123)
-  #457 docs(env): clarify CLOUDFLARE_MCP_TOKEN contract
-
 Remaining:
-  - [human: @teammate] src/api/routes.ts:30 — auth question (needs your reply)
 ```
-
-## Multi-PR Mode
-
-When `all` is passed or multiple PRs are specified:
-
-1. List all open PRs and confirm which to process
-2. For each PR, use a **separate worktree** via `/worktree` to avoid branch conflicts
-3. Process PRs sequentially (not parallel) to avoid rate limiting and allow user oversight
-4. If the user explicitly asks for parallel, use background agents with worktrees
-5. Print a combined summary at the end
-
-## Rules
-
-- **Never force push** — always regular push
-- **Never merge PRs** — only address comments and push fixes
-- **Conventional commits** — all fix commits follow the format
-- **Minimal changes** — fix exactly what's requested, don't refactor beyond scope
-- **Read before edit** — always read the file before making changes
-- **Respect project conventions** — CLAUDE.md rules override bot suggestions
-- **Rate limiting** — add 1s delay between GitHub API calls to avoid hitting limits
-- **Never skip hooks** — all commits go through pre-commit hooks
-- **Do not declare victory early** — unresolved threads or pending reviewer passes mean the loop is not finished yet
-- **Always integrate latest `main`** — if the branch is stale or conflicted with `main`, fix that before finishing
-- **Final status must mean merge-ready** — clean comments alone are not enough

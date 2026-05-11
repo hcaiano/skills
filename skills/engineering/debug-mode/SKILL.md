@@ -1,28 +1,68 @@
 ---
 name: debug-mode
-description: "Hypothesis-driven debugging with runtime evidence. Instruments code with structured HTTP logging to a local debug server, collects runtime data while the user reproduces the bug, then analyzes logs to confirm or reject hypotheses before attempting any fix."
+description: "Hypothesis-driven debugging with runtime evidence. Use for unresolved bugs, unexpected behavior, flaky runtime issues, production/local reproduction gaps, and vague reports like 'it's broken', 'not working', 'getting an error', or 'why is this happening'. Do not use when the root cause and fix are already obvious. Instruments code with structured logging, collects reproduction data, then confirms or rejects hypotheses before attempting any fix."
 user-invocable: true
 argument-hint: "[description of the bug]"
 ---
 
 # Debug Mode
 
-Hypothesis-driven debugging with runtime evidence. No fixes without root cause.
-
-## When to use
-
-Trigger on: "it's broken", "not working", "getting an error", "why is this happening", "help me debug", "can't figure out why", "unexpected behavior". Do NOT use when root cause is already obvious.
+Debug mode is for bugs where the root cause is not yet proven. The point is to avoid plausible fixes that only happen to pass once.
 
 ## Workflow
 
-1. **Understand** — gather symptoms, identify affected code paths
-2. **Hypothesize** — form 2-3 ranked hypotheses with verification strategies
-3. **Instrument** — add structured logging to suspected code paths
-4. **Reproduce** — trigger the bug and collect logs. If auth-walled, ask user to reproduce and WAIT
-5. **Analyze** — review logs against each hypothesis, confirm/reject with evidence
-6. **Fix** — only after root cause confirmed. Minimal fix. Remove all instrumentation.
+1. **Understand** - gather symptoms, affected surface, expected behavior, actual behavior, and the smallest reproduction path.
+2. **Hypothesize** - write 2-3 ranked hypotheses with a concrete observation that would confirm or reject each one.
+3. **Instrument** - add temporary structured logging at the decision points that distinguish the hypotheses.
+4. **Reproduce** - trigger the bug and collect logs. If the flow is auth-walled or user-specific, ask the user to reproduce and wait.
+5. **Analyze** - compare the logs against the hypotheses. Reject hypotheses explicitly when evidence disproves them.
+6. **Fix** - only after evidence identifies the root cause. Make the smallest fix and remove all temporary instrumentation.
 
-## Rules
-- Iron Law: NO fixes without root cause evidence
-- When you can't trigger reproduction yourself, ask the user and WAIT
-- Always clean up instrumentation code after debugging
+## Instrumentation Contract
+
+Prefer structured events over prose logs. Each event should include enough context to tie one request or user action together without leaking secrets:
+
+```json
+{
+  "hypothesis_id": "H1",
+  "event": "branch_selected",
+  "request_id": "req_123",
+  "session_id": "optional-session",
+  "observed": { "key": "value" },
+  "timestamp": "2026-05-11T15:00:00Z"
+}
+```
+
+Use `scripts/debug-server.py` when a local HTTP collector is useful:
+
+```bash
+python3 <skill-dir>/scripts/debug-server.py --port 8765 --output /tmp/debug-events.jsonl
+```
+
+The server accepts `POST /log` with a JSON body and writes JSONL. Confirm it is listening before adding app-side logging. Stop it after analysis, remove all instrumentation, and keep only the evidence summary in the final report.
+
+If the app cannot reach localhost, write structured logs to the app's normal logger or a temporary local file instead. Keep the same fields so analysis stays comparable.
+
+## Failure Modes
+
+- **Cannot reproduce locally:** identify the missing condition, add targeted instrumentation, and ask the user to reproduce once.
+- **Auth-walled reproduction:** prepare logging first, then wait for the user instead of guessing.
+- **User cannot reproduce:** report the best-tested hypotheses and what evidence is still missing; do not invent a fix.
+- **Logs disprove every hypothesis:** write new hypotheses from the evidence and instrument again.
+- **Instrumentation changes behavior:** remove or reduce the instrumentation, then use a less invasive observation point.
+
+## Report Format
+
+End with this shape:
+
+```markdown
+## Symptoms
+## Hypotheses Tested
+## Evidence Collected
+## Confirmed Root Cause
+## Fix Applied
+## Instrumentation Removed
+## Residual Risk
+```
+
+If no fix was applied, say that under `Fix Applied` and name the missing evidence.
