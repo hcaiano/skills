@@ -1,7 +1,7 @@
 {
   "name": "hcaiano-skills",
   "skills": [
-    "./skills/collaboration/herdr-coworkers",
+    "./skills/collaboration/herdr-pair",
     "./skills/engineering/debug-mode",
     "./skills/workflow/review-pr-comments",
     "./skills/workflow/ship-it"

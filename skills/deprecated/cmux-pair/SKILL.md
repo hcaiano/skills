@@ -1,11 +1,11 @@
 ---
-name: cmux-pair-program
-description: Legacy cmux-based pair programming bootstrap for Claude and Codex talking through cmux surfaces with an XML protocol. Keep this for historical reference and migration only. Prefer herdr-coworkers for current Claude/Codex collaboration; use this skill only when the user explicitly asks for the old cmux workflow.
+name: cmux-pair
+description: Legacy cmux-based pair programming bootstrap for Claude and Codex talking through cmux surfaces with an XML protocol. Keep this for historical reference and migration only. Prefer herdr-pair for current Claude/Codex collaboration; use this skill only when the user explicitly asks for the old cmux workflow.
 user-invocable: true
 argument-hint: "[optional task description]"
 ---
 
-# cmux Pair Program
+# cmux Pair
 
 Kick off a pair programming session between Claude and Codex over cmux. You are one of the two agents; the other is running in a different cmux surface. The full message protocol lives in your global config (`~/.codex/AGENTS.md` for Codex, `~/.claude/CLAUDE.md` for Claude) under "Pair Programming Protocol (cmux)" - read it before sending anything if you haven't already.
 

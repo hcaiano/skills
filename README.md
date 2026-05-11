@@ -4,28 +4,40 @@ Personal agent skills that are maintained locally and shared across Claude, Code
 
 This repo follows the same broad shape as `mattpocock/skills`: repo metadata at the root, distributable skills under `skills/`, and small scripts under `scripts/`.
 
+## Install (recommended)
+
+Use the [skills.sh](https://skills.sh) CLI from any directory:
+
+```bash
+npx skills@latest add hcaiano/skills
+```
+
+The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Codex, etc.) to install into, and copies them into the right local skill directories. No marketplace, no global config — just an `npx` away.
+
 ## Skills
 
 ### Collaboration
 
-- `herdr-coworkers` - pair Claude and Codex as collaborating peer agents inside herdr.
+- `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
 
-`herdr-coworkers` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-coworkers` with teammates.
+`herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
 
 ### Engineering
 
-- `debug-mode` - hypothesis-driven debugging with runtime evidence.
+- `debug-mode` — hypothesis-driven debugging with runtime evidence.
 
 ### Workflow
 
-- `review-pr-comments` - fetch, triage, fix, reply to, and recheck PR review comments.
-- `ship-it` - commit, push, open/update PRs, and keep checking CI/review feedback.
+- `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
+- `ship-it` — commit, push, open/update PRs, and keep checking CI/review feedback.
 
 ### Deprecated
 
-- `cmux-pair-program` - older cmux-based Claude/Codex pair programming bootstrap, preserved for reference but not installed by default.
+- `cmux-pair` — older cmux-based Claude/Codex pair programming bootstrap, preserved for reference but not installed by default. Superseded by `herdr-pair`.
 
-## Local linking
+## Local linking (development)
+
+For working on the skills themselves, link them into local agent skill directories so edits in the repo are live for installed runtimes.
 
 List active bundled skills:
 
@@ -33,7 +45,7 @@ List active bundled skills:
 ./scripts/list-skills.sh
 ```
 
-Link the skills into local agent skill directories:
+Link them into `~/.agents/skills`, `~/.claude/skills`, and `~/.codex/skills`:
 
 ```bash
 ./scripts/link-skills.sh
@@ -55,4 +67,4 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 
 ## Publishing
 
-For sharing, push this repo to GitHub and install it as a plugin from the repo. The manifests intentionally list only active skills; `skills/deprecated/*` is kept for history and recovery, not normal installs.
+The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `skills/deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.

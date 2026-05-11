@@ -13,7 +13,7 @@
     "workflow"
   ],
   "skills": [
-    "./skills/collaboration/herdr-coworkers",
+    "./skills/collaboration/herdr-pair",
     "./skills/engineering/debug-mode",
     "./skills/workflow/review-pr-comments",
     "./skills/workflow/ship-it"
@@ -32,7 +32,7 @@
     "defaultPrompt": [
       "Use debug-mode to investigate this bug",
       "Use review-pr-comments to handle this PR feedback",
-      "Use herdr-coworkers to pair with the other agent"
+      "Use herdr-pair to pair with the other agent"
     ],
     "brandColor": "#111111",
     "screenshots": []

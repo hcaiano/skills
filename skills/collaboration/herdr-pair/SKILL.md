@@ -1,11 +1,11 @@
 ---
-name: herdr-coworkers
-description: Pair Claude and Codex as collaborating peer agents inside herdr. Use whenever the user invokes /herdr-coworkers, asks to use coworkers in herdr, asks to "pair", "team up", "collaborate with codex", "collaborate with claude", "work with the other agent", or anything that means two AI agents should review each other's code and iterate to a finished result inside herdr. ALSO use whenever the agent's terminal input begins with a header in the form `[agent <name> -> <name> kind=<kind> sid=<...>]` — that is partner-agent traffic and the receiver MUST validate the herdr pane/session and respond per protocol, treating the message as machine-to-machine, not as ordinary user input. Trigger on the prefix even if the user did not invoke the skill themselves; the prefix is the protocol's auto-load signal.
+name: herdr-pair
+description: Pair Claude and Codex as collaborating peer agents inside herdr. Use whenever the user invokes /herdr-pair, asks to "pair", "team up", "collaborate with codex", "collaborate with claude", "work with the other agent", or anything that means two AI agents should review each other's code and iterate to a finished result inside herdr. ALSO use whenever the agent's terminal input begins with a header in the form `[agent <name> -> <name> kind=<kind> sid=<...>]` — that is partner-agent traffic and the receiver MUST validate the herdr pane/session and respond per protocol, treating the message as machine-to-machine, not as ordinary user input. Trigger on the prefix even if the user did not invoke the skill themselves; the prefix is the protocol's auto-load signal.
 user-invocable: true
 argument-hint: "[task description]"
 ---
 
-# Herdr Coworkers
+# Herdr Pair
 
 Claude and Codex collaborate as peers inside herdr. One tab, two agent panes, plain-text messages flowing directly between them. The user reads along live and can interject in either pane at any time.
 
@@ -13,7 +13,7 @@ This skill defines the protocol and orchestration. Pane mechanics belong to the 
 
 ## Prerequisite
 
-This skill requires the `herdr` CLI and the separate `herdr` skill to be installed. Before using this skill inside herdr, load/read the `herdr` skill for CLI primitives (`pane list`, `pane get`, `pane split`, `pane run`, `pane send-text`, `pane send-keys`, `wait agent-status`, etc.). This skill does not re-document them. It defines only the coworkers protocol and orchestration rules.
+This skill requires the `herdr` CLI and the separate `herdr` skill to be installed. Before using this skill inside herdr, load/read the `herdr` skill for CLI primitives (`pane list`, `pane get`, `pane split`, `pane run`, `pane send-text`, `pane send-keys`, `wait agent-status`, etc.). This skill does not re-document them. It defines only the pair protocol and orchestration rules.
 
 ## Why this exists
 
@@ -67,7 +67,7 @@ Every message must carry the matching sid. A receiver whose on-disk session sid 
 
 ## Bootstrap (initiator side)
 
-Triggered by the user invoking `/herdr-coworkers <task>` in either pane. The agent that received the invocation becomes the initiator.
+Triggered by the user invoking `/herdr-pair <task>` in either pane. The agent that received the invocation becomes the initiator.
 
 1. Resolve self: `herdr pane get $HERDR_PANE_ID` → `self.workspace_id`, `self.tab_id`, `self.agent`.
 2. List panes scoped to the workspace, then narrow to the same tab:
@@ -79,14 +79,14 @@ Triggered by the user invoking `/herdr-coworkers <task>` in either pane. The age
    - **Exactly one opposite-agent pane in the tab** → that's the partner.
    - **Zero opposite agents AND the tab contains only self** → spawn (see Spawn flow). After spawning, the new pane is the partner.
    - **Multiple opposite agents** OR **the tab contains an unexpected extra pane** (e.g. a manually-split shell) → stop and ask the user which to pair with, or to clean up the tab. Never guess; this is the failure mode that broke prior pair-program approaches.
-4. Generate `sid`. Create `~/.herdr-coworkers/<workspace_id>/`. Write the session file (see Session file) atomically.
+4. Generate `sid`. Create `~/.herdr-pair/<workspace_id>/`. Write the session file (see Session file) atomically.
 5. Send the first message with `kind=task`. The body should include the user's task and a one-line fallback hint as the last line so a partner whose skill description didn't auto-load can still find their footing:
    ```
    [agent claude -> codex kind=task sid=1715000000-7a3f]
 
    <task body here>
 
-   (Herdr coworkers protocol — if your skill didn't auto-load, run /herdr-coworkers, or follow the [agent X -> Y kind=... sid=...] header format.)
+   (Herdr pair protocol — if your skill didn't auto-load, run /herdr-pair, or follow the [agent X -> Y kind=... sid=...] header format.)
    ```
 
 ## Spawn flow
@@ -123,14 +123,19 @@ Run only when bootstrap finds zero opposite agents and the tab contains only sel
 Run these before every `pane send-text` to the partner. Direct pane injection has sharp edges; these checks defuse the common ones.
 
 1. **Identity:** `herdr pane get <partner>` → must still exist; `workspace_id` must match self; `tab_id` must match self; `agent` must match the partner agent type recorded in the session file. Any mismatch → mark session stale, surface to user, stop.
-2. **Visible input guard:** `herdr pane read <partner> --source visible --lines 8`. If there's clearly unsubmitted or queued user-authored text in the partner's input buffer, do not clobber it. Ignore agent UI placeholder/suggestion text such as Claude's `Try "how does <filepath> work?"`, empty prompt hints, model/status lines, or similar non-user suggestions. Treat `Press up to edit queued messages` plus visible queued prose as real user input and stop before sending.
+2. **Visible input guard:** `herdr pane read <partner> --source visible --lines 8`. Only block on **real user-authored input** in the partner's input buffer. Explicitly ignore:
+   - Agent UI placeholder/suggestion text such as Claude's `Try "how does <filepath> work?"`, `Summarize recent commits`, or any prompt the host CLI shows when its input is empty. These are hints, not user input; sending will overwrite them harmlessly.
+   - Status lines (`gpt-5.5 high · ~`, `claude-opus-4-7 · ~`, `Working (Xs · esc to interrupt)`).
+   - The leading prompt glyph (`›`, `>`) on an otherwise empty line.
+
+   Treat `Press up to edit queued messages` plus visible queued prose as real user input and stop before sending. When uncertain whether something is a placeholder or real input, prefer sending — placeholder text gets overwritten harmlessly; clobbered user input is a real failure but is also extremely rare and shows up in the recent scrollback for recovery.
 3. **Working partner:** if `agent_status == working`, only send if this is an intentional `STOP — ...` interrupt. Otherwise wait for idle:
    ```bash
    herdr wait agent-status <partner> --status idle --timeout <budget>
    ```
 4. **Send body via temp file** (safe for quotes, `$`, backticks, multi-line):
    ```bash
-   MSG=/tmp/coworkers-msg-$$.txt
+   MSG=/tmp/herdr-pair-msg-$$.txt
    cat > "$MSG" <<'EOF'
    [agent claude -> codex kind=review sid=1715000000-7a3f]
 
@@ -140,33 +145,54 @@ Run these before every `pane send-text` to the partner. Direct pane injection ha
    herdr pane send-keys <partner> Enter
    ```
    Inline send-text is fine for short single-line bodies, but use the heredoc whenever the body might contain shell-special characters.
-5. **Verify post-send:** `herdr pane read <partner> --source recent --lines 10`. The header line should appear in history (out of the input buffer). If it's still in the input buffer, the agent likely needs a second `Enter` (some TUIs require it after a large paste) — re-send `pane send-keys <partner> Enter`. If still stuck, surface to the user.
+
+## Post-send verification (mandatory)
+
+Sending text into a partner pane is **not** the same as the partner receiving the message. `send-text` types the body into the input buffer; `send-keys Enter` submits it. Either step can silently fail — large pastes sometimes need a second Enter, the TUI can drop the keystroke, the partner can be busy and queue the input. Verify after every send.
+
+1. **Read recent visible output** within ~1s of sending:
+   ```bash
+   sleep 1
+   herdr pane read <partner> --source visible --lines 12
+   ```
+2. **Two acceptable end states:**
+   - The header line `[agent <you> -> <them> kind=... sid=...]` appears in the scrollback (out of the input buffer) — the partner received and is processing it. Done.
+   - The header line appears under a `Messages to be submitted after next tool call` or similar queued notice — the partner is mid-turn and will pick it up automatically. Done. Do not re-send.
+3. **One failure state requiring a re-send:** the header text is still sitting in the visible input buffer (cursor on it, no queued notice). The Enter keystroke did not register. Re-send `Enter` exactly once:
+   ```bash
+   herdr pane send-keys <partner> Enter
+   sleep 1
+   herdr pane read <partner> --source visible --lines 12
+   ```
+4. **Hard stop after one retry.** If the second read still shows the body in the input buffer, do not keep sending Enters — the partner pane is in a state the protocol can't recover from automatically. Surface to the user with the visible-buffer snippet and stop. Do not update the session file's `round` counter for an unconfirmed send.
+
+Only after this verification passes do you update the session file (increment `round`, set `last_status[self.agent]`, etc.). A send without a verified post-send is not a send.
 
 ## Receiving
 
 When your terminal input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]`, treat it as partner traffic, not as a user request:
 
 1. Re-resolve self: `herdr pane get $HERDR_PANE_ID`.
-2. Load `~/.herdr-coworkers/<self.workspace_id>/session.json`. If missing, this is a protocol violation — do not invent or adopt session state from the message; surface to the user.
+2. Load `~/.herdr-pair/<self.workspace_id>/session.json`. If missing, this is a protocol violation — do not invent or adopt session state from the message; surface to the user.
 3. **sid match:** the `sid` in the message must equal `session.sid`. Mismatch is a hard error.
 4. **Sender match:** the message claims a `<from>` agent. The session file's `partner.agent` must equal that value, and `partner.pane_id` must still resolve (via `pane get`) to a pane in your workspace and tab with that agent type. Any mismatch → reject and surface.
-5. Process the message per its `kind`. Then prepare a reply with your own `kind=` and the same `sid`. Run the same pre-send checks before sending.
-6. Update the session file atomically: increment `round`, set `last_status[self.agent]` to your reply's kind, update `no_progress_count` per the loop guards.
+5. Process the message per its `kind`. Then prepare a reply with your own `kind=` and the same `sid`. Run the pre-send checks AND the post-send verification before considering the reply delivered.
+6. Update the session file atomically: increment `round`, set `last_status[self.agent]` to your reply's kind, update `no_progress_count` per the progress guards.
 
 ## Progress Guards
 
 Two LLMs can disagree forever in good faith. Guards are what make the loop safe to leave running.
 
-- **No fixed round cap.** Do not stop merely because the agents have exchanged a certain number of messages. Continue as long as the loop is producing useful artifacts, evidence, decisions, fixes, or narrowed options.
+- **No fixed round cap.** Do not stop merely because the agents have exchanged a certain number of messages. Continue as long as the loop is producing useful artifacts, evidence, decisions, fixes, or narrowed options. The agents are responsible for recognizing when the task is genuinely done and exchanging `accepted` — not for hitting an arbitrary round budget.
 - **No-new-artifact heuristic.** Before each non-final send, self-check: have I produced new code, new test results, a concrete decision, or narrowed an option since my last turn? If five of my own consecutive turns have produced nothing new, I send `kind=handoff` instead of continuing the loop. Increment `no_progress_count` in the session file each time you self-detect "nothing new"; reset it whenever you do produce something new.
 - **Self-reported stalemate.** If you have now restated the same disagreement at least twice without partner movement, send `kind=stalemate` with a short summary of the disagreement and what each side wants. Do not keep arguing.
 - **User override.** Any user input in either pane wins over partner messages. If the user contradicts something the partner just said, do what the user said and surface the contradiction in your next partner message so the partner knows the ground shifted.
 
-Why these and not a fixed round budget? Time and message count are poor proxies for progress. A long typecheck, server boot, or useful review loop must not force a handoff. Produced artifacts and narrowing decisions are better signals.
+Why these and not a fixed round budget? Message count is a poor proxy for progress. A long typecheck, server boot, or useful review loop must not force a handoff. Produced artifacts and narrowing decisions are better signals.
 
 ## Session file
 
-Path: `~/.herdr-coworkers/<workspace_id>/session.json`. One per workspace; never per-tab, since the workspace is the isolation boundary.
+Path: `~/.herdr-pair/<workspace_id>/session.json`. One per workspace; never per-tab, since the workspace is the isolation boundary.
 
 ```json
 {
@@ -217,17 +243,17 @@ One-shot test runs do not need the workbench. Use the agent's own pane or a temp
 - **Multiple partner candidates / unexpected extra panes in the same tab:** stop and ask the user.
 - **sid mismatch in incoming message:** hard error; surface to user. Do not adopt the new sid.
 - **Partner pane went away mid-session:** mark session stale, surface to user. The user decides whether to restart.
-- **send-text appears to land but Enter didn't submit:** re-send `Enter` once. If still stuck, surface and stop.
+- **send-text appears to land but Enter didn't submit:** re-send `Enter` once per Post-send verification. If still stuck, surface and stop.
 - **User typed something in your pane mid-loop that contradicts the partner:** user wins. Apply the user's instruction; tell the partner the ground changed in your next message.
 
 ## Closing a session
 
-When both sides have exchanged `accepted` and the work is genuinely done, the side that triggered closure sends a final `kind=handoff` to the user (in their own pane, by emitting it as a normal output, not via `pane send-text`) summarizing what was accomplished. Then `trash ~/.herdr-coworkers/<workspace_id>/` so a fresh session can start cleanly.
+When both sides have exchanged `accepted` and the work is genuinely done, the side that triggered closure sends a final `kind=handoff` to the user (in their own pane, by emitting it as a normal output, not via `pane send-text`) summarizing what was accomplished. Then `trash ~/.herdr-pair/<workspace_id>/` so a fresh session can start cleanly.
 
-`blocked` and `stalemate` paths also end in `kind=handoff` to the user, with the same cleanup. Never leave a stale session file lying around — the next `/herdr-coworkers` invocation will refuse to start if it finds one with live panes.
+`blocked` and `stalemate` paths also end in `kind=handoff` to the user, with the same cleanup. Never leave a stale session file lying around — the next `/herdr-pair` invocation will refuse to start if it finds one with live panes.
 
-## Why this isn't pair-program-2
+## Why this isn't cmux-pair-2
 
-The earlier `pair-program` skill (cmux, XML messages, shared inbox files) had a recurring failure mode: agents thought no partner was available even when one was. That came from cmux's discovery story, not from XML — but the XML/inbox machinery added enough surface area that bugs there hid the discovery problem.
+The earlier `cmux-pair` skill (cmux, XML messages, shared inbox files) had a recurring failure mode: agents thought no partner was available even when one was. That came from cmux's discovery story, not from XML — but the XML/inbox machinery added enough surface area that bugs there hid the discovery problem.
 
-Coworkers takes a different bet: herdr exposes a reliable self-id (`HERDR_PANE_ID` + `pane get`), so discovery is trivially solid. Once discovery is solid, the rest of the protocol can be a single header line on top of plain prose. No XML, no shared file message bus, no socket. Just two agents typing into each other's terminals with enough structure that they can tell partner messages apart from user messages.
+Herdr-pair takes a different bet: herdr exposes a reliable self-id (`HERDR_PANE_ID` + `pane get`), so discovery is trivially solid. Once discovery is solid, the rest of the protocol can be a single header line on top of plain prose. No XML, no shared file message bus, no socket. Just two agents typing into each other's terminals with enough structure that they can tell partner messages apart from user messages.
