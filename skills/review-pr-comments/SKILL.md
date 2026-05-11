@@ -7,7 +7,7 @@ argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 
 # Review PR Comments
 
-Dedicated entrypoint for the PR comment loop. The policy (modes, categories, classification context, reply format, recheck loop) lives in `../references/pr-comment-loop.md`. API endpoints live in `../references/github-comment-fetching.md`. Load both before acting.
+Dedicated entrypoint for the PR comment loop. The policy (modes, categories, classification context, reply format, recheck loop) lives in `references/pr-comment-loop.md`. API endpoints live in `references/github-comment-fetching.md`. Load both before acting.
 
 ## Inputs
 
@@ -27,7 +27,7 @@ Fail early with a clear blocker instead of discovering environment problems afte
 
 ## Discovery
 
-Fetch all review surfaces for the target PR (commands in `../references/github-comment-fetching.md`):
+Fetch all review surfaces for the target PR (commands in `references/github-comment-fetching.md`):
 
 - PR review comments
 - PR reviews
@@ -39,7 +39,7 @@ Filter resolved/outdated comments unless the user asks to include them. Group by
 
 ## Classification
 
-Categories and the reply policy come from `../references/pr-comment-loop.md`. The skill-specific addition:
+Categories and the reply policy come from `references/pr-comment-loop.md`. The skill-specific addition:
 
 **Bot detection** — treat `user.login` containing `bot` as a bot, plus known automation accounts (CodeRabbit, Codex/OpenAI, Devin, Copilot, Sonar, Greptile, Korbit, Ultracite). Everything else is human feedback, authoritative unless it's clearly a question or praise.
 

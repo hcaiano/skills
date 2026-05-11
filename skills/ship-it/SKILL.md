@@ -36,7 +36,7 @@ Push the branch (`-u` if needed). Create the PR with `gh pr create` — short ti
 
 ## Phase 4: CI & review loop
 
-Run the recheck loop documented in `skills/workflow/references/pr-comment-loop.md`. It covers mode-split safety, comment classification, reply format, and the "two consecutive clean rechecks" stop condition. Don't re-implement that policy here.
+Run the recheck loop documented in `../review-pr-comments/references/pr-comment-loop.md`. It covers mode-split safety, comment classification, reply format, and the "two consecutive clean rechecks" stop condition. Don't re-implement that policy here.
 
 After each push:
 

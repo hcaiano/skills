@@ -6,7 +6,7 @@ The deltas are organized as **additive changes (15)** plus **subtractive simplif
 
 ## Recommended implementation order
 
-1. **RPC1 + SI3** — mode-split for autonomous side effects + shared `references/pr-comment-loop.md`. Biggest safety win. Without this, `review-pr-comments` in `all` mode can push and merge `main` without confirmation.
+1. **RPC1 + SI3** — mode-split for autonomous side effects + shared `review-pr-comments/references/pr-comment-loop.md`. Biggest safety win. Without this, `review-pr-comments` in `all` mode can push and merge `main` without confirmation.
 2. **HP1** — bundle `herdr-pair` mechanics as scripts (`bootstrap.sh`, `send.sh`, `update-session.py`). Fixes the Enter-not-pressed bug at the source.
 3. **SI2** — project-aware quality gate. Currently bun-only; breaks for any non-Gam3s repo using this via `npx skills`.
 4. **DM2** — define `debug-mode`'s instrumentation contract. Currently promises infrastructure it doesn't specify.
@@ -28,7 +28,7 @@ A line earns its place in a SKILL.md if removing it would change agent behavior 
 
 ---
 
-## herdr-pair — `skills/collaboration/herdr-pair/SKILL.md` (259 lines)
+## herdr-pair — `skills/herdr-pair/SKILL.md` (259 lines)
 
 ### HP1. Bundle mechanics as scripts
 
@@ -72,7 +72,7 @@ A line earns its place in a SKILL.md if removing it would change agent behavior 
 
 ---
 
-## ship-it — `skills/workflow/ship-it/SKILL.md` (124 lines)
+## ship-it — `skills/ship-it/SKILL.md` (124 lines)
 
 ### SI1. Soften ALL-CAPS rules into reasoning
 
@@ -91,8 +91,8 @@ A line earns its place in a SKILL.md if removing it would change agent behavior 
 
 ### SI3. Shared PR comment loop reference
 
-- Create `references/pr-comment-loop.md` containing: fetch endpoints (REST + GraphQL for unresolved threads), classification categories, reply format, mode-split safety policy (see RPC1).
-- ship-it Phase 4 collapses to "after push, run the PR comment loop per `references/pr-comment-loop.md`".
+- Create `review-pr-comments/references/pr-comment-loop.md` containing: fetch endpoints (REST + GraphQL for unresolved threads), classification categories, reply format, mode-split safety policy (see RPC1).
+- ship-it Phase 4 collapses to "after push, run the PR comment loop per `../review-pr-comments/references/pr-comment-loop.md`".
 - `review-pr-comments` becomes the dedicated entrypoint loading the same reference.
 - **Why:** same algorithm in two skills → drift. Single source, two entrypoints.
 
@@ -116,7 +116,7 @@ A line earns its place in a SKILL.md if removing it would change agent behavior 
 
 ---
 
-## debug-mode — `skills/engineering/debug-mode/SKILL.md` (28 lines)
+## debug-mode — `skills/debug-mode/SKILL.md` (28 lines)
 
 ### DM1. Move triggers into the description; add exclusion
 
@@ -140,7 +140,7 @@ A line earns its place in a SKILL.md if removing it would change agent behavior 
 
 ---
 
-## review-pr-comments — `skills/workflow/review-pr-comments/SKILL.md` (222 lines)
+## review-pr-comments — `skills/review-pr-comments/SKILL.md` (222 lines)
 
 ### RPC1. Mode-split for autonomous side effects
 
@@ -148,7 +148,7 @@ A line earns its place in a SKILL.md if removing it would change agent behavior 
 - Split modes explicitly:
   - **Default single-PR mode**: may fix, comment, push to the same branch.
   - **Expanded mode** (creating follow-up PRs, processing `all`, touching out-of-scope files, modifying main): requires explicit user confirmation up front.
-- This policy lives in `references/pr-comment-loop.md` (SI3) so ship-it inherits it.
+- This policy lives in `review-pr-comments/references/pr-comment-loop.md` (SI3) so ship-it inherits it.
 - **Why:** lack-of-surprise. The Phase 3 "no confirmation" + Phase 6 "push and merge main" combo is genuinely dangerous when chained with `all` mode.
 
 ### RPC2. Preflight/dependency section before Phase 1
@@ -160,7 +160,7 @@ A line earns its place in a SKILL.md if removing it would change agent behavior 
 ### RPC3. Progressive disclosure: split policy from mechanics
 
 - At 222 lines the file mixes: policy loop, REST/GraphQL API endpoints, reply formatting, bot heuristics, final report template.
-- Create `references/github-comment-fetching.md` for the API mechanics.
+- Create `review-pr-comments/references/github-comment-fetching.md` for the API mechanics.
 - Optionally bundle `scripts/fetch-pr-comments.sh` (or `.py`) returning normalized JSON.
 - SKILL.md keeps the policy loop and points to the reference for endpoints.
 - **Why:** drift resistance + testability with mocked gh fixtures.
