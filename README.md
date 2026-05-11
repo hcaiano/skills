@@ -1,5 +1,7 @@
 # hcaiano skills
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+
 Personal agent skills that are maintained locally and shared across Claude, Codex, and other agent runtimes.
 
 This repo follows the same broad shape as `mattpocock/skills`: repo metadata at the root, distributable skills under `skills/`, and small scripts under `scripts/`.
@@ -68,3 +70,7 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 ## Publishing
 
 The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `skills/deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.
+
+## License
+
+[MIT](./LICENSE) © Henrique Caiano.
