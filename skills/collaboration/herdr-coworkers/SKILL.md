@@ -51,7 +51,7 @@ The header is what the receiver matches on. The body is plain prose — write to
 - `accepted` — the partner's `ready` looks good and you have no blockers. Both sides sending `accepted` is the only completion signal.
 - `blocked` — you cannot proceed without the user's input. Body names the missing decision concretely.
 - `stalemate` — you and the partner have restated the same disagreement at least twice without movement. Body summarizes the disagreement so the user can break the tie.
-- `handoff` — final message back to the user. Used when you've hit a guard (max rounds, no progress, blocked, stalemate) or when both `accepted` are in and you're closing out. The body is the report the user reads.
+- `handoff` — final message back to the user. Used when you've hit a progress guard (no progress, blocked, stalemate) or when both `accepted` are in and you're closing out. The body is the report the user reads.
 
 Done = both sides have sent `accepted` for the current task. Stuck = `blocked` or `stalemate` → escalate to `handoff`.
 
@@ -67,7 +67,7 @@ Every message must carry the matching sid. A receiver whose on-disk session sid 
 
 ## Bootstrap (initiator side)
 
-Triggered by the user invoking `/coworkers <task>` in either pane. The agent that received the invocation becomes the initiator.
+Triggered by the user invoking `/herdr-coworkers <task>` in either pane. The agent that received the invocation becomes the initiator.
 
 1. Resolve self: `herdr pane get $HERDR_PANE_ID` → `self.workspace_id`, `self.tab_id`, `self.agent`.
 2. List panes scoped to the workspace, then narrow to the same tab:
@@ -86,7 +86,7 @@ Triggered by the user invoking `/coworkers <task>` in either pane. The agent tha
 
    <task body here>
 
-   (Coworkers protocol — if your skill didn't auto-load, run /coworkers, or follow the [agent X -> Y kind=... sid=...] header format.)
+   (Herdr coworkers protocol — if your skill didn't auto-load, run /herdr-coworkers, or follow the [agent X -> Y kind=... sid=...] header format.)
    ```
 
 ## Spawn flow
@@ -123,7 +123,7 @@ Run only when bootstrap finds zero opposite agents and the tab contains only sel
 Run these before every `pane send-text` to the partner. Direct pane injection has sharp edges; these checks defuse the common ones.
 
 1. **Identity:** `herdr pane get <partner>` → must still exist; `workspace_id` must match self; `tab_id` must match self; `agent` must match the partner agent type recorded in the session file. Any mismatch → mark session stale, surface to user, stop.
-2. **Visible input guard:** `herdr pane read <partner> --source visible --lines 5`. If there's clearly unsubmitted user typing in the partner's input buffer, do not clobber it. Surface to the user.
+2. **Visible input guard:** `herdr pane read <partner> --source visible --lines 8`. If there's clearly unsubmitted or queued user-authored text in the partner's input buffer, do not clobber it. Ignore agent UI placeholder/suggestion text such as Claude's `Try "how does <filepath> work?"`, empty prompt hints, model/status lines, or similar non-user suggestions. Treat `Press up to edit queued messages` plus visible queued prose as real user input and stop before sending.
 3. **Working partner:** if `agent_status == working`, only send if this is an intentional `STOP — ...` interrupt. Otherwise wait for idle:
    ```bash
    herdr wait agent-status <partner> --status idle --timeout <budget>
@@ -153,16 +153,16 @@ When your terminal input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]
 5. Process the message per its `kind`. Then prepare a reply with your own `kind=` and the same `sid`. Run the same pre-send checks before sending.
 6. Update the session file atomically: increment `round`, set `last_status[self.agent]` to your reply's kind, update `no_progress_count` per the loop guards.
 
-## Loop guards
+## Progress Guards
 
 Two LLMs can disagree forever in good faith. Guards are what make the loop safe to leave running.
 
-- **Hard cap on rounds.** When `round >= 10`, your next reply must be `kind=handoff` to the user instead of to the partner. Body summarizes what was attempted and where things stand. The user can say "continue" to bump the cap and resume.
+- **No fixed round cap.** Do not stop merely because the agents have exchanged a certain number of messages. Continue as long as the loop is producing useful artifacts, evidence, decisions, fixes, or narrowed options.
 - **No-new-artifact heuristic.** Before each non-final send, self-check: have I produced new code, new test results, a concrete decision, or narrowed an option since my last turn? If three of my own consecutive turns have produced nothing new, I send `kind=handoff` instead of continuing the loop. Increment `no_progress_count` in the session file each time you self-detect "nothing new"; reset it whenever you do produce something new.
 - **Self-reported stalemate.** If you have now restated the same disagreement at least twice without partner movement, send `kind=stalemate` with a short summary of the disagreement and what each side wants. Do not keep arguing.
 - **User override.** Any user input in either pane wins over partner messages. If the user contradicts something the partner just said, do what the user said and surface the contradiction in your next partner message so the partner knows the ground shifted.
 
-Why these and not a time budget? Time is a poor proxy for progress. A long typecheck or server boot must not force a handoff. Round count and produced artifacts are better signals.
+Why these and not a fixed round budget? Time and message count are poor proxies for progress. A long typecheck, server boot, or useful review loop must not force a handoff. Produced artifacts and narrowing decisions are better signals.
 
 ## Session file
 
@@ -224,7 +224,7 @@ One-shot test runs do not need the workbench. Use the agent's own pane or a temp
 
 When both sides have exchanged `accepted` and the work is genuinely done, the side that triggered closure sends a final `kind=handoff` to the user (in their own pane, by emitting it as a normal output, not via `pane send-text`) summarizing what was accomplished. Then `trash ~/.herdr-coworkers/<workspace_id>/` so a fresh session can start cleanly.
 
-`blocked` and `stalemate` paths also end in `kind=handoff` to the user, with the same cleanup. Never leave a stale session file lying around — the next `/coworkers` invocation will refuse to start if it finds one with live panes.
+`blocked` and `stalemate` paths also end in `kind=handoff` to the user, with the same cleanup. Never leave a stale session file lying around — the next `/herdr-coworkers` invocation will refuse to start if it finds one with live panes.
 
 ## Why this isn't pair-program-2
 
