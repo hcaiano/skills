@@ -53,7 +53,7 @@ link_one() {
 
 find_args=("$REPO/skills" -name SKILL.md -not -path '*/node_modules/*')
 if [ "$INCLUDE_DEPRECATED" != true ]; then
-  find_args+=(-not -path "$REPO/skills/deprecated/*")
+  find_args+=(-not -path "$REPO/skills/_deprecated/*")
 fi
 
 find "${find_args[@]}" -print0 |
