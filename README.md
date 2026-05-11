@@ -4,7 +4,7 @@
 
 Personal agent skills that are maintained locally and shared across Claude, Codex, and other agent runtimes.
 
-This repo follows the same broad shape as `mattpocock/skills`: repo metadata at the root, distributable skills under `skills/`, and small scripts under `scripts/`.
+This repo keeps metadata at the root, distributable skills under `skills/`, and small local maintenance scripts under `scripts/`.
 
 ## Install (recommended)
 
