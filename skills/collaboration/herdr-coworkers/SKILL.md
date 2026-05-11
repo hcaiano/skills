@@ -13,7 +13,7 @@ This skill defines the protocol and orchestration. Pane mechanics belong to the 
 
 ## Prerequisite
 
-Before using this skill inside herdr, load/read the `herdr` skill for CLI primitives (`pane list`, `pane get`, `pane split`, `pane run`, `pane send-text`, `pane send-keys`, `wait agent-status`, etc.). This skill does not re-document them. It defines only the coworkers protocol and orchestration rules.
+This skill requires the `herdr` CLI and the separate `herdr` skill to be installed. Before using this skill inside herdr, load/read the `herdr` skill for CLI primitives (`pane list`, `pane get`, `pane split`, `pane run`, `pane send-text`, `pane send-keys`, `wait agent-status`, etc.). This skill does not re-document them. It defines only the coworkers protocol and orchestration rules.
 
 ## Why this exists
 
@@ -158,7 +158,7 @@ When your terminal input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]
 Two LLMs can disagree forever in good faith. Guards are what make the loop safe to leave running.
 
 - **No fixed round cap.** Do not stop merely because the agents have exchanged a certain number of messages. Continue as long as the loop is producing useful artifacts, evidence, decisions, fixes, or narrowed options.
-- **No-new-artifact heuristic.** Before each non-final send, self-check: have I produced new code, new test results, a concrete decision, or narrowed an option since my last turn? If three of my own consecutive turns have produced nothing new, I send `kind=handoff` instead of continuing the loop. Increment `no_progress_count` in the session file each time you self-detect "nothing new"; reset it whenever you do produce something new.
+- **No-new-artifact heuristic.** Before each non-final send, self-check: have I produced new code, new test results, a concrete decision, or narrowed an option since my last turn? If five of my own consecutive turns have produced nothing new, I send `kind=handoff` instead of continuing the loop. Increment `no_progress_count` in the session file each time you self-detect "nothing new"; reset it whenever you do produce something new.
 - **Self-reported stalemate.** If you have now restated the same disagreement at least twice without partner movement, send `kind=stalemate` with a short summary of the disagreement and what each side wants. Do not keep arguing.
 - **User override.** Any user input in either pane wins over partner messages. If the user contradicts something the partner just said, do what the user said and surface the contradiction in your next partner message so the partner knows the ground shifted.
 

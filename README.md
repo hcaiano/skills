@@ -10,6 +10,8 @@ This repo follows the same broad shape as `mattpocock/skills`: repo metadata at 
 
 - `herdr-coworkers` - pair Claude and Codex as collaborating peer agents inside herdr.
 
+`herdr-coworkers` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-coworkers` with teammates.
+
 ### Engineering
 
 - `debug-mode` - hypothesis-driven debugging with runtime evidence.
@@ -50,3 +52,7 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 ```
 
 `--replace` uses `trash`, not `rm`, for existing non-symlink directories.
+
+## Publishing
+
+For sharing, push this repo to GitHub and install it as a plugin from the repo. The manifests intentionally list only active skills; `skills/deprecated/*` is kept for history and recovery, not normal installs.
