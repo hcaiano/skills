@@ -42,22 +42,12 @@ if ! PARTNER_JSON=$(herdr pane get "$PARTNER_PANE" 2>/dev/null); then
   exit 1
 fi
 SELF_JSON=$(herdr pane get "$HERDR_PANE_ID")
-# One python invocation extracts all six fields and emits eval-able shell assignments.
-eval "$(python3 -c '
-import sys, json, shlex
-self_p = json.loads(sys.argv[1])["result"]["pane"]
-peer_p = json.loads(sys.argv[2])["result"]["pane"]
-fields = (
-    ("SELF_AGENT", self_p["agent"]),
-    ("SELF_WS", self_p["workspace_id"]),
-    ("SELF_TAB", self_p["tab_id"]),
-    ("PARTNER_AGENT", peer_p["agent"]),
-    ("PARTNER_WS", peer_p["workspace_id"]),
-    ("PARTNER_TAB", peer_p["tab_id"]),
-)
-for k, v in fields:
-    print(f"{k}={shlex.quote(v)}")
-' "$SELF_JSON" "$PARTNER_JSON")"
+SELF_AGENT=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["agent"])')
+SELF_WS=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')
+SELF_TAB=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["tab_id"])')
+PARTNER_AGENT=$(printf '%s' "$PARTNER_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["agent"])')
+PARTNER_WS=$(printf '%s' "$PARTNER_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')
+PARTNER_TAB=$(printf '%s' "$PARTNER_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["tab_id"])')
 
 [ "$SELF_WS" = "$PARTNER_WS" ] || { echo "workspace mismatch (self=$SELF_WS partner=$PARTNER_WS)" >&2; exit 1; }
 [ "$SELF_TAB" = "$PARTNER_TAB" ] || { echo "tab mismatch (self=$SELF_TAB partner=$PARTNER_TAB)" >&2; exit 1; }

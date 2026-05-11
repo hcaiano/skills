@@ -31,14 +31,11 @@ if [ -z "${HERDR_PANE_ID:-}" ]; then
   exit 1
 fi
 
-# --- Resolve self (one subprocess, eval all fields at once) ---
+# --- Resolve self ---
 SELF_JSON=$(herdr pane get "$HERDR_PANE_ID")
-eval "$(printf '%s' "$SELF_JSON" | python3 -c '
-import sys, json, shlex
-p = json.load(sys.stdin)["result"]["pane"]
-for k, v in (("WS", p["workspace_id"]), ("TAB", p["tab_id"]), ("SELF_AGENT", p["agent"])):
-    print(f"{k}={shlex.quote(v)}")
-')"
+WS=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')
+TAB=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["tab_id"])')
+SELF_AGENT=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["agent"])')
 
 # --- Find partner ---
 # Note: pipe stdin to python3 -c (the program is the -c arg). Using
