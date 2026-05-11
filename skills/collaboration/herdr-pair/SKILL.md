@@ -9,7 +9,7 @@ argument-hint: "[task description]"
 
 Claude and Codex collaborate as peers inside herdr — one tab, two agent panes, plain-text messages between them with a structured header. The user reads along live and can interject in either pane.
 
-Requires the `herdr` CLI on PATH and the separate `herdr` skill loaded. `scripts/bootstrap.sh` runs a preflight and surfaces a clear error if either is missing.
+Requires the `herdr` CLI on PATH and the separate `herdr` skill loaded. If `command -v herdr` fails or `HERDR_ENV != 1` or `HERDR_PANE_ID` is unset, stop and tell the user to install/load herdr first.
 
 ## Hard rules
 
@@ -47,64 +47,90 @@ Header matches; body is plain prose — write to a teammate, not a parser.
 
 Triggered by `/herdr-pair <task>` in either pane. The receiving agent is the initiator.
 
-```bash
-# Resolve partner + create session. Output: "<partner-pane-id> <sid>"
-read PARTNER_PANE SID < <(scripts/bootstrap.sh)
-```
+1. Resolve self with `herdr pane get $HERDR_PANE_ID` → `workspace_id`, `tab_id`, `agent`.
+2. Find the partner with `herdr pane list --workspace <ws>`, filter to the same `tab_id`, pick the one whose `agent` is the opposite of self. Zero candidates → spawn flow below. Multiple → stop and ask the user.
+3. Generate the session id and write the session file atomically:
+   ```bash
+   SID="$(date +%s)-$(openssl rand -hex 2)"
+   SESSION_DIR="$HOME/.herdr-coworkers/<workspace_id>"
+   mkdir -p "$SESSION_DIR"
+   TMP="$SESSION_DIR/session.json.tmp.$$"
+   cat > "$TMP" <<JSON
+   {"sid":"$SID","workspace_id":"<ws>","tab_id":"<tab>","self":{"agent":"<self>","pane_id":"$HERDR_PANE_ID"},"partner":{"agent":"<partner>","pane_id":"<partner-pane>"},"round":0,"last_status":{"claude":null,"codex":null},"no_progress_count":0,"workbench":{"tab_id":null,"server_pane":null,"logs_pane":null},"created_at":"$(date -u +%FT%TZ)"}
+   JSON
+   mv "$TMP" "$SESSION_DIR/session.json"
+   ```
+4. Send the first message (see Sending below). Body should include a one-line fallback hint so a partner whose skill didn't auto-load can still recover:
+   > `(Herdr pair protocol — if your skill didn't auto-load, run /herdr-pair, or follow the [agent X -> Y kind=... sid=...] header format.)`
 
-Exit codes:
-
-- `0` — partner found, session written.
-- `1` — preflight failed (herdr CLI/env missing). Stop and surface.
-- `2` — no partner in tab. Run spawn flow, then call bootstrap again.
-- `3` — multiple candidates. Stop and ask which to pair with.
-
-Then send the first message:
-
-```bash
-cat > /tmp/first-task.txt <<'EOF'
-<task body, including context from the user's invocation>
-
-(Herdr pair protocol — if your skill didn't auto-load, run /herdr-pair, or follow the [agent X -> Y kind=... sid=...] header format.)
-EOF
-
-scripts/send.sh "$PARTNER_PANE" "$SID" task /tmp/first-task.txt
-```
-
-`send.sh` composes, sends, verifies (with one Enter retry), and bumps `round` + `last_status` on success.
-
-## Spawn flow (only when bootstrap exits 2)
+## Spawn flow (only when no opposite-agent pane in the tab)
 
 ```bash
-PARTNER_BIN="$(command -v codex)"   # or claude — whichever is opposite
+PARTNER_BIN="$(command -v codex)"   # or claude — opposite of self
 [ -n "$PARTNER_BIN" ] || { echo "no partner binary on PATH" >&2; exit 1; }
 
 NEW_PANE="$(herdr pane split "$HERDR_PANE_ID" --direction right --no-focus \
-  | python3 -c 'import sys, json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')"
-
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["pane"]["pane_id"])')"
 herdr pane run "$NEW_PANE" "$PARTNER_BIN"
 herdr wait agent-status "$NEW_PANE" --status idle --timeout 60000 \
   || { herdr pane read "$NEW_PANE" --source recent --lines 40; exit 1; }
 ```
 
-Re-verify the new pane with `herdr pane get`, then call `bootstrap.sh` again.
+Re-verify the new pane (`herdr pane get`), then resume bootstrap.
 
-## Pre-send checks
+## Pre-send
 
-`send.sh` owns the mechanics. Your job:
-
-1. **Identity** — partner pane still exists and matches the session file. `send.sh` also checks.
+1. **Identity.** Confirm the partner pane still exists and matches the session file.
 2. **Ignore visible input text.** Don't gate on autosuggestions in the partner's input line — `send-text` overwrites them. Only submitted user messages count.
-3. **Working partner.** If `agent_status == working`, send only if this is a `STOP — ...` interrupt. Otherwise wait: `herdr wait agent-status <partner> --status idle --timeout <budget>`. Non-interrupt sends to a working partner succeed in the "queued for next turn" state.
+3. **Working partner.** If `agent_status == working`, send only if this is a `STOP — ...` interrupt. Otherwise wait: `herdr wait agent-status <partner> --status idle --timeout <budget>`. Non-interrupt sends to a working partner are accepted by the host CLI in a "queued for next turn" state — that's fine.
 
-## Post-send
+## Sending (with verify)
 
-`send.sh` exit codes:
+Compose the message in a temp file (heredoc handles quotes/`$`/backticks safely):
 
-- `0` — delivered or queued; session updated (`round` incremented, `last_status.<self> = <kind>`).
-- `2` — failed even after one Enter retry; session **not** updated.
+```bash
+MSG=$(mktemp); trap 'rm -f "$MSG"' EXIT
+{
+  printf '[agent %s -> %s kind=%s sid=%s]\n\n' "$SELF_AGENT" "$PARTNER_AGENT" "$KIND" "$SID"
+  cat <body-file>
+} > "$MSG"
+HEADER="[agent $SELF_AGENT -> $PARTNER_AGENT kind=$KIND sid=$SID]"
 
-Use `update-session.py` directly only for `no_progress_count` and `workbench.*` — the fields send.sh doesn't own.
+herdr pane send-text "$PARTNER_PANE" "$(cat "$MSG")"
+sleep 1
+herdr pane send-keys "$PARTNER_PANE" Enter
+sleep 2
+
+# Verify: read the partner's visible buffer and look for the header.
+# Acceptable end states: header in scrollback, OR header under a "Messages to be
+# submitted after next tool call" / "queued" notice. Failure: header still in the
+# input buffer at a leading prompt glyph (›, >) — needs another Enter.
+visible=$(herdr pane read "$PARTNER_PANE" --source visible --lines 12)
+if ! grep -qF "$HEADER" <<<"$visible"; then : ; # not visible → assume delivered (off-screen)
+elif grep -qE "Messages to be submitted|queued|Press up to edit queued" <<<"$visible"; then : ;
+elif grep -qE "^[›>] *\[agent" <<<"$visible"; then
+  herdr pane send-keys "$PARTNER_PANE" Enter; sleep 2  # retry once
+  visible=$(herdr pane read "$PARTNER_PANE" --source visible --lines 12)
+  grep -qE "^[›>] *\[agent" <<<"$visible" && { echo "send failed: still in input after retry" >&2; exit 1; }
+fi
+```
+
+On verified delivery, update the session: increment `round` and set `last_status.<self> = <kind>`. Atomic JSON update — read, mutate, write to `session.json.tmp.$$`, `mv` over:
+
+```bash
+python3 - "$HOME/.herdr-coworkers/$WS/session.json" "$SELF_AGENT" "$KIND" <<'PY'
+import json, os, sys
+path, agent, kind = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(path) as f: s = json.load(f)
+s["round"] += 1
+s["last_status"][agent] = kind
+tmp = f"{path}.tmp.{os.getpid()}"
+with open(tmp, "w") as f: json.dump(s, f, indent=2)
+os.replace(tmp, path)
+PY
+```
+
+A failed send (Enter never submitted after one retry) is not a send — do not update the session.
 
 ## Receiving
 
@@ -114,18 +140,18 @@ Input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]`:
 2. Load `~/.herdr-coworkers/<workspace_id>/session.json`. Missing → protocol violation; surface, don't invent state.
 3. **sid match.** Mismatch is a hard error.
 4. **Sender match.** Claimed `<from>` must equal `session.partner.agent`; `partner.pane_id` must still resolve.
-5. Process per `kind`, run pre-send checks, call `send.sh`.
+5. Process per `kind`, run pre-send checks, send the reply, update the session.
 
 ## Progress guards
 
 - **No fixed round cap.** Continue while producing useful artifacts; exchange `accepted` when done.
-- **No-new-artifact heuristic.** If five consecutive turns produce nothing new (code, test results, decision, narrowed option), send `kind=handoff` instead. Track via `no_progress_count`.
+- **No-new-artifact heuristic.** If five consecutive turns produce nothing new (code, test results, decision, narrowed option), send `kind=handoff` instead. Track via `no_progress_count` (manually `+1` per "nothing new" turn, reset to 0 on real progress).
 - **Stalemate.** Same disagreement restated twice without movement → `kind=stalemate` with a summary.
 - **User override.** Submitted user messages win; surface contradictions in your next partner message.
 
 ## Session file
 
-Path: `~/.herdr-coworkers/<workspace_id>/session.json` (one per workspace).
+Path: `~/.herdr-coworkers/<workspace_id>/session.json` (one per workspace). Shape:
 
 ```json
 {
@@ -142,7 +168,7 @@ Path: `~/.herdr-coworkers/<workspace_id>/session.json` (one per workspace).
 }
 ```
 
-All mutations go through `scripts/update-session.py`. Re-verify recorded pane IDs via `herdr pane get` before relying on them — public pane IDs can compact when panes close.
+All mutations write via temp file + `mv` for atomicity (two agents can race). Re-verify recorded pane IDs via `herdr pane get` before relying on them — public pane IDs can compact when panes close.
 
 ## Workbench tab
 
@@ -150,10 +176,10 @@ Lazy. See `references/workbench-tab.md` if you need a separate tab for long-runn
 
 ## Closing
 
-After both sides exchange `accepted`, the closing agent emits a final `kind=handoff` to the user in its own pane summarizing the outcome, then:
+After both sides exchange `accepted`, the closing agent emits a final `kind=handoff` to the user in its own pane summarizing the outcome, then trashes the session dir:
 
 ```bash
-trash ~/.herdr-coworkers/$(herdr pane get $HERDR_PANE_ID | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')/
+trash ~/.herdr-coworkers/$WS/
 ```
 
 `blocked` and `stalemate` paths also end in `handoff` + cleanup. Stale session files block the next `/herdr-pair` invocation.
