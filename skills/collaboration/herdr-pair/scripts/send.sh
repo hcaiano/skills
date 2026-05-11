@@ -15,10 +15,6 @@
 #      last_status[<self-agent>] = <kind>. (Other session mutations like
 #      no_progress_count stay with the caller via update-session.py.)
 #
-# Pre-send visible-input-guard (block on real user-authored prose) is the
-# CALLER's responsibility — see SKILL.md "Pre-send checks". This script
-# does mechanics, not policy.
-#
 # Exit codes:
 #   0 — verified delivered (or queued for next turn); session updated
 #   1 — partner pane no longer valid

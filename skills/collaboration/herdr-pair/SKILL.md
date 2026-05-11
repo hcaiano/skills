@@ -9,7 +9,7 @@ argument-hint: "[task description]"
 
 Claude and Codex collaborate as peers inside herdr. One tab, two agent panes, plain-text messages flowing directly between them. The user reads along live and can interject in either pane at any time.
 
-This skill is the protocol/policy doc. Mechanics (bootstrap, send-with-verify, atomic session updates) live in `scripts/`. Host-CLI specifics (placeholder strings, workbench tab) live in `references/`.
+This skill is the protocol/policy doc. Mechanics (bootstrap, send-with-verify, atomic session updates) live in `scripts/`. Workbench details live in `references/`.
 
 ## Prerequisite
 
@@ -23,7 +23,7 @@ Two agents collaborate fine when a human shuttles messages between panes — the
 
 1. **Workspace isolation.** Every pane operation is scoped to the caller's `workspace_id`. Cross-workspace activity is forbidden. If something points outside the workspace, refuse and surface to the user.
 2. **Same-tab pair.** The pair lives in exactly one tab with exactly two agent panes. Discovery is filtered to the caller's `tab_id`.
-3. **User override always wins.** If the user types in either pane and contradicts a partner message, the user wins. Surface the contradiction so the user knows it happened.
+3. **User override always wins.** If the user submits a message in either pane and contradicts a partner message, the user wins. Surface the contradiction so the user knows it happened.
 4. **No retries on spawn failure.** One failed partner spawn = handoff to the user with recent pane output. Do not loop.
 
 ## Message format
@@ -99,12 +99,12 @@ herdr wait agent-status "$NEW_PANE" --status idle --timeout 60000 \
 
 Re-verify the new pane with `herdr pane get "$NEW_PANE"` (workspace, tab, agent type), then call `bootstrap.sh` again.
 
-## Pre-send checks (your job, not the script's)
+## Pre-send checks
 
-`scripts/send.sh` handles the mechanics (compose, send, verify, retry). The policy checks are yours before each call:
+`scripts/send.sh` owns the fragile mechanics: compose, send, verify, retry, and session status updates. The remaining policy checks are yours before each call:
 
 1. **Identity.** Confirm partner pane still exists and matches the session file. (`send.sh` also checks this and errors if mismatched.)
-2. **Visible input guard.** Read `herdr pane read <partner> --source visible --lines 8`. Block only on real user-authored prose. Ignore host-CLI placeholder strings (`Try "..."`, `Summarize recent commits`, status lines, prompt glyphs) — full catalog in `references/placeholder-strings.md`. When uncertain, prefer sending; placeholders are overwritten harmlessly.
+2. **Ignore visible input text.** Agent CLIs often render autosuggestions directly in the prompt/input line. Do not inspect, classify, or block on any text currently shown in the partner's input area. Send anyway; `send-text` overwrites those suggestions harmlessly. Only submitted user messages count as user input.
 3. **Working partner.** If `agent_status == working`, only send if this is a `STOP — ...` interrupt. Otherwise wait: `herdr wait agent-status <partner> --status idle --timeout <budget>`. Note: `send.sh` will succeed with a "queued for next turn" state if the partner is mid-tool-call, which is fine for non-interrupt traffic.
 
 ## Post-send (handled by send.sh)
@@ -126,7 +126,7 @@ When your terminal input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]
 2. Load `~/.herdr-coworkers/<self.workspace_id>/session.json`. If missing → protocol violation; surface to the user, don't invent state.
 3. **sid match.** The message's `sid` must equal `session.sid`. Mismatch is a hard error.
 4. **Sender match.** Message claims `<from>`; session's `partner.agent` must equal that, and `partner.pane_id` must still resolve.
-5. Process per `kind`. Prepare reply, run pre-send checks, call `send.sh`, update session.
+5. Process per `kind`. Prepare reply, run pre-send checks, call `send.sh`, update session only for fields outside send.sh's ownership.
 
 ## Progress guards
 
@@ -135,7 +135,7 @@ Two LLMs can disagree forever in good faith. Guards make the loop safe to leave 
 - **No fixed round cap.** Continue as long as the loop is producing useful artifacts. Recognize when the task is genuinely done and exchange `accepted`.
 - **No-new-artifact heuristic.** Before each non-final send, self-check: have I produced new code, test results, a concrete decision, or narrowed an option since my last turn? If five consecutive turns produce nothing new, send `kind=handoff` instead of continuing. Increment `no_progress_count` each "nothing new" turn; reset on real progress.
 - **Stalemate.** If you've restated the same disagreement at least twice without partner movement, send `kind=stalemate` with a short summary. Don't keep arguing.
-- **User override.** Any user input in either pane wins over partner messages. Surface contradictions in your next partner message.
+- **User override.** Any submitted user message in either pane wins over partner messages. Surface contradictions in your next partner message.
 
 Why progress-based and not time-based? Time is a poor proxy. A long typecheck or useful review loop must not force a handoff.
 
