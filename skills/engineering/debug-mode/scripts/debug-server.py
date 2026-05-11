@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import signal
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 
 def now_iso() -> str:
@@ -18,12 +20,10 @@ def now_iso() -> str:
 def normalize_event(payload: dict[str, Any]) -> dict[str, Any]:
     event = dict(payload)
     event.setdefault("timestamp", now_iso())
-    event.setdefault("hypothesis_id", "unknown")
-    event.setdefault("event", "debug_event")
     return event
 
 
-def make_handler(output: Path) -> type[BaseHTTPRequestHandler]:
+def make_handler(sink: TextIO, lock: threading.Lock) -> type[BaseHTTPRequestHandler]:
     class DebugHandler(BaseHTTPRequestHandler):
         def do_POST(self) -> None:  # noqa: N802 - stdlib hook name
             if self.path != "/log":
@@ -47,14 +47,16 @@ def make_handler(output: Path) -> type[BaseHTTPRequestHandler]:
                 self.wfile.write(b"json body must be an object\n")
                 return
 
-            with output.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(normalize_event(payload), sort_keys=True))
-                handle.write("\n")
+            line = json.dumps(normalize_event(payload), sort_keys=True) + "\n"
+            with lock:
+                sink.write(line)
+                sink.flush()
 
             self.send_response(204)
             self.end_headers()
 
         def log_message(self, format: str, *args: Any) -> None:
+            # Suppress default stderr access logs — keep the user's terminal clean.
             return
 
     return DebugHandler
@@ -70,15 +72,22 @@ def main() -> None:
     output = Path(args.output).expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    server = ThreadingHTTPServer((args.host, args.port), make_handler(output))
-    print(f"debug server listening on http://{args.host}:{args.port}/log")
-    print(f"writing events to {output}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    with output.open("a", encoding="utf-8") as sink:
+        lock = threading.Lock()
+        server = ThreadingHTTPServer((args.host, args.port), make_handler(sink, lock))
+        print(f"debug server listening on http://{args.host}:{args.port}/log")
+        print(f"writing events to {output}")
+
+        def shutdown(*_: Any) -> None:
+            threading.Thread(target=server.shutdown, daemon=True).start()
+
+        signal.signal(signal.SIGTERM, shutdown)
+        signal.signal(signal.SIGINT, shutdown)
+
+        try:
+            server.serve_forever()
+        finally:
+            server.server_close()
 
 
 if __name__ == "__main__":

@@ -27,8 +27,6 @@ Human comments are authoritative unless obviously praise, status, or a question.
 
 Treat an author as a bot when `user.login` contains `bot`, or when it matches a known automation account such as CodeRabbit, Codex/OpenAI, Devin, Copilot, Sonar, Greptile, Korbit, or Ultracite. Everything else is human.
 
-Avoid encoding separate behavior for every bot in the main skill. Bot-specific quirks belong in examples or tests, not the default policy.
-
 ## Required Context Before Classification
 
 For each actionable-looking comment:

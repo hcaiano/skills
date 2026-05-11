@@ -7,7 +7,7 @@ argument-hint: "[description of the bug]"
 
 # Debug Mode
 
-Debug mode is for bugs where the root cause is not yet proven. The point is to avoid plausible fixes that only happen to pass once.
+For bugs where the root cause is not yet proven — avoid plausible fixes that only pass once.
 
 ## Workflow
 
@@ -41,7 +41,7 @@ python3 <skill-dir>/scripts/debug-server.py --port 8765 --output /tmp/debug-even
 
 The server accepts `POST /log` with a JSON body and writes JSONL. Confirm it is listening before adding app-side logging. Stop it after analysis, remove all instrumentation, and keep only the evidence summary in the final report.
 
-If the app cannot reach localhost, write structured logs to the app's normal logger or a temporary local file instead. Keep the same fields so analysis stays comparable.
+If localhost is unreachable, log to the app's normal logger or a local file with the same fields.
 
 ## Failure Modes
 

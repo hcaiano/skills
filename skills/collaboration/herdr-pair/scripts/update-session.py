@@ -42,18 +42,11 @@ def resolve_session_file() -> Path:
 
 
 def parse_value(raw: str):
-    """Parse JSON if it looks like JSON; otherwise return the raw string."""
-    stripped = raw.strip()
-    if not stripped:
+    """JSON-parse first; fall back to the raw string."""
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
         return raw
-    first = stripped[0]
-    if first in '{[' or stripped in ("true", "false", "null") or first == '"' \
-            or (first == '-' and stripped[1:2].isdigit()) or first.isdigit():
-        try:
-            return json.loads(stripped)
-        except json.JSONDecodeError:
-            pass
-    return raw
 
 
 def set_path(obj: dict, dotted: str, value) -> None:

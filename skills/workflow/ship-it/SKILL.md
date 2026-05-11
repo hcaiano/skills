@@ -21,16 +21,14 @@ Full PR lifecycle automation — from uncommitted changes to a reviewed, CI-pass
 
 ## Phase 2: Quality gate
 
-Run the project's quality gate before push. The same checks will fail in CI 3–5 minutes later, costing a round-trip and losing context warmth; local first is faster end-to-end even when it occasionally feels redundant.
-
-Detect the gate from the repo, in this order:
+Run the project's quality gate before push — local first catches what CI would catch 3–5 minutes later. Detect the gate, in this order:
 
 1. **Repo instruction files** (`CLAUDE.md`, `AGENTS.md`, or a project-local equivalent). If one documents a quality-gate command, use it.
 2. **Lockfile + scripts** for Node-shaped repos: `bun.lock` → `bun`, `pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `package-lock.json` → `npm`. Read `package.json` `scripts` for `check`, `check-types`/`typecheck`, `build`, `test` (or the project's chosen names).
 3. **Other ecosystems:** `Cargo.toml` → `cargo check && cargo clippy && cargo build`. `go.mod` → `go vet ./... && go build ./...`. Python pyproject with ruff/mypy → `ruff check && mypy . && pytest`. Adjust to what's actually configured.
 4. **Fallback:** ask the user what the gate is, then persist the answer in the PR summary so re-runs don't re-detect.
 
-If any check fails, fix the root cause and commit fixes as separate conventional commits (`fix(lint): ...`, `fix(types): ...`). Re-run until clean. Don't bypass with `--no-verify`; a failing pre-commit hook is signal, not noise.
+If any check fails, fix the root cause and commit fixes as separate conventional commits (`fix(lint): ...`, `fix(types): ...`). Re-run until clean.
 
 ## Phase 3: Push & PR
 

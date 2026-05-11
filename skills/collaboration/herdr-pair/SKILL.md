@@ -7,28 +7,18 @@ argument-hint: "[task description]"
 
 # Herdr Pair
 
-Claude and Codex collaborate as peers inside herdr. One tab, two agent panes, plain-text messages flowing directly between them. The user reads along live and can interject in either pane at any time.
+Claude and Codex collaborate as peers inside herdr — one tab, two agent panes, plain-text messages between them with a structured header. The user reads along live and can interject in either pane.
 
-This skill is the protocol/policy doc. Mechanics (bootstrap, send-with-verify, atomic session updates) live in `scripts/`. Workbench details live in `references/`.
-
-## Prerequisite
-
-This skill requires the `herdr` CLI on PATH and the separate `herdr` skill loaded for pane primitives (`pane list`, `pane get`, `pane split`, `pane run`, `pane send-text`, `pane send-keys`, `wait agent-status`, etc.). `scripts/bootstrap.sh` runs a preflight check on the first call and surfaces a clear error if either is missing.
-
-## Why this exists
-
-Two agents collaborate fine when a human shuttles messages between panes — the bottleneck is the human typing. This skill removes that bottleneck without inventing a new transport: the agents type into each other's panes the same way the human would, with a structured header so the receiver can tell partner traffic apart from user input.
+Requires the `herdr` CLI on PATH and the separate `herdr` skill loaded. `scripts/bootstrap.sh` runs a preflight and surfaces a clear error if either is missing.
 
 ## Hard rules
 
-1. **Workspace isolation.** Every pane operation is scoped to the caller's `workspace_id`. Cross-workspace activity is forbidden. If something points outside the workspace, refuse and surface to the user.
-2. **Same-tab pair.** The pair lives in exactly one tab with exactly two agent panes. Discovery is filtered to the caller's `tab_id`.
-3. **User override always wins.** If the user submits a message in either pane and contradicts a partner message, the user wins. Surface the contradiction so the user knows it happened.
-4. **No retries on spawn failure.** One failed partner spawn = handoff to the user with recent pane output. Do not loop.
+1. **Workspace isolation.** Every pane operation is scoped to the caller's `workspace_id`. Cross-workspace activity is forbidden.
+2. **Same-tab pair.** Exactly one tab with exactly two agent panes. Discovery is filtered to the caller's `tab_id`.
+3. **User override always wins.** If the user submits a message that contradicts a partner message, the user wins. Surface the contradiction.
+4. **No retries on spawn failure.** One failed partner spawn → handoff to the user with recent pane output.
 
 ## Message format
-
-Every machine-to-machine message starts with a single header line, followed by a blank line, followed by plain English:
 
 ```
 [agent <from> -> <to> kind=<kind> sid=<sid>]
@@ -37,56 +27,56 @@ Every machine-to-machine message starts with a single header line, followed by a
 ```
 
 - `<from>`, `<to>`: `claude` or `codex`.
-- `<kind>`: one of `task`, `review`, `question`, `ready`, `accepted`, `blocked`, `stalemate`, `handoff`.
-- `<sid>`: the session id (sortable, e.g. `1715000000-7a3f`).
+- `<kind>`: `task`, `review`, `question`, `ready`, `accepted`, `blocked`, `stalemate`, `handoff`.
+- `<sid>`: sortable session id, e.g. `1715000000-7a3f`.
 
-The header is what the receiver matches on. The body is plain prose — write to a teammate, not to a parser.
+Header matches; body is plain prose — write to a teammate, not a parser.
 
 ### Kinds
 
-- `task` — assign or update work. Mid-flight changes that invalidate the partner's current direction use `task` with a body that begins `STOP — <reason>`. No separate `interrupt` kind on purpose; the state machine stays small.
-- `review` — request review of described changes (often paired with file paths and a short summary).
+- `task` — assign or update work. Mid-flight stop: body begins `STOP — <reason>`.
+- `review` — request review of described changes (file paths + short summary).
 - `question` — ask for clarification before proceeding.
-- `ready` — your side of the work is complete. Body summarizes what changed, how it was validated, and any residual risk.
-- `accepted` — the partner's `ready` looks good. **Both sides sending `accepted` is the only completion signal.**
-- `blocked` — you cannot proceed without the user's input. Body names the missing decision concretely.
-- `stalemate` — you and the partner have restated the same disagreement at least twice without movement. Body summarizes the disagreement so the user can break the tie.
-- `handoff` — final message back to the user (in your own pane, not via send-text). Used when a progress guard fires or when both sides have `accepted` and you're closing out.
+- `ready` — your side is complete. Summarize what changed, how it was validated, residual risk.
+- `accepted` — partner's `ready` looks good. **Both sides sending `accepted` is the only completion signal.**
+- `blocked` — cannot proceed without user input. Name the missing decision.
+- `stalemate` — same disagreement restated twice without movement. Summarize for the user.
+- `handoff` — final message back to the user (in your own pane, not via send-text).
 
-## Bootstrap (initiator side)
+## Bootstrap
 
-Triggered by `/herdr-pair <task>` in either pane. The agent that received the invocation is the initiator.
+Triggered by `/herdr-pair <task>` in either pane. The receiving agent is the initiator.
 
 ```bash
 # Resolve partner + create session. Output: "<partner-pane-id> <sid>"
 read PARTNER_PANE SID < <(scripts/bootstrap.sh)
 ```
 
-Exit codes from `bootstrap.sh`:
+Exit codes:
 
-- `0` — partner found, session written. Continue.
+- `0` — partner found, session written.
 - `1` — preflight failed (herdr CLI/env missing). Stop and surface.
-- `2` — no partner in tab. Run spawn flow below, then call bootstrap again.
-- `3` — multiple partner candidates. Stop and ask the user which to pair with.
+- `2` — no partner in tab. Run spawn flow, then call bootstrap again.
+- `3` — multiple candidates. Stop and ask which to pair with.
 
 Then send the first message:
 
 ```bash
-# Body in a file (heredoc is safe for quotes/$/backticks).
 cat > /tmp/first-task.txt <<'EOF'
-<task body here, including any context from the user's invocation>
+<task body, including context from the user's invocation>
 
 (Herdr pair protocol — if your skill didn't auto-load, run /herdr-pair, or follow the [agent X -> Y kind=... sid=...] header format.)
 EOF
 
-# send.sh handles compose, send, verify, and bumps round + last_status on success.
 scripts/send.sh "$PARTNER_PANE" "$SID" task /tmp/first-task.txt
 ```
 
-## Spawn flow (only when bootstrap returns exit 2)
+`send.sh` composes, sends, verifies (with one Enter retry), and bumps `round` + `last_status` on success.
+
+## Spawn flow (only when bootstrap exits 2)
 
 ```bash
-PARTNER_BIN="$(command -v codex)"   # or claude — whichever is the opposite agent
+PARTNER_BIN="$(command -v codex)"   # or claude — whichever is opposite
 [ -n "$PARTNER_BIN" ] || { echo "no partner binary on PATH" >&2; exit 1; }
 
 NEW_PANE="$(herdr pane split "$HERDR_PANE_ID" --direction right --no-focus \
@@ -97,51 +87,45 @@ herdr wait agent-status "$NEW_PANE" --status idle --timeout 60000 \
   || { herdr pane read "$NEW_PANE" --source recent --lines 40; exit 1; }
 ```
 
-Re-verify the new pane with `herdr pane get "$NEW_PANE"` (workspace, tab, agent type), then call `bootstrap.sh` again.
+Re-verify the new pane with `herdr pane get`, then call `bootstrap.sh` again.
 
 ## Pre-send checks
 
-`scripts/send.sh` owns the fragile mechanics: compose, send, verify, retry, and session status updates. The remaining policy checks are yours before each call:
+`send.sh` owns the mechanics. Your job:
 
-1. **Identity.** Confirm partner pane still exists and matches the session file. (`send.sh` also checks this and errors if mismatched.)
-2. **Ignore visible input text.** Agent CLIs often render autosuggestions directly in the prompt/input line. Do not inspect, classify, or block on any text currently shown in the partner's input area. Send anyway; `send-text` overwrites those suggestions harmlessly. Only submitted user messages count as user input.
-3. **Working partner.** If `agent_status == working`, only send if this is a `STOP — ...` interrupt. Otherwise wait: `herdr wait agent-status <partner> --status idle --timeout <budget>`. Note: `send.sh` will succeed with a "queued for next turn" state if the partner is mid-tool-call, which is fine for non-interrupt traffic.
+1. **Identity** — partner pane still exists and matches the session file. `send.sh` also checks.
+2. **Ignore visible input text.** Don't gate on autosuggestions in the partner's input line — `send-text` overwrites them. Only submitted user messages count.
+3. **Working partner.** If `agent_status == working`, send only if this is a `STOP — ...` interrupt. Otherwise wait: `herdr wait agent-status <partner> --status idle --timeout <budget>`. Non-interrupt sends to a working partner succeed in the "queued for next turn" state.
 
-## Post-send (handled by send.sh)
+## Post-send
 
-`scripts/send.sh` verifies delivery with one Enter retry, then on success automatically increments `round` and sets `last_status.<self-agent> = <kind>` in the session file. Exit codes:
+`send.sh` exit codes:
 
-- `0` — verified delivered (or queued for next turn); session updated.
-- `2` — send failed even after one Enter retry; session **not** updated.
+- `0` — delivered or queued; session updated (`round` incremented, `last_status.<self> = <kind>`).
+- `2` — failed even after one Enter retry; session **not** updated.
 
-Use `scripts/update-session.py` directly only for the mutations send.sh doesn't own — typically `no_progress_count` (increment when self-checking "nothing new", reset when you produce real progress) and `workbench.*` (when creating the workbench tab).
-
-A send without a verified delivery is not a send — the session state stays consistent because send.sh skips the update on exit 2.
+Use `update-session.py` directly only for `no_progress_count` and `workbench.*` — the fields send.sh doesn't own.
 
 ## Receiving
 
-When your terminal input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]`, treat it as partner traffic:
+Input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]`:
 
 1. Re-resolve self: `herdr pane get $HERDR_PANE_ID`.
-2. Load `~/.herdr-coworkers/<self.workspace_id>/session.json`. If missing → protocol violation; surface to the user, don't invent state.
-3. **sid match.** The message's `sid` must equal `session.sid`. Mismatch is a hard error.
-4. **Sender match.** Message claims `<from>`; session's `partner.agent` must equal that, and `partner.pane_id` must still resolve.
-5. Process per `kind`. Prepare reply, run pre-send checks, call `send.sh`, update session only for fields outside send.sh's ownership.
+2. Load `~/.herdr-coworkers/<workspace_id>/session.json`. Missing → protocol violation; surface, don't invent state.
+3. **sid match.** Mismatch is a hard error.
+4. **Sender match.** Claimed `<from>` must equal `session.partner.agent`; `partner.pane_id` must still resolve.
+5. Process per `kind`, run pre-send checks, call `send.sh`.
 
 ## Progress guards
 
-Two LLMs can disagree forever in good faith. Guards make the loop safe to leave running:
-
-- **No fixed round cap.** Continue as long as the loop is producing useful artifacts. Recognize when the task is genuinely done and exchange `accepted`.
-- **No-new-artifact heuristic.** Before each non-final send, self-check: have I produced new code, test results, a concrete decision, or narrowed an option since my last turn? If five consecutive turns produce nothing new, send `kind=handoff` instead of continuing. Increment `no_progress_count` each "nothing new" turn; reset on real progress.
-- **Stalemate.** If you've restated the same disagreement at least twice without partner movement, send `kind=stalemate` with a short summary. Don't keep arguing.
-- **User override.** Any submitted user message in either pane wins over partner messages. Surface contradictions in your next partner message.
-
-Why progress-based and not time-based? Time is a poor proxy. A long typecheck or useful review loop must not force a handoff.
+- **No fixed round cap.** Continue while producing useful artifacts; exchange `accepted` when done.
+- **No-new-artifact heuristic.** If five consecutive turns produce nothing new (code, test results, decision, narrowed option), send `kind=handoff` instead. Track via `no_progress_count`.
+- **Stalemate.** Same disagreement restated twice without movement → `kind=stalemate` with a summary.
+- **User override.** Submitted user messages win; surface contradictions in your next partner message.
 
 ## Session file
 
-Path: `~/.herdr-coworkers/<workspace_id>/session.json`. One per workspace.
+Path: `~/.herdr-coworkers/<workspace_id>/session.json` (one per workspace).
 
 ```json
 {
@@ -158,20 +142,18 @@ Path: `~/.herdr-coworkers/<workspace_id>/session.json`. One per workspace.
 }
 ```
 
-`self` is from the perspective of whichever agent is reading the file — both interpret it from their own viewpoint. All mutations go through `scripts/update-session.py` for atomicity.
-
-Pane IDs are cached live handles, not durable identity. Before relying on a recorded pane ID, re-verify it via `herdr pane get`; herdr's docs warn that public pane IDs can compact when panes close.
+All mutations go through `scripts/update-session.py`. Re-verify recorded pane IDs via `herdr pane get` before relying on them — public pane IDs can compact when panes close.
 
 ## Workbench tab
 
-Lazy/optional. See `references/workbench-tab.md` if an agent needs a separate tab for long-running shared processes (servers, log streams).
+Lazy. See `references/workbench-tab.md` if you need a separate tab for long-running shared processes.
 
-## Closing a session
+## Closing
 
-When both sides have exchanged `accepted` and the work is done, the closing side emits a final `kind=handoff` to the user in its own pane (not via `send.sh`) summarizing the outcome, then:
+After both sides exchange `accepted`, the closing agent emits a final `kind=handoff` to the user in its own pane summarizing the outcome, then:
 
 ```bash
 trash ~/.herdr-coworkers/$(herdr pane get $HERDR_PANE_ID | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["workspace_id"])')/
 ```
 
-`blocked` and `stalemate` paths also end in `kind=handoff` + cleanup. Don't leave stale session files — the next `/herdr-pair` invocation will refuse to start if it finds one with live panes.
+`blocked` and `stalemate` paths also end in `handoff` + cleanup. Stale session files block the next `/herdr-pair` invocation.
