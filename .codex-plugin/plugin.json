@@ -1,0 +1,40 @@
+{
+  "name": "hcaiano-skills",
+  "version": "0.1.0",
+  "description": "Henrique Caiano's custom agent skills for debugging, PR review workflows, shipping, and Claude/Codex collaboration.",
+  "author": {
+    "name": "Henrique Caiano"
+  },
+  "license": "UNLICENSED",
+  "keywords": [
+    "skills",
+    "codex",
+    "claude",
+    "workflow"
+  ],
+  "skills": [
+    "./skills/collaboration/herdr-coworkers",
+    "./skills/engineering/debug-mode",
+    "./skills/workflow/review-pr-comments",
+    "./skills/workflow/ship-it"
+  ],
+  "interface": {
+    "displayName": "hcaiano skills",
+    "shortDescription": "Custom local agent workflow skills",
+    "longDescription": "Personal skills for hypothesis-driven debugging, PR review comment handling, PR shipping, and Claude/Codex collaboration workflows.",
+    "developerName": "Henrique Caiano",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use debug-mode to investigate this bug",
+      "Use review-pr-comments to handle this PR feedback",
+      "Use herdr-coworkers to pair with the other agent"
+    ],
+    "brandColor": "#111111",
+    "screenshots": []
+  }
+}
