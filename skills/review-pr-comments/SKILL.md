@@ -47,6 +47,8 @@ Always read the target file and surrounding code before classifying a code sugge
 
 ## Execution
 
+Keep a minimal working checklist keyed by original comment id/thread URL: category, reply status, and fix commit SHA when relevant. A finding is done only after its original thread has a reply.
+
 For each Fix:
 
 1. Read the file and surrounding context.
@@ -54,6 +56,9 @@ For each Fix:
 3. Stage only the changed files for that fix group.
 4. Batch related fixes into conventional commits.
 5. Run the project quality gate.
+6. After the commit lands, reply on every comment fixed by that commit with the commit SHA (see Reply Format in `references/pr-comment-loop.md`). One reply per comment, even when several share a commit.
+
+For each False Positive / Out of Scope: post the threaded reply immediately with the templated reasoning. Do not wait until the end.
 
 Out of Scope: verify the bug/risk exists, defer low-severity nits with a reply, expanded-mode required for follow-up PRs, never open follow-ups that depend on unmerged parent-PR changes.
 
@@ -63,7 +68,7 @@ Out of Scope: verify the bug/risk exists, defer low-severity nits with a reply, 
 2. Resolve conflicts.
 3. Rerun the quality gate.
 4. Push normally. Never force push without explicit user ask.
-5. Re-fetch comments, threads, checks, mergeability — then continue per the shared recheck loop.
+5. Re-fetch comments, threads, checks, mergeability — then continue per the shared recheck loop. During this re-fetch, verify every Fix / False Positive / Out of Scope comment has a reply from your account on the original thread (review comments: match `in_reply_to_id`; issue comments: a follow-up that quotes the original permalink). Post anything missing before reporting complete. A general PR summary is never a substitute.
 
 ## Summary Report
 
@@ -71,12 +76,15 @@ End with:
 
 ```markdown
 PR #123 - Review Complete
-Fixed:
-Dismissed:
-Out-of-scope:
-Needs attention:
+Fixed: <count> (each replied with commit SHA on the original thread)
+Dismissed: <count> (each replied as false positive on the original thread)
+Out-of-scope: <count> (each replied with deferral reason on the original thread)
+Needs attention: <list of thread URLs awaiting user input>
+Unreplied: <should be 0 — if not, list thread URLs and reason>
 CI:
 Merge-ready:
 Commits:
 Remaining:
 ```
+
+`Unreplied` must be `0` for a clean run — it only counts Fix / False Positive / Out of Scope. Needs Discussion and Informational do not count as Unreplied, but every Needs Discussion thread must appear under `Needs attention` with its URL.

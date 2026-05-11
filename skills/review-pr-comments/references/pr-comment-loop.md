@@ -41,15 +41,22 @@ Classify from evidence, not from comment text alone.
 
 ## Reply Format
 
-Reply once per finding.
+**Hard rule: every actionable finding gets its own threaded reply on the original comment.** A single summary comment on the PR is not a substitute and is forbidden as the only response — the user cannot tell which issues were handled if replies are not attached to each thread.
 
-- Fix: `Fixed in <commit> - <what changed>.`
-- False Positive: `Reviewed as false positive - <why>.`
-- Out of Scope: `Out of scope for this PR - <deferred reason or follow-up PR>.`
-- Needs Discussion: no automatic reply.
-- Informational: optional reaction only.
+- Reply to threaded review comments using `in_reply_to=<COMMENT_ID>` so the reply nests under the original thread.
+- Reply to top-level issue comments as a new issue comment that quotes the original (short quote + permalink) so the timeline stays readable.
+- One reply per finding. Do not batch multiple findings into one reply.
+- Do not skip a reply because the fix is "obvious from the diff" — the reply is the audit trail.
 
-For top-level issue comments, include a short quote and permalink to the parent before the reply so the timeline remains readable.
+Reply body templates (keep them short, one line is fine):
+
+- Fix: `Fixed in <commit-sha> — <what changed>.`
+- False Positive: `False positive — <why>. <link to code or repo instruction if relevant>.`
+- Out of Scope: `Out of scope for this PR — <reason>. <follow-up PR/issue link if opened>.`
+- Needs Discussion: no automatic reply; flag to the user in the summary.
+- Informational: optional `+1` reaction; no text reply.
+
+If a single commit fixes multiple comments, reply on each comment individually, all pointing to the same commit SHA.
 
 ## Recheck Loop
 
