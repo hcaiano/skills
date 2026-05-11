@@ -38,8 +38,11 @@ TAB=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys
 SELF_AGENT=$(printf '%s' "$SELF_JSON" | python3 -c 'import sys,json;print(json.load(sys.stdin)["result"]["pane"]["agent"])')
 
 # --- Find partner ---
+# Note: pipe stdin to python3 -c (the program is the -c arg). Using
+# `python3 - <<HEREDOC` would make python read the program from stdin
+# and lose the piped JSON.
 PANES_JSON=$(herdr pane list --workspace "$WS")
-PARTNER_LINE=$(printf '%s' "$PANES_JSON" | python3 - "$TAB" "$SELF_AGENT" <<'PY'
+PARTNER_LINE=$(printf '%s' "$PANES_JSON" | python3 -c '
 import sys, json
 tab, self_agent = sys.argv[1], sys.argv[2]
 data = json.load(sys.stdin)
@@ -53,9 +56,8 @@ elif len(candidates) > 1:
     print("MULTI")
 else:
     p = candidates[0]
-    print(f"{p['agent']} {p['pane_id']}")
-PY
-)
+    print(p["agent"], p["pane_id"])
+' "$TAB" "$SELF_AGENT")
 
 case "$PARTNER_LINE" in
   NONE)  echo "no opposite-agent partner pane found in tab; caller should run spawn flow" >&2; exit 2 ;;

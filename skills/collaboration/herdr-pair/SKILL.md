@@ -79,9 +79,8 @@ cat > /tmp/first-task.txt <<'EOF'
 (Herdr pair protocol — if your skill didn't auto-load, run /herdr-pair, or follow the [agent X -> Y kind=... sid=...] header format.)
 EOF
 
+# send.sh handles compose, send, verify, and bumps round + last_status on success.
 scripts/send.sh "$PARTNER_PANE" "$SID" task /tmp/first-task.txt
-scripts/update-session.py round 1
-scripts/update-session.py last_status.claude task   # or last_status.codex if you're codex
 ```
 
 ## Spawn flow (only when bootstrap returns exit 2)
@@ -110,14 +109,14 @@ Re-verify the new pane with `herdr pane get "$NEW_PANE"` (workspace, tab, agent 
 
 ## Post-send (handled by send.sh)
 
-`scripts/send.sh` verifies delivery with one Enter retry, then exits 0 (delivered or queued) or 2 (still in input buffer after retry). After a successful send, update the session:
+`scripts/send.sh` verifies delivery with one Enter retry, then on success automatically increments `round` and sets `last_status.<self-agent> = <kind>` in the session file. Exit codes:
 
-```bash
-scripts/update-session.py --inc round
-scripts/update-session.py last_status.<self-agent> <kind>
-```
+- `0` — verified delivered (or queued for next turn); session updated.
+- `2` — send failed even after one Enter retry; session **not** updated.
 
-A send without a verified delivery is not a send — do not increment `round` on a non-zero exit.
+Use `scripts/update-session.py` directly only for the mutations send.sh doesn't own — typically `no_progress_count` (increment when self-checking "nothing new", reset when you produce real progress) and `workbench.*` (when creating the workbench tab).
+
+A send without a verified delivery is not a send — the session state stays consistent because send.sh skips the update on exit 2.
 
 ## Receiving
 

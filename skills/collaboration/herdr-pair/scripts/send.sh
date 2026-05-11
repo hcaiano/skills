@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# send.sh — deliver one machine-to-machine message to the partner pane.
+# send.sh — deliver one machine-to-machine message to the partner pane,
+# verify delivery, and update the session file on success.
 #
 # Usage: send.sh <partner-pane-id> <sid> <kind> <body-file>
 #
@@ -10,17 +11,22 @@
 #   4. Post-send verify: read partner's visible buffer; accept "header in
 #      scrollback" or "header under queued notice". Retry Enter once if
 #      the header is still in the input buffer. Hard stop after the retry.
+#   5. On verified delivery: increment session round and set
+#      last_status[<self-agent>] = <kind>. (Other session mutations like
+#      no_progress_count stay with the caller via update-session.py.)
 #
 # Pre-send visible-input-guard (block on real user-authored prose) is the
 # CALLER's responsibility — see SKILL.md "Pre-send checks". This script
 # does mechanics, not policy.
 #
 # Exit codes:
-#   0 — verified delivered (or queued for next turn)
+#   0 — verified delivered (or queued for next turn); session updated
 #   1 — partner pane no longer valid
-#   2 — send failed (Enter didn't submit even after one retry)
+#   2 — send failed (Enter didn't submit even after one retry); session NOT updated
 #   3 — argument/usage error
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ "$#" -ne 4 ]; then
   echo "usage: send.sh <partner-pane-id> <sid> <kind> <body-file>" >&2
@@ -89,7 +95,17 @@ verify() {
   return 0
 }
 
+update_session_on_success() {
+  # Best-effort: session updates failing shouldn't mark the send as failed,
+  # but log to stderr so the caller can repair manually.
+  "$SCRIPT_DIR/update-session.py" --inc round 2>&1 >&2 || \
+    echo "warn: send.sh failed to increment round" >&2
+  "$SCRIPT_DIR/update-session.py" "last_status.$SELF_AGENT" "$KIND" 2>&1 >&2 || \
+    echo "warn: send.sh failed to set last_status.$SELF_AGENT" >&2
+}
+
 if verify; then
+  update_session_on_success
   exit 0
 fi
 
@@ -97,6 +113,7 @@ fi
 herdr pane send-keys "$PARTNER_PANE" Enter >/dev/null
 sleep 2
 if verify; then
+  update_session_on_success
   exit 0
 fi
 
