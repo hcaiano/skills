@@ -68,4 +68,17 @@ After every push, inspect all latest-head surfaces again:
 - mergeability/conflict state
 - branch staleness against target
 
-Success requires two consecutive clean rechecks on the latest head. Stop with a precise blocker when auth/rate limits prevent inspection, checks stop changing across repeated rechecks, merge conflicts require broader judgment, or the next action needs expanded-mode confirmation.
+**Reviewer-first invariant:** never wait on pending CI while there are unresolved, non-outdated review threads, fresh reviewer comments, or unreplied actionable findings. Reviewer feedback is the immediate work queue. Pending CI is background signal until the review surface is clean.
+
+Use this order after each push:
+
+1. Record the latest head SHA from the PR.
+2. Fetch unresolved review threads, review comments, reviews, and issue comments.
+3. If active review feedback exists, classify the whole current sweep and group compatible fixes. Fix all actionable items from that sweep before pushing unless they conflict or one fix is risky enough to isolate. Then run the local quality gate, commit, push, reply on each original thread, resolve threads when appropriate, and restart the loop. Do not wait for CI before doing this.
+4. Only when the reviewer surface is quiet, check CI status for the latest head.
+5. If a CI check has completed with a real failure, read the failed logs, fix, run the local quality gate, commit, push, and restart the loop.
+6. If CI is only queued or in progress and reviewer feedback is clean, it is acceptable to wait/poll CI, but every poll must re-check reviewer threads/comments before checking CI again.
+
+This avoids wasting a full CI cycle after every reviewer fix. Bots often post comments while CI is still running, and any fix push restarts CI anyway. The only signal that strictly requires green CI is the final done condition.
+
+Success requires two consecutive clean rechecks on the latest head. A clean recheck means reviewer feedback is quiet, every Fix / False Positive / Out of Scope item has a threaded reply, CI is green for the latest head, the branch is synced, and GitHub reports the PR mergeable. Stop with a precise blocker when auth/rate limits prevent inspection, CI remains pending without progress after repeated reviewer-clean polls, merge conflicts require broader judgment, or the next action needs expanded-mode confirmation.

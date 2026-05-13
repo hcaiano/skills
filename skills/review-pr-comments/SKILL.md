@@ -68,7 +68,8 @@ Out of Scope: verify the bug/risk exists, defer low-severity nits with a reply, 
 2. Resolve conflicts.
 3. Rerun the quality gate.
 4. Push normally. Never force push without explicit user ask.
-5. Re-fetch comments, threads, checks, mergeability — then continue per the shared recheck loop. During this re-fetch, verify every Fix / False Positive / Out of Scope comment has a reply from your account on the original thread (review comments: match `in_reply_to_id`; issue comments: a follow-up that quotes the original permalink). Post anything missing before reporting complete. A general PR summary is never a substitute.
+5. Re-fetch reviewer comments and unresolved threads first. If new actionable feedback appears, handle it before waiting on queued/in-progress CI.
+6. Then re-fetch checks and mergeability, and continue per the shared recheck loop. During this re-fetch, verify every Fix / False Positive / Out of Scope comment has a reply from your account on the original thread (review comments: match `in_reply_to_id`; issue comments: a follow-up that quotes the original permalink). Post anything missing before reporting complete. A general PR summary is never a substitute.
 
 ## Summary Report
 

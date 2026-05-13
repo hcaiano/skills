@@ -38,17 +38,22 @@ Push the branch (`-u` if needed). Create the PR with `gh pr create` — short ti
 
 Run the recheck loop documented in `../review-pr-comments/references/pr-comment-loop.md`. It covers mode-split safety, comment classification, reply format, and the "two consecutive clean rechecks" stop condition. Don't re-implement that policy here.
 
+**Reviewer-first invariant:** after every push, look for reviewer comments and unresolved review threads before waiting on CI. Do not sit on queued/in-progress checks while CodeRabbit, Codex, a human reviewer, or another bot has raised an actionable issue. Every fix push restarts CI, so reviewer feedback should be drained first; CI is final validation once that surface is quiet.
+
 After each push:
 
-1. **Check CI:** `gh pr checks {number}`. For failures, read logs with `gh run view {run_id} --log-failed`. Distinguish infra failures (CodeQL config, flaky tests) from real code failures; fix the real ones, commit, push.
-2. **Run the PR comment loop** per the shared reference. Default to single-PR mode; ask before any expanded-mode action.
-3. **Sync with target branch** before claiming ready:
+1. **Reviewer sweep first.** Fetch latest comments + unresolved review threads using `../review-pr-comments/references/github-comment-fetching.md`.
+2. **If reviewer feedback is actionable, handle the current sweep now.** Classify per the shared reference, group compatible fixes, make the smallest changes, run the local quality gate, commit, push, reply on each original thread with the commit SHA, resolve threads when appropriate, then restart Phase 4. Do not wait for pending CI.
+3. **Only when the reviewer sweep is quiet, inspect CI.**
+   - For completed real failures: read logs with `gh run view {run_id} --log-failed`, fix the root cause, run the local quality gate, commit, push, then restart Phase 4.
+   - For queued/in-progress checks: wait only in short polls, and each poll starts again at step 1 with reviewer comments before checking CI.
+4. **Do not leave review replies behind.** Every Fix / False Positive / Out of Scope finding needs a threaded reply on the original comment before reporting the loop clean. A PR summary comment is not enough.
+5. **Sync with target branch** before claiming ready:
    ```bash
    git fetch origin main
    git merge --no-edit origin/main
    ```
    Resolve conflicts immediately, re-run the quality gate, push. If the merge created a new head, restart the recheck loop.
-4. **Re-run the quality gate** after fixes. Push.
 
 ## Done condition
 
