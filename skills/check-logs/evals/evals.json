@@ -1,0 +1,11 @@
+{
+  "skill_name": "check-logs",
+  "evals": [
+    {
+      "id": "cms-failed",
+      "prompt": "/check-logs cms",
+      "expected_output": "Agent locates the existing turbo TUI pane in the workspace (must NOT spawn a new bun dev), navigates the TUI to the //#dev:cms task using either the / search or arrow keys (no q, no i), reads its logs, and reports the shell quoting failure ('syntax error near unexpected token child_process'). Should quote the relevant log lines verbatim.",
+      "files": []
+    }
+  ]
+}
