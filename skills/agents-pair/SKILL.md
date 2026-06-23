@@ -187,10 +187,9 @@ context.
   before asking Claude to reason from memory.
 - For debugging, PR shipping, PR comment handling, or repo-specific workflows,
   prefer the dedicated local skill and use Claude as reviewer or second opinion.
-- For long tasks, goals, research, migrations, or work that will need many tool
-  calls/checkpoints, use `planning-with-files`. Keep `task_plan.md`,
-  `findings.md`, and `progress.md` as shared pair state, pass that skill to
-  Claude, and have both agents update the files at checkpoints.
+- For long tasks, goals, research, or migrations, use `planning-with-files`.
+  Keep `task_plan.md`, `findings.md`, and `progress.md` as shared pair state,
+  pass that skill to Claude, and update the files at checkpoints.
 
 ## Shared Skill Context
 
@@ -202,8 +201,9 @@ skill contract so both agents stay on the same page.
    or references Claude must honor for this turn.
 2. Pass the same skill list through the helper with repeated
    `--shared-skill name=/absolute/path/SKILL.md` flags.
-   For read/write turns, the helper also adds each shared skill directory to
-   Claude's readable roots so installed skills outside the repo can be opened.
+   The helper mounts shared skill dirs only for read turns or skills already in
+   the workspace. In write mode, external skill rules must be in the prompt or
+   inspected in a read-mode turn first.
 3. When using `--agents-json`, `--agent`, or Claude background agents, include
    the same `Shared skills` section in the specialist prompt. Specialists do not
    inherit that context unless Codex gives it to them.

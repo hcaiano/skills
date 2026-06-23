@@ -104,6 +104,22 @@ add_dir_once() {
   ADD_DIRS+=("$dir")
 }
 
+is_under_dir() {
+  local child="$1"
+  local parent="$2"
+  if [[ -z "$child" || -z "$parent" ]]; then
+    return 1
+  fi
+  case "$child/" in
+    "$parent"/*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --session-id)
@@ -464,8 +480,13 @@ if ((${#SHARED_SKILLS[@]} > 0)); then
     fi
     skill_dir="$(cd "$(dirname "$skill_path")" && pwd -P)"
     skill_path="$skill_dir/$(basename "$skill_path")"
-    add_dir_once "$skill_dir"
-    APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}- ${skill_name}: ${skill_path}"$'\n'
+    shared_skill_note=""
+    if [[ "$TOOLS_MODE" == "read" ]] || is_under_dir "$skill_dir" "$WORKSPACE"; then
+      add_dir_once "$skill_dir"
+    elif [[ "$TOOLS_MODE" == "write" ]]; then
+      shared_skill_note=" (external skill dir not mounted in write mode; use the prompt's extracted rules, or ask Codex for a read-mode skill-inspection turn if needed)"
+    fi
+    APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}- ${skill_name}: ${skill_path}${shared_skill_note}"$'\n'
   done
 fi
 
