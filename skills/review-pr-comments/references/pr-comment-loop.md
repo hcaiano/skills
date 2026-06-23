@@ -44,6 +44,10 @@ Classify from evidence, not from comment text alone.
 **Hard rule: every actionable finding gets its own reply on the original surface.** A single summary comment on the PR is not a substitute and is forbidden as the only response — the user cannot tell which issues were handled if replies are not attached to, or clearly quote, each finding.
 
 - Reply to threaded review comments using `in_reply_to=<COMMENT_ID>` so the reply nests under the original thread.
+- After replying to a Fix / False Positive / Out of Scope review thread, resolve
+  the thread when GraphQL exposes `resolveReviewThread`, then re-query that exact
+  thread and require `isResolved=true`. A posted reply alone is not enough for a
+  clean UI state.
 - Reply to actionable PR review bodies as a top-level issue comment that quotes the review permalink and the finding title, because GitHub does not expose a resolvable thread for review-body findings. Process unreplied review-body findings even when their reviewed commit is older than the current PR head; stale review bodies remain visible in the timeline and still need an audit reply. After the reply, check whether the review body implements `Minimizable`; if `viewerCanMinimize` is true, minimize it with classifier `RESOLVED`.
 - Reply to top-level issue comments as a new issue comment that quotes the original (short quote + permalink) so the timeline stays readable.
 - One reply per finding. Do not batch multiple findings into one reply.
@@ -83,4 +87,4 @@ Use this order after each push:
 
 This avoids wasting a full CI cycle after every reviewer fix. Bots often post comments while CI is still running, and any fix push restarts CI anyway. The only signal that strictly requires green CI is the final done condition.
 
-Success requires two consecutive clean rechecks on the latest head. A clean recheck means reviewer feedback is quiet, every Fix / False Positive / Out of Scope item has a reply on the original surface, CI is green for the latest head, the branch is synced, and GitHub reports the PR mergeable. Stop with a precise blocker when auth/rate limits prevent inspection, CI remains pending without progress after repeated reviewer-clean polls, merge conflicts require broader judgment, or the next action needs expanded-mode confirmation.
+Success requires two consecutive clean rechecks on the latest head. A clean recheck means reviewer feedback is quiet, every Fix / False Positive / Out of Scope item has a reply on the original surface, every processed review thread is confirmed `isResolved=true`, every processed review-body finding is minimized when minimization is allowed, CI is green for the latest head, the branch is synced, and GitHub reports the PR mergeable. The second clean recheck must happen at least 3 minutes after the most recent push or review reply; if a bot posts late feedback during that window, handle it and restart the two-clean-recheck count. Stop with a precise blocker when auth/rate limits prevent inspection, CI remains pending without progress after repeated reviewer-clean polls, merge conflicts require broader judgment, or the next action needs expanded-mode confirmation.

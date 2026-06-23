@@ -92,6 +92,31 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
 
 Treat unresolved, non-outdated threads as active unless the latest comment is clearly informational or already addressed by a later commit.
 
+Verify one review thread after replying or resolving:
+
+```bash
+gh api graphql -f query='
+query($id: ID!) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      id
+      isResolved
+      isOutdated
+      path
+      line
+      comments(first: 20) {
+        nodes {
+          databaseId
+          author { login }
+          body
+          url
+        }
+      }
+    }
+  }
+}' -f id="$THREAD_NODE_ID"
+```
+
 ## Replies
 
 Reply to a threaded review comment:
@@ -100,6 +125,20 @@ Reply to a threaded review comment:
 gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments" \
   -f body="$BODY" \
   -F in_reply_to="$COMMENT_ID"
+```
+
+Resolve a processed review thread:
+
+```bash
+gh api graphql -f query='
+mutation($id: ID!) {
+  resolveReviewThread(input: {threadId: $id}) {
+    thread {
+      id
+      isResolved
+    }
+  }
+}' -f id="$THREAD_NODE_ID"
 ```
 
 Reply to a top-level issue comment:

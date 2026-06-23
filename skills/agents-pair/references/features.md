@@ -71,10 +71,15 @@ task. Use features only when they move the task forward.
 - `--max-turns` and helper timeouts: bound runaway turns without weakening
   Claude's default autonomy.
 - `--tools none` and `--tools read`: constrained/sanitized escape hatches. The
-  helper also adds `--bare` so Claude hooks, plugins, skills, MCP servers,
-  CLAUDE.md, and prompt customizations are not loaded for that prompt. `none` is
-  also rejected with `--active-session`; isolated no-tools prompts must not
-  resume prior pair conversation history.
+  helper disables slash commands and denies MCP tools with `mcp__*`; `--bare` is
+  opt-in with `AGENTS_PAIR_ENABLE_BARE=1` because Claude Code 2.1.186 can report
+  subscription auth as "Not logged in" when `--bare` is used. If that happens
+  after `--bare` is re-enabled for `read`, the helper saves
+  `*.bare-auth-error.*` and retries once without `--bare`, switching first-turn
+  `--session-id` retries to `--resume` when Claude has already reserved the id.
+  For `none`, it saves the auth failure and exits instead of retrying because
+  no-tools prompts must not resume any prior Claude conversation history. `none`
+  is also rejected with `--active-session` and explicit `--resume`.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
   `--prompt-suggestions`, and raw `--claude-arg`:
   use only for a concrete task need and record the reason in the transcript.

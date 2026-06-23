@@ -371,15 +371,22 @@ If you bypass the helper, keep the same defaults unless you are intentionally
 running a workflow-enabled pass, and pipe the prompt through stdin instead of
 passing large prompt text as a shell argument.
 
-For `--tools none` and `--tools read`, the helper starts Claude with `--bare`,
-Claude's minimal mode, so hook, skill, plugin, MCP, auto-memory, and CLAUDE.md
-discovery is skipped for constrained prompts. In `none`, it also appends a system
-prompt telling Claude it has no tools and must not narrate or simulate tool
-calls. Use these modes only as safety escape hatches; normal agents-pair turns
-stay autonomous.
+For `--tools none` and `--tools read`, the helper disables slash commands and
+denies MCP tools with `mcp__*` so constrained prompts do not use broader Claude
+surfaces. `--bare` is opt-in with `AGENTS_PAIR_ENABLE_BARE=1` because Claude Code
+2.1.186 can report subscription auth as "Not logged in" when `--bare` is used.
+If `--bare` is re-enabled and Claude hits that auth bug, the helper saves the
+failed attempt as `*.bare-auth-error.*`. For `read`, it retries once without
+`--bare`, switching a first-turn `--session-id` retry to `--resume` because
+Claude may reserve the id before returning the auth failure. For `none`, it does
+not retry after a bare auth failure because no-tools turns must never resume
+conversation history. In `none`, it also appends a system prompt telling Claude
+it has no tools and must not narrate or simulate tool calls. Use these modes only
+as safety escape hatches; normal agents-pair turns stay autonomous.
 The helper rejects `--active-session --tools none` because an active session can
 resume prior Claude conversation history; run isolated no-tools consults with an
-explicit fresh `--session-id` and `--out-dir` instead.
+explicit fresh `--session-id` and `--out-dir` instead. It also rejects explicit
+`--tools none --resume <session>` for the same reason.
 For `--tools none` and `--tools read`, the helper also denies MCP tools with
 `mcp__*` so configured external/private MCP servers are not still callable.
 

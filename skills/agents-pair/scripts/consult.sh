@@ -59,6 +59,17 @@ Options:
   --claude-arg ARG        Raw Claude CLI arg passthrough. Repeatable.
   --disable-slash-commands Disable Claude slash commands and skills.
   --enable-slash-commands Kept for compatibility; slash commands are enabled by default.
+
+Environment:
+  AGENTS_PAIR_ENABLE_BARE=1 Re-enable Claude --bare for constrained turns.
+                             Disabled by default because Claude Code 2.1.186
+                             can report subscription auth as "Not logged in"
+                             when --bare is used. If re-enabled for read mode
+                             and Claude hits that auth bug, the helper retries
+                             once without --bare while keeping constrained tool
+                             settings. No-tools bare auth failures are not
+                             retried because no-tools turns must never resume
+                             conversation history.
 EOF
 }
 
@@ -99,6 +110,8 @@ PEER_MESSAGE=false
 APPEND_SYSTEM_PROMPT=""
 CLAUDE_ARGS=()
 DISABLE_SLASH_COMMANDS=false
+ENABLE_BARE=false
+BARE_APPLIED=false
 
 add_dir_once() {
   local dir="$1"
@@ -114,6 +127,62 @@ add_dir_once() {
     done
   fi
   ADD_DIRS+=("$dir")
+}
+
+cmd_has_arg() {
+  local needle="$1"
+  local arg
+  for arg in "${cmd[@]}"; do
+    if [[ "$arg" == "$needle" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+append_cmd_arg_once() {
+  local arg="$1"
+  if ! cmd_has_arg "$arg"; then
+    cmd+=("$arg")
+  fi
+}
+
+remove_cmd_arg_once() {
+  local needle="$1"
+  local removed=false
+  local next=()
+  local arg
+
+  for arg in "${cmd[@]}"; do
+    if [[ "$removed" != true && "$arg" == "$needle" ]]; then
+      removed=true
+      continue
+    fi
+    next+=("$arg")
+  done
+
+  cmd=("${next[@]}")
+}
+
+switch_session_id_arg_to_resume() {
+  local next=()
+  local index=0
+
+  while ((index < ${#cmd[@]})); do
+    if [[ "${cmd[$index]}" == "--session-id" ]]; then
+      next+=(--resume)
+      if ((index + 1 < ${#cmd[@]})); then
+        next+=("${cmd[$((index + 1))]}")
+        index=$((index + 2))
+        continue
+      fi
+    else
+      next+=("${cmd[$index]}")
+    fi
+    index=$((index + 1))
+  done
+
+  cmd=("${next[@]}")
 }
 
 is_under_dir() {
@@ -323,6 +392,19 @@ if ! command -v claude >/dev/null 2>&1; then
   exit 127
 fi
 
+case "${AGENTS_PAIR_ENABLE_BARE:-false}" in
+  1|true|TRUE|yes|YES)
+    ENABLE_BARE=true
+    ;;
+  0|false|FALSE|no|NO|"")
+    ENABLE_BARE=false
+    ;;
+  *)
+    echo "error: AGENTS_PAIR_ENABLE_BARE must be 1/true/yes or 0/false/no" >&2
+    exit 2
+    ;;
+esac
+
 if [[ ! -f "$PROMPT" ]]; then
   echo "error: prompt file not found: $PROMPT" >&2
   exit 2
@@ -349,6 +431,11 @@ fi
 
 if [[ "$ACTIVE_SESSION" == true && "$TOOLS_MODE" == "none" ]]; then
   echo "error: --active-session cannot be combined with --tools none because no-tools turns must not resume prior pair history; use --session-id and --out-dir without --resume for an isolated no-tools consult" >&2
+  exit 2
+fi
+
+if [[ "$TOOLS_MODE" == "none" && "$RESUME_SESSION" == true ]]; then
+  echo "error: --resume cannot be combined with --tools none because no-tools turns must not resume prior Claude conversation history; use a fresh --session-id without --resume for an isolated no-tools consult" >&2
   exit 2
 fi
 
@@ -735,7 +822,12 @@ if [[ "$PEER_MESSAGE" == true ]]; then
 fi
 
 if [[ "$TOOLS_MODE" == "none" || "$TOOLS_MODE" == "read" ]]; then
-  cmd+=(--bare)
+  if [[ "$ENABLE_BARE" == true ]]; then
+    cmd+=(--bare)
+    BARE_APPLIED=true
+  elif [[ "$DISABLE_SLASH_COMMANDS" != true ]]; then
+    cmd+=(--disable-slash-commands)
+  fi
 fi
 
 if [[ "$TOOLS_MODE" == "none" ]]; then
@@ -888,14 +980,104 @@ run_claude_stream() {
   return "$monitor_status"
 }
 
+run_selected_claude() {
+  if [[ "$USE_STREAM" == true ]]; then
+    run_claude_stream
+  else
+    run_claude_json
+  fi
+}
+
+has_claude_auth_failure() {
+  python3 - "$TMP_JSON" "$TMP_STREAM" <<'PY'
+import json
+import os
+import sys
+
+
+def as_text(value) -> str:
+    try:
+        return json.dumps(value, sort_keys=True).lower()
+    except TypeError:
+        return str(value).lower()
+
+
+def iter_json_values(path: str):
+    if not os.path.exists(path):
+        return
+    try:
+        yielded = False
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    yield json.loads(line)
+                    yielded = True
+                except json.JSONDecodeError:
+                    continue
+
+            if not yielded:
+                f.seek(0)
+                yield json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+
+
+for candidate in sys.argv[1:]:
+    for value in iter_json_values(candidate):
+        text = as_text(value)
+        if "not logged in" in text and (
+            "authentication_failed" in text or "please run /login" in text
+        ):
+            raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+save_bare_auth_failure_outputs() {
+  local saved=false
+
+  if [[ "$USE_STREAM" == true && -s "$TMP_STREAM" ]]; then
+    mv "$TMP_STREAM" "$BASE.bare-auth-error.stream.jsonl"
+    echo "warning: saved failed --bare stream: $BASE.bare-auth-error.stream.jsonl" >&2
+    saved=true
+  fi
+
+  if [[ -s "$TMP_JSON" ]]; then
+    mv "$TMP_JSON" "$BASE.bare-auth-error.json"
+    echo "warning: saved failed --bare result: $BASE.bare-auth-error.json" >&2
+    saved=true
+  fi
+
+  if [[ "$saved" != true ]]; then
+    echo "warning: claude --bare failed before writing output" >&2
+  fi
+}
+
 set +e
-if [[ "$USE_STREAM" == true ]]; then
-  run_claude_stream
-else
-  run_claude_json
-fi
+run_selected_claude
 claude_status=$?
 set -e
+
+if [[ "$claude_status" -ne 0 && "$BARE_APPLIED" == true ]] && has_claude_auth_failure; then
+  if [[ "$TOOLS_MODE" == "none" ]]; then
+    echo "warning: claude --bare returned an auth failure" >&2
+    save_bare_auth_failure_outputs
+    echo "error: not retrying no-tools turn after --bare auth failure because retrying may require --resume; provide bare-compatible auth or run without AGENTS_PAIR_ENABLE_BARE" >&2
+    exit "$claude_status"
+  fi
+  echo "warning: claude --bare returned an auth failure; retrying once without --bare" >&2
+  save_bare_auth_failure_outputs
+  remove_cmd_arg_once "--bare"
+  append_cmd_arg_once "--disable-slash-commands"
+  switch_session_id_arg_to_resume
+  BARE_APPLIED=false
+
+  set +e
+  run_selected_claude
+  claude_status=$?
+  set -e
+fi
 
 if [[ "$USE_STREAM" == true ]]; then
   if [[ -s "$TMP_STREAM" ]]; then

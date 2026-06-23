@@ -80,7 +80,8 @@ Out of Scope: verify the bug/risk exists, defer low-severity nits with a reply, 
 3. Rerun the quality gate.
 4. Push normally. Never force push without explicit user ask.
 5. Re-fetch reviewer comments, review bodies, and unresolved threads first. If new actionable feedback appears, handle it before waiting on queued/in-progress CI.
-6. Then re-fetch checks and mergeability, and continue per the shared recheck loop. During this re-fetch, verify every Fix / False Positive / Out of Scope item has a reply from your account on the original surface (review comments: match `in_reply_to_id`; review bodies and issue comments: a follow-up issue comment that quotes the original permalink/title). Post anything missing before reporting complete. A general PR summary is never a substitute.
+6. Then re-fetch checks and mergeability, and continue per the shared recheck loop. During this re-fetch, verify every Fix / False Positive / Out of Scope item has a reply from your account on the original surface (review comments: match `in_reply_to_id`; review bodies and issue comments: a follow-up issue comment that quotes the original permalink/title). For review threads, also verify GraphQL `isResolved=true` after replying; if your account can resolve the thread and the finding is Fix / False Positive / Out of Scope, call `resolveReviewThread` and re-query the exact thread id. Post anything missing before reporting complete. A general PR summary is never a substitute.
+7. Do not stop after a single clean check immediately after pushing. Bots can post late. A clean finish requires two reviewer-surface rechecks on the latest head separated by at least 3 minutes after the most recent push/reply, with the second recheck still showing 0 unresolved active threads, 0 unreplied actionable review bodies, and 0 unreplied actionable issue comments.
 
 ## Summary Report
 
