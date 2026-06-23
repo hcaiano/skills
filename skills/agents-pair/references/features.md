@@ -74,9 +74,11 @@ task. Use features only when they move the task forward.
   helper disables slash commands and denies MCP tools with `mcp__*`.
   Agents-pair is subscription-auth only: do not use `--bare`, `ANTHROPIC_API_KEY`,
   or `apiKeyHelper`. Claude's bare mode skips OAuth/keychain subscription auth,
-  so the helper rejects raw `--bare`, rejects settings with `apiKeyHelper`, and
-  unsets `ANTHROPIC_API_KEY` before invoking Claude. `none` is also rejected with
-  `--active-session` and explicit `--resume`.
+  so the helper rejects raw `--bare`, rejects settings with `apiKeyHelper` or
+  provider-auth environment variables, scrubs provider/API auth variables, and
+  launches Claude with `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` so settings-file
+  provider auth cannot override the logged-in subscription path. `none` is also
+  rejected with `--active-session` and explicit `--resume`.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
   `--prompt-suggestions`, and raw `--claude-arg`:
   use only for a concrete task need and record the reason in the transcript.

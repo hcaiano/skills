@@ -99,6 +99,35 @@ PEER_MESSAGE=false
 APPEND_SYSTEM_PROMPT=""
 CLAUDE_ARGS=()
 DISABLE_SLASH_COMMANDS=false
+SUBSCRIPTION_AUTH_BLOCKED_ENV=(
+  ANTHROPIC_API_KEY
+  ANTHROPIC_AUTH_TOKEN
+  ANTHROPIC_AWS_API_KEY
+  ANTHROPIC_AWS_BASE_URL
+  ANTHROPIC_AWS_WORKSPACE_ID
+  ANTHROPIC_BASE_URL
+  ANTHROPIC_BEDROCK_BASE_URL
+  ANTHROPIC_BEDROCK_MANTLE_BASE_URL
+  ANTHROPIC_CUSTOM_HEADERS
+  ANTHROPIC_FOUNDRY_API_KEY
+  ANTHROPIC_FOUNDRY_BASE_URL
+  ANTHROPIC_FOUNDRY_RESOURCE
+  ANTHROPIC_VERTEX_BASE_URL
+  ANTHROPIC_VERTEX_PROJECT_ID
+  ANTHROPIC_WORKSPACE_ID
+  AWS_BEARER_TOKEN_BEDROCK
+  CLAUDE_CODE_SIMPLE
+  CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH
+  CLAUDE_CODE_SKIP_BEDROCK_AUTH
+  CLAUDE_CODE_SKIP_FOUNDRY_AUTH
+  CLAUDE_CODE_SKIP_MANTLE_AUTH
+  CLAUDE_CODE_SKIP_VERTEX_AUTH
+  CLAUDE_CODE_USE_ANTHROPIC_AWS
+  CLAUDE_CODE_USE_BEDROCK
+  CLAUDE_CODE_USE_FOUNDRY
+  CLAUDE_CODE_USE_MANTLE
+  CLAUDE_CODE_USE_VERTEX
+)
 
 add_dir_once() {
   local dir="$1"
@@ -357,10 +386,12 @@ if [[ "$TOOLS_MODE" == "none" && "$RESUME_SESSION" == true ]]; then
   exit 2
 fi
 
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  echo "warning: ignoring ANTHROPIC_API_KEY; agents-pair uses Claude subscription auth only" >&2
-  unset ANTHROPIC_API_KEY
-fi
+for auth_env_name in "${SUBSCRIPTION_AUTH_BLOCKED_ENV[@]}"; do
+  if [[ -n "${!auth_env_name+x}" ]]; then
+    echo "warning: ignoring $auth_env_name; agents-pair uses Claude subscription auth only" >&2
+    unset "$auth_env_name"
+  fi
+done
 
 if ((${#CLAUDE_ARGS[@]} > 0)); then
   for claude_arg in "${CLAUDE_ARGS[@]}"; do
@@ -386,9 +417,23 @@ if [[ -n "$SETTINGS" ]]; then
     echo "error: Claude settings with apiKeyHelper are not allowed; agents-pair uses Claude subscription auth only" >&2
     exit 2
   fi
-  if [[ -f "$SETTINGS" ]] && grep -qi 'apiKeyHelper' "$SETTINGS"; then
-    echo "error: Claude settings file contains apiKeyHelper; agents-pair uses Claude subscription auth only" >&2
-    exit 2
+  for auth_env_name in "${SUBSCRIPTION_AUTH_BLOCKED_ENV[@]}"; do
+    if [[ "$SETTINGS" == *"$auth_env_name"* ]]; then
+      echo "error: Claude settings mention $auth_env_name; agents-pair uses Claude subscription auth only" >&2
+      exit 2
+    fi
+  done
+  if [[ -f "$SETTINGS" ]]; then
+    if grep -Eqi 'apiKeyHelper' "$SETTINGS"; then
+      echo "error: Claude settings file contains apiKeyHelper; agents-pair uses Claude subscription auth only" >&2
+      exit 2
+    fi
+    for auth_env_name in "${SUBSCRIPTION_AUTH_BLOCKED_ENV[@]}"; do
+      if grep -Eq "\"$auth_env_name\"|\\b$auth_env_name\\b" "$SETTINGS"; then
+        echo "error: Claude settings file mentions $auth_env_name; agents-pair uses Claude subscription auth only" >&2
+        exit 2
+      fi
+    done
   fi
 fi
 
@@ -842,24 +887,24 @@ fi
 
 run_claude_json() {
   if [[ -z "$TIMEOUT_SECONDS" ]]; then
-    (cd "$RUN_CWD" && "${cmd[@]}" < "$PROMPT" > "$TMP_JSON")
+    (cd "$RUN_CWD" && CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 "${cmd[@]}" < "$PROMPT" > "$TMP_JSON")
     return $?
   fi
 
   if command -v timeout >/dev/null 2>&1; then
-    (cd "$RUN_CWD" && timeout "$TIMEOUT_SECONDS" "${cmd[@]}" < "$PROMPT" > "$TMP_JSON")
+    (cd "$RUN_CWD" && CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 timeout "$TIMEOUT_SECONDS" "${cmd[@]}" < "$PROMPT" > "$TMP_JSON")
     return $?
   fi
 
   if command -v gtimeout >/dev/null 2>&1; then
-    (cd "$RUN_CWD" && gtimeout "$TIMEOUT_SECONDS" "${cmd[@]}" < "$PROMPT" > "$TMP_JSON")
+    (cd "$RUN_CWD" && CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 gtimeout "$TIMEOUT_SECONDS" "${cmd[@]}" < "$PROMPT" > "$TMP_JSON")
     return $?
   fi
 
   local pid watchdog status timed_out
   timed_out="$TMP_JSON.timeout.$$"
   rm -f "$timed_out"
-  (cd "$RUN_CWD" && "${cmd[@]}" < "$PROMPT" > "$TMP_JSON") &
+  (cd "$RUN_CWD" && CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 "${cmd[@]}" < "$PROMPT" > "$TMP_JSON") &
   pid=$!
   (
     sleep "$TIMEOUT_SECONDS"
@@ -893,7 +938,7 @@ run_claude_stream() {
     "$SCRIPT_DIR/stream_monitor.py" "$TMP_STREAM" < "$fifo" &
   monitor=$!
 
-  (cd "$RUN_CWD" && "${cmd[@]}" < "$PROMPT" > "$fifo") &
+  (cd "$RUN_CWD" && CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 "${cmd[@]}" < "$PROMPT" > "$fifo") &
   pid=$!
 
   watchdog=""

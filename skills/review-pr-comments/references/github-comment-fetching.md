@@ -29,8 +29,11 @@ review-thread nodes. Fetch and classify them explicitly:
 ```bash
 gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" --paginate |
   jq -r '.[] | select((.body // "") != "") |
-    [.id, .user.login, .commit_id, .html_url, .body] | @json'
+    {rest_id: .id, node_id: .node_id, author: .user.login, commit_id: .commit_id, html_url: .html_url, body: .body} | @json'
 ```
+
+Use `node_id`, not the numeric REST `rest_id`, as `$REVIEW_NODE_ID` for the
+GraphQL minimization checks below.
 
 Top-level issue comments:
 
@@ -90,7 +93,52 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
 }'
 ```
 
-Treat unresolved, non-outdated threads as active unless the latest comment is clearly informational or already addressed by a later commit.
+Treat every `isResolved=false` thread as review inventory, even when
+`isOutdated=true`. Outdated means the diff hunk moved; it does not mean the
+conversation is closed in GitHub's UI.
+
+Summarize unresolved threads without dropping outdated ones:
+
+```bash
+gh api graphql -f owner="${OWNER_REPO%/*}" -f name="${OWNER_REPO#*/}" -F number="$PR_NUMBER" -f query='
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      reviewThreads(first: 100) {
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 20) {
+            nodes {
+              databaseId
+              author { login }
+              body
+              url
+              createdAt
+              outdated
+              commit { oid }
+            }
+          }
+        }
+      }
+    }
+  }
+}' --jq '.data.repository.pullRequest as $pr |
+  {head: $pr.headRefOid,
+   unresolved: [$pr.reviewThreads.nodes[]
+     | select(.isResolved == false)
+     | {id, path, line, isOutdated,
+        comments: [.comments.nodes[]
+          | {databaseId, url, author: .author.login, createdAt, outdated,
+             commit: .commit.oid,
+             title: (.body | split("\n") | map(select(length > 0))[0:2])}]}],
+   resolved_count: ([$pr.reviewThreads.nodes[] | select(.isResolved == true)] | length),
+   total_threads: ($pr.reviewThreads.nodes | length)}'
+```
 
 Verify one review thread after replying or resolving:
 
@@ -116,6 +164,9 @@ query($id: ID!) {
   }
 }' -f id="$THREAD_NODE_ID"
 ```
+
+If the verification still shows `isResolved=false`, the loop is not clean. Do
+not report completion; resolve or classify the blocker under Needs attention.
 
 ## Replies
 
