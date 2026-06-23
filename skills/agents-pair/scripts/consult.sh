@@ -25,6 +25,7 @@ Options:
   --timeout-seconds N     Kill the Claude call after N seconds. Exits 124.
   --agent NAME            Claude Code agent to run for this consult.
   --agents-json JSON|FILE JSON object defining custom Claude Code agents.
+  --shared-skill NAME=PATH Codex skill to mirror to Claude. Repeatable.
   --mcp-config JSON|FILE  Claude MCP config to load. Repeatable.
   --settings JSON|FILE    Claude settings override for this session.
   --plugin-dir PATH       Load a Claude Code plugin directory. Repeatable.
@@ -57,6 +58,7 @@ FALLBACK_MODEL=""
 TIMEOUT_SECONDS=""
 AGENT_NAME=""
 AGENTS_JSON=""
+SHARED_SKILLS=()
 MCP_CONFIGS=()
 SETTINGS=""
 PLUGIN_DIRS=()
@@ -136,6 +138,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --agents-json)
       AGENTS_JSON="${2:-}"
+      shift 2
+      ;;
+    --shared-skill)
+      SHARED_SKILLS+=("${2:-}")
       shift 2
       ;;
     --mcp-config)
@@ -350,6 +356,28 @@ fi
 
 if [[ -n "$APPEND_SYSTEM_PROMPT" ]]; then
   APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}"$'\n\n'
+fi
+
+if ((${#SHARED_SKILLS[@]} > 0)); then
+  APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}Shared Codex skill context. Codex selected these skills for the current task. Before acting, follow the same workflow contracts and pass the same skill context to any Claude agents/specialists you spawn:"$'\n'
+  for shared_skill in "${SHARED_SKILLS[@]}"; do
+    skill_name="${shared_skill%%=*}"
+    skill_path="${shared_skill#*=}"
+    if [[ "$skill_name" == "$skill_path" ]]; then
+      echo "error: --shared-skill must use NAME=PATH" >&2
+      exit 2
+    fi
+    if [[ -d "$skill_path" && -f "$skill_path/SKILL.md" ]]; then
+      skill_path="$skill_path/SKILL.md"
+    fi
+    if [[ ! -f "$skill_path" ]]; then
+      echo "error: shared skill file not found: $skill_path" >&2
+      exit 2
+    fi
+    skill_dir="$(cd "$(dirname "$skill_path")" && pwd -P)"
+    skill_path="$skill_dir/$(basename "$skill_path")"
+    APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}- ${skill_name}: ${skill_path}"$'\n'
+  done
 fi
 
 if [[ "$TOOLS_MODE" == "none" ]]; then

@@ -170,6 +170,8 @@ craft, or better endurance on a long goal.
 
 Pairing does not replace domain skills. Codex should load and follow the best
 local skill for the actual work, then use Claude to challenge or complement it.
+Any skill Codex loads for the task is shared pair context, not private Codex
+context.
 
 - For UI, frontend, product surfaces, app shells, dashboards, landing pages,
   visual polish, UX copy, accessibility, responsive behavior, or design systems:
@@ -180,6 +182,25 @@ local skill for the actual work, then use Claude to challenge or complement it.
   before asking Claude to reason from memory.
 - For debugging, PR shipping, PR comment handling, or repo-specific workflows,
   prefer the dedicated local skill and use Claude as reviewer or second opinion.
+
+## Shared Skill Context
+
+When Codex uses a useful skill, tell Claude and Claude agents to use the same
+skill contract so both agents stay on the same page.
+
+1. Include a `Shared skills` section in every Claude prompt after goal/context:
+   skill name, absolute `SKILL.md` path, why it applies, and the specific rules
+   or references Claude must honor for this turn.
+2. Pass the same skill list through the helper with repeated
+   `--shared-skill name=/absolute/path/SKILL.md` flags.
+3. When using `--agents-json`, `--agent`, or Claude background agents, include
+   the same `Shared skills` section in the specialist prompt. Specialists do not
+   inherit that context unless Codex gives it to them.
+4. Do not paste full skill bodies by default. Give paths and the relevant
+   extracted constraints; load reference files only when that skill says they are
+   needed for the current turn.
+5. If Claude cannot access the skill path, paste the minimal required contract
+   into the prompt and record that fallback in the transcript.
 
 When selecting advanced Codex or Claude surfaces, read
 `references/features.md`. It covers Codex goals, subagents, worktrees,
@@ -204,6 +225,8 @@ You are Claude collaborating with Codex on the same local repository.
 
 Workspace: <absolute workspace root>
 Shared goal: <goal>
+Shared skills:
+- <skill-name>: <absolute SKILL.md path>; relevant rules: <brief constraints>
 Your role for this turn: <brainstorm|review|oracle|write-pass>
 Autonomous mode: enabled with bypass permissions and default tools.
 Edit policy: edit files when it materially advances this turn; otherwise return
@@ -258,6 +281,7 @@ bash <skill-dir>/scripts/consult.sh \
   --effort high \
   --permission-mode bypassPermissions \
   --tools write \
+  --shared-skill agents-pair=<skill-dir>/SKILL.md \
   --timeout-seconds 600
 ```
 
@@ -275,43 +299,14 @@ bash <skill-dir>/scripts/consult.sh \
   --effort high \
   --permission-mode bypassPermissions \
   --tools write \
+  --shared-skill agents-pair=<skill-dir>/SKILL.md \
   --timeout-seconds 600
 ```
 
-For a Claude specialist consult:
-
-```bash
-bash <skill-dir>/scripts/consult.sh \
-  --session-id "$CLAUDE_SESSION_ID" \
-  --kind specialist-review \
-  --prompt "$PROMPT_FILE" \
-  --out-dir "$TRANSCRIPT_DIR" \
-  --workspace "$WORKSPACE_ROOT" \
-  --model opus \
-  --effort xhigh \
-  --permission-mode bypassPermissions \
-  --tools write \
-  --timeout-seconds 900 \
-  --agents-json "$AGENTS_JSON_FILE" \
-  --agent reviewer
-```
-
-For a focused Claude implementation turn:
-
-```bash
-bash <skill-dir>/scripts/consult.sh \
-  --session-id "$CLAUDE_SESSION_ID" \
-  --resume \
-  --kind write-pass \
-  --prompt "$PROMPT_FILE" \
-  --out-dir "$TRANSCRIPT_DIR" \
-  --workspace "$WORKSPACE_ROOT" \
-  --model opus \
-  --effort xhigh \
-  --permission-mode bypassPermissions \
-  --tools write \
-  --timeout-seconds 900
-```
+For specialist and focused implementation turns, use the same shape with
+`--kind specialist-review` or `--kind write-pass`, `--effort xhigh`, the same
+`--shared-skill` list, and `--agents-json`/`--agent` when using Claude
+specialists.
 
 For final high-stakes adversarial review, use `--effort max`. Do this for
 architecture, security, production-risk, UI-quality, or large-diff review when
