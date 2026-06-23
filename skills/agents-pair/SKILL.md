@@ -198,6 +198,8 @@ skill contract so both agents stay on the same page.
    or references Claude must honor for this turn.
 2. Pass the same skill list through the helper with repeated
    `--shared-skill name=/absolute/path/SKILL.md` flags.
+   For read/write turns, the helper also adds each shared skill directory to
+   Claude's readable roots so installed skills outside the repo can be opened.
 3. When using `--agents-json`, `--agent`, or Claude background agents, include
    the same `Shared skills` section in the specialist prompt. Specialists do not
    inherit that context unless Codex gives it to them.

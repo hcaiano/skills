@@ -68,6 +68,7 @@ TIMEOUT_SECONDS=""
 AGENT_NAME=""
 AGENTS_JSON=""
 SHARED_SKILLS=()
+ADD_DIRS=()
 MCP_CONFIGS=()
 SETTINGS=""
 PLUGIN_DIRS=()
@@ -79,6 +80,22 @@ PEER_MESSAGE=false
 APPEND_SYSTEM_PROMPT=""
 CLAUDE_ARGS=()
 DISABLE_SLASH_COMMANDS=false
+
+add_dir_once() {
+  local dir="$1"
+  local existing
+  if [[ -z "$dir" ]]; then
+    return
+  fi
+  if ((${#ADD_DIRS[@]} > 0)); then
+    for existing in "${ADD_DIRS[@]}"; do
+      if [[ "$existing" == "$dir" ]]; then
+        return
+      fi
+    done
+  fi
+  ADD_DIRS+=("$dir")
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -259,6 +276,7 @@ PROMPT="$PROMPT_DIR/$(basename "$PROMPT")"
 
 if [[ -n "$WORKSPACE" ]]; then
   WORKSPACE="$(cd "$WORKSPACE" && pwd -P)"
+  add_dir_once "$WORKSPACE"
 fi
 
 mkdir -p "$OUT_DIR"
@@ -398,6 +416,7 @@ if ((${#SHARED_SKILLS[@]} > 0)); then
     fi
     skill_dir="$(cd "$(dirname "$skill_path")" && pwd -P)"
     skill_path="$skill_dir/$(basename "$skill_path")"
+    add_dir_once "$skill_dir"
     APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}- ${skill_name}: ${skill_path}"$'\n'
   done
 fi
@@ -419,10 +438,16 @@ case "$TOOLS_MODE" in
     cmd+=(--tools "")
     ;;
   read)
-    cmd+=(--tools "Read,Grep,Glob" --add-dir "$WORKSPACE")
+    cmd+=(--tools "Read,Grep,Glob")
+    if ((${#ADD_DIRS[@]} > 0)); then
+      cmd+=(--add-dir "${ADD_DIRS[@]}")
+    fi
     ;;
   write)
-    cmd+=(--tools default --add-dir "$WORKSPACE")
+    cmd+=(--tools default)
+    if ((${#ADD_DIRS[@]} > 0)); then
+      cmd+=(--add-dir "${ADD_DIRS[@]}")
+    fi
     ;;
 esac
 
