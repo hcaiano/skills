@@ -323,6 +323,14 @@ if ((${#PLUGIN_URLS[@]} > 0)); then
   done
 fi
 
+if [[ "$TOOLS_MODE" != "write" ]]; then
+  if [[ -n "$DISALLOWED_TOOLS" ]]; then
+    DISALLOWED_TOOLS="$DISALLOWED_TOOLS,mcp__*"
+  else
+    DISALLOWED_TOOLS="mcp__*"
+  fi
+fi
+
 if [[ -n "$ALLOWED_TOOLS" ]]; then
   cmd+=(--allowed-tools "$ALLOWED_TOOLS")
 fi

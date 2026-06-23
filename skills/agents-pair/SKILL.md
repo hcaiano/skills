@@ -158,7 +158,9 @@ is an autonomous peer by default; downgrade only for a specific safety reason.
   repeated cross-review + strict validation.
 - `constrained`: use read-only/no-tools/safe-mode/bare-mode only for sanitized
   prompts, secret-heavy workspaces, broken Claude customizations, or a narrow
-  diagnostic where autonomy would add risk without improving output.
+  diagnostic where autonomy would add risk without improving output. The helper
+  denies MCP tools with `--disallowed-tools "mcp__*"` in `none` and `read` modes
+  because Claude's `--tools` flag only limits built-in tools.
 
 Do not escalate automatically just because a feature exists. Escalation should
 buy either better search breadth, a stronger adversarial read, domain-specific
@@ -322,6 +324,8 @@ passing large prompt text as a shell argument.
 For `--tools none`, the helper appends a system prompt telling Claude it has no
 tools and must not narrate or simulate tool calls. Use this only as a safety
 escape hatch for sanitized prompts; normal agents-pair turns stay autonomous.
+For `--tools none` and `--tools read`, the helper also denies MCP tools with
+`mcp__*` so configured external/private MCP servers are not still callable.
 
 When plugins, MCP configs, settings, custom agents, hooks, or raw Claude flags
 are added for a turn, record why in the transcript and keep the target files
