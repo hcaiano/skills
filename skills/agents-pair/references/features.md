@@ -72,7 +72,9 @@ task. Use features only when they move the task forward.
   Claude's default autonomy.
 - `--tools none` and `--tools read`: constrained/sanitized escape hatches. The
   helper also adds `--safe-mode` so Claude hooks, plugins, skills, MCP servers,
-  and prompt customizations are not loaded for that prompt.
+  and prompt customizations are not loaded for that prompt. `none` is also
+  rejected with `--active-session`; isolated no-tools prompts must not resume
+  prior pair conversation history.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
   `--prompt-suggestions`, and raw `--claude-arg`:
   use only for a concrete task need and record the reason in the transcript.

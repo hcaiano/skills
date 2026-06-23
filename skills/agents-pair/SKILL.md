@@ -377,6 +377,9 @@ not observe constrained prompts. In `none`, it also appends a system prompt
 telling Claude it has no tools and must not narrate or simulate tool calls. Use
 these modes only as safety escape hatches; normal agents-pair turns stay
 autonomous.
+The helper rejects `--active-session --tools none` because an active session can
+resume prior Claude conversation history; run isolated no-tools consults with an
+explicit fresh `--session-id` and `--out-dir` instead.
 For `--tools none` and `--tools read`, the helper also denies MCP tools with
 `mcp__*` so configured external/private MCP servers are not still callable.
 

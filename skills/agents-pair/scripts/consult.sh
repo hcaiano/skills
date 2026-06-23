@@ -347,6 +347,11 @@ if [[ "$ACTIVE_SESSION" == true && -z "$WORKSPACE" ]]; then
   exit 2
 fi
 
+if [[ "$ACTIVE_SESSION" == true && "$TOOLS_MODE" == "none" ]]; then
+  echo "error: --active-session cannot be combined with --tools none because no-tools turns must not resume prior pair history; use --session-id and --out-dir without --resume for an isolated no-tools consult" >&2
+  exit 2
+fi
+
 if [[ -n "$TIMEOUT_SECONDS" && ! "$TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]; then
   echo "error: --timeout-seconds must be a positive integer" >&2
   exit 2
