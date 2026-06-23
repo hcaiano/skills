@@ -33,6 +33,12 @@ task. Use features only when they move the task forward.
 
 - `claude -p`: default transport for paired turns. Capture stream JSON, final
   JSON, and Markdown.
+- Helper `--active-session`: normal agents-pair transport. It loads or creates
+  the workspace active-session record, reuses the same Claude conversation with
+  `--resume` after the first successful or establishing turn, derives the
+  transcript directory, writes the returned Claude session id/checkpoint back
+  after success, and serializes active calls with a workspace lock. Use
+  `--new-active-session` only after recording why the old session is stale.
 - `--resume`: required after the first successful Claude turn; do not reuse
   `--session-id` for continuation.
 - `--permission-mode bypassPermissions`: normal agents-pair mode. Pass it on
@@ -83,11 +89,9 @@ by default; add plugins/MCP/settings only when relevant:
 
 ```bash
 bash <skill-dir>/scripts/consult.sh \
-  --session-id "$CLAUDE_SESSION_ID" \
-  --resume \
+  --active-session \
   --kind workflow \
   --prompt "$PROMPT_FILE" \
-  --out-dir "$TRANSCRIPT_DIR" \
   --workspace "$WORKSPACE_ROOT" \
   --permission-mode bypassPermissions \
   --tools write \

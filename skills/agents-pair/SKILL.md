@@ -63,8 +63,9 @@ hierarchical: only one agent edits a given file set at a time.
 
 ## Session State
 
-Keep one active pair session per workspace root. Do not infer state from terminal
-history, old prompts, or loose files.
+Keep one active pair session per workspace root. Do not spawn a fresh Claude
+conversation for each user message inside that session, and do not infer state
+from terminal history, old prompts, or loose files.
 
 Create state under:
 
@@ -94,6 +95,7 @@ Store:
   "capability_profile": "peer-autonomous",
   "status": "active",
   "session_established": false,
+  "session_establishing": false,
   "turn": 0,
   "no_progress_count": 0,
   "checkpoints": [],
@@ -102,19 +104,25 @@ Store:
 }
 ```
 
-If an active session exists and the goal matches the current user goal, resume it.
-If it is unrelated, mark it stale or replace it only after recording that choice
-in the transcript. User instructions always override old session state.
+Use `consult.sh --active-session` for normal pair turns. The helper holds a
+workspace lock, loads or creates `active-session.json`, chooses `--session-id`
+for the first attempt and `--resume` after success or an in-flight establish,
+derives the transcript directory, and updates the stored Claude session
+id/checkpoint after success. If the active session is unrelated, record why and
+pass `--new-active-session`; goal mismatches otherwise stop instead of leaking
+work into the wrong Claude conversation. User instructions always override old
+session state.
 
 For long-running goals, update the session after each meaningful checkpoint:
 plan accepted, files edited, tests run, Claude reviewed, Codex subagent returned,
 blocker found, user changed direction, or no-progress detected. This lets Codex
 resume with the current goal state instead of rediscovering the work.
 
-After every successful Claude call, read the returned JSON `session_id` and write
-it back to `claude_session_id`. Set `session_established: true` only after the
-first successful turn. Reusing `--session-id` for later turns fails; resumed
-turns must call the helper with `--resume`.
+After every successful Claude call, ensure the returned JSON `session_id` is
+written back to `claude_session_id`. Set `session_established: true` only after
+the first successful turn. Reusing `--session-id` for later turns fails; active
+session mode handles this automatically. Use explicit `--session-id`/`--resume`
+only for recovery or a deliberately separate Claude conversation.
 
 After non-`claude -p` Claude surfaces, still update the same session state:
 record the command, output path, related background-agent id or review id,
@@ -327,33 +335,14 @@ saves the full raw stream as `NNNN-kind.stream.jsonl`. Do not try to read hidden
 reasoning; the stream may expose reasoning-block markers or token counts, but the
 useful signal is what Claude says, does, and returns.
 
-First Claude turn for a pair session:
+Every normal Claude turn in a pair session:
 
 ```bash
 bash <skill-dir>/scripts/consult.sh \
-  --session-id "$CLAUDE_SESSION_ID" \
-  --kind goal \
-  --prompt "$PROMPT_FILE" \
-  --out-dir "$TRANSCRIPT_DIR" \
-  --workspace "$WORKSPACE_ROOT" \
-  --model opus \
-  --effort high \
-  --permission-mode bypassPermissions \
-  --tools write \
-  --pair-turn \
-  --shared-skill agents-pair=<skill-dir>/SKILL.md \
-  --timeout-seconds 600
-```
-
-Later Claude turns in the same pair session:
-
-```bash
-bash <skill-dir>/scripts/consult.sh \
-  --session-id "$CLAUDE_SESSION_ID" \
-  --resume \
+  --active-session \
+  --goal "$SHARED_GOAL" \
   --kind plan-review \
   --prompt "$PROMPT_FILE" \
-  --out-dir "$TRANSCRIPT_DIR" \
   --workspace "$WORKSPACE_ROOT" \
   --model opus \
   --effort high \
@@ -363,6 +352,11 @@ bash <skill-dir>/scripts/consult.sh \
   --shared-skill agents-pair=<skill-dir>/SKILL.md \
   --timeout-seconds 600
 ```
+
+The first active-session call creates state and uses Claude `--session-id`.
+Later calls in the same workspace reuse the stored Claude conversation with
+`--resume`. Do not create a new UUID unless starting a deliberately separate pair
+session or replacing a stale one with `--new-active-session`.
 
 For specialist and focused implementation turns, use the same shape with
 `--kind specialist-review` or `--kind write-pass`, `--effort xhigh`, the same
@@ -423,9 +417,11 @@ pairing transport.
    Claude and Codex disagree, use tests, repo conventions, domain skill rules,
    and user constraints as tie breakers; surface material disagreements in the
    final answer.
-9. **Close.** Final response should mention which capabilities were used, what
-   changed, how it was verified, and any Claude-raised concerns intentionally
-   deferred.
+9. **Final audit and close.** When the pair is happy with the result, run one
+   fresh audit over the actual final diff, validation, session state, and open
+   Claude objections before the user-facing final response. Then summarize which
+   capabilities were used, what changed, how it was verified, and any deferred
+   Claude-raised concerns.
 
 Use multiple Claude turns when each turn has a distinct purpose. Do not run an
 open-ended debate once the agents are repeating the same point.
