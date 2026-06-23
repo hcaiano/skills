@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+PEER_SCHEMA_DEFAULT="$SCRIPT_DIR/../references/peer-message.schema.json"
+
 usage() {
   cat >&2 <<'EOF'
 usage: consult.sh --session-id UUID --kind KIND --prompt PROMPT.md --out-dir DIR [options]
@@ -33,6 +36,12 @@ Options:
   --allowed-tools LIST    Comma or space-separated allowed tools.
   --disallowed-tools LIST Comma or space-separated denied tools.
   --json-schema JSON|FILE Validate Claude's result against a JSON schema.
+  --pair-turn             Require a structured peer message back to Codex
+                          (message, questions, proposed next turn, continuation
+                          state, changed files, validation asks). Auto-attaches
+                          the bundled peer-message schema unless --json-schema is
+                          given, and appends the peer-protocol system prompt.
+  --peer-message          Alias for --pair-turn.
   --append-system-prompt TEXT
                            Extra system prompt text for this consult.
   --claude-arg ARG        Raw Claude CLI arg passthrough. Repeatable.
@@ -66,6 +75,7 @@ PLUGIN_URLS=()
 ALLOWED_TOOLS=""
 DISALLOWED_TOOLS=""
 JSON_SCHEMA=""
+PEER_MESSAGE=false
 APPEND_SYSTEM_PROMPT=""
 CLAUDE_ARGS=()
 DISABLE_SLASH_COMMANDS=false
@@ -171,6 +181,10 @@ while [[ $# -gt 0 ]]; do
     --json-schema)
       JSON_SCHEMA="${2:-}"
       shift 2
+      ;;
+    --pair-turn|--peer-message)
+      PEER_MESSAGE=true
+      shift
       ;;
     --append-system-prompt)
       APPEND_SYSTEM_PROMPT="${2:-}"
@@ -345,6 +359,14 @@ if [[ -n "$DISALLOWED_TOOLS" ]]; then
   cmd+=(--disallowed-tools "$DISALLOWED_TOOLS")
 fi
 
+if [[ "$PEER_MESSAGE" == true && -z "$JSON_SCHEMA" ]]; then
+  if [[ ! -f "$PEER_SCHEMA_DEFAULT" ]]; then
+    echo "error: peer-message schema not found: $PEER_SCHEMA_DEFAULT" >&2
+    exit 2
+  fi
+  JSON_SCHEMA="$PEER_SCHEMA_DEFAULT"
+fi
+
 if [[ -n "$JSON_SCHEMA" ]]; then
   if [[ -f "$JSON_SCHEMA" ]]; then
     JSON_SCHEMA_PAYLOAD="$(cat "$JSON_SCHEMA")"
@@ -378,6 +400,10 @@ if ((${#SHARED_SKILLS[@]} > 0)); then
     skill_path="$skill_dir/$(basename "$skill_path")"
     APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}- ${skill_name}: ${skill_path}"$'\n'
   done
+fi
+
+if [[ "$PEER_MESSAGE" == true ]]; then
+  APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}You and Codex are equal engineers on this repo, mid-conversation. Do your real work this turn (write code, review, investigate) and then end by emitting the required peer-message structured output. Use message_to_codex to speak to Codex directly as a peer: state what you did or concluded, push back where you disagree, and say what the pair should do next. Fill every schema field; use empty arrays when you have no questions, disagreements, changed files, or validation requests. Put your handoff in proposed_next_turn, edited files in changed_files, and set continuation_state.status honestly (continue/blocked/needs-user/done). Codex is required to read and answer this message next turn, so write it as one side of an ongoing dialogue, not a closing report."$'\n'
 fi
 
 if [[ "$TOOLS_MODE" == "none" ]]; then
@@ -475,8 +501,60 @@ json_path, md_path = sys.argv[1], sys.argv[2]
 with open(json_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-if "structured_output" in data and data.get("structured_output") is not None:
-    result = json.dumps(data["structured_output"], indent=2, sort_keys=True)
+structured = data.get("structured_output")
+is_peer = isinstance(structured, dict) and "message_to_codex" in structured
+
+
+def render_peer(peer):
+    lines = ["# Claude peer message", "", peer.get("message_to_codex", "").strip(), ""]
+    questions = peer.get("questions_for_codex") or []
+    if questions:
+        lines.append("## Questions for Codex")
+        lines += [f"- {q}" for q in questions]
+        lines.append("")
+    disagreements = peer.get("disagreements") or []
+    if disagreements:
+        lines.append("## Disagreements")
+        lines += [f"- {d}" for d in disagreements]
+        lines.append("")
+    nxt = peer.get("proposed_next_turn") or {}
+    if nxt:
+        lines.append("## Proposed next turn")
+        if nxt.get("owner"):
+            lines.append(f"- owner: {nxt['owner']}")
+        if nxt.get("goal"):
+            lines.append(f"- goal: {nxt['goal']}")
+        for tf in nxt.get("target_files") or []:
+            lines.append(f"- target: {tf}")
+        for v in nxt.get("validation") or []:
+            lines.append(f"- validation: {v}")
+        lines.append("")
+    changed = peer.get("changed_files") or []
+    if changed:
+        lines.append("## Changed files")
+        for c in changed:
+            path = c.get("path", "")
+            summ = c.get("summary", "")
+            lines.append(f"- {path}{(' - ' + summ) if summ else ''}")
+        lines.append("")
+    asks = peer.get("validation_requests") or []
+    if asks:
+        lines.append("## Validation requests")
+        lines += [f"- {a}" for a in asks]
+        lines.append("")
+    state = peer.get("continuation_state") or {}
+    if state:
+        status = state.get("status", "")
+        reason = state.get("reason", "")
+        lines.append(f"## Continuation: {status}{(' - ' + reason) if reason else ''}")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+if is_peer:
+    result = render_peer(structured)
+elif structured is not None:
+    result = json.dumps(structured, indent=2, sort_keys=True)
 else:
     result = data.get("result", "")
     if not isinstance(result, str):
@@ -494,8 +572,19 @@ summary = {
     "session_id": data.get("session_id"),
     "duration_ms": data.get("duration_ms"),
     "num_turns": data.get("num_turns"),
-    "has_structured_output": data.get("structured_output") is not None,
+    "has_structured_output": structured is not None,
+    "is_peer_message": is_peer,
 }
+
+if is_peer:
+    state = structured.get("continuation_state") or {}
+    summary["peer"] = {
+        "message_to_codex": structured.get("message_to_codex", ""),
+        "questions_for_codex": structured.get("questions_for_codex") or [],
+        "continuation_status": state.get("status"),
+        "next_owner": (structured.get("proposed_next_turn") or {}).get("owner"),
+    }
+
 print(json.dumps(summary, sort_keys=True))
 
 if data.get("is_error"):

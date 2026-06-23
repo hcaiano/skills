@@ -50,6 +50,12 @@ task. Use features only when they move the task forward.
   of asking Claude to reason from memory.
 - `--json-schema`: require structured Claude output when Codex needs to parse
   decisions, findings, file lists, or next actions reliably.
+- `--pair-turn`: the default for real pairing turns. Attaches the bundled
+  peer-message schema and makes Claude end each turn with a message back to Codex
+  (direct message, questions, proposed next turn, continuation state, changed
+  files, validation asks). Codex must answer that message on the next turn. See
+  the Peer Message Protocol in SKILL.md. `--peer-message` is a compatibility
+  alias.
 - `--max-turns` and helper timeouts: bound runaway turns without weakening
   Claude's default autonomy.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,

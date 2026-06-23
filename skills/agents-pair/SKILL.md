@@ -133,7 +133,7 @@ is an autonomous peer by default; downgrade only for a specific safety reason.
   Alternate leads as the work flows rather than defaulting Codex into the chair.
 - `codex-lead`: Codex takes the writing turn while Claude reviews. Use when Codex
   genuinely has the clearer local context or is integrating Claude's previous
-  work — not as the standing default. Hand the lead back to Claude on the next
+  work, not as the standing default. Hand the lead back to Claude on the next
   natural unit of work.
 - `claude-lead`: Claude takes the writing turn while Codex reviews. Reach for
   this freely whenever Claude has the clearer context, the better tools/model for
@@ -235,7 +235,7 @@ Shared skills:
 Your role for this turn: <brainstorm|review|oracle|write-pass>
 Autonomous mode: enabled with bypass permissions and default tools.
 Edit policy: you are an equal engineer on this repo. Write code whenever it
-advances the turn — you do not need Codex's permission to edit. The only limit is
+advances the turn; you do not need Codex's permission to edit. The only limit is
 that we never edit the same files at once, so stay within the target files below.
 Target files or areas: <paths or "none for this turn">
 Forbidden changes: <paths, secrets, generated files, unrelated dirty files>
@@ -243,29 +243,69 @@ Forbidden changes: <paths, secrets, generated files, unrelated dirty files>
 Ground rules:
 - Codex is your equal peer, not your manager; the user is the authority.
 - Push back, propose your own plan, and take the lead when you see the better
-  path. Disagreement is expected — settle it with tests and evidence, not rank.
+  path. Disagreement is expected; settle it with tests and evidence, not rank.
 - Do not ask the user directly; ask Codex concise questions if blocked.
 - Prefer concrete risks, tests, file paths, and decision criteria.
 - Do not request or expose secrets.
 - Keep scope tight; broad refactors need a clear reason.
 - Do not commit, push, merge, deploy, or change credentials.
+- End the turn with your peer message (message to Codex, questions, proposed next
+  turn, continuation state, changed files, validation asks). Codex will answer it.
 
 Initial ask:
 <specific question for Claude>
 ```
 
-Save every Claude prompt and response in a numbered transcript directory. Keep
+On continuation turns, open the prompt body with an `Answering your last message:`
+block that responds to each of Claude's questions and disagreements from the prior
+peer message, then state the new ask. This closes the loop so Claude sees its
+points were heard.
+
+Save every Claude prompt and response in the numbered transcript directory. Keep
 Claude's raw JSON too because it records `is_error`, `session_id`, duration,
 turn count, and token use.
 
-```text
-transcript/0001-goal.prompt.md
-transcript/0001-goal.json
-transcript/0001-goal.md
-transcript/0002-plan-review.prompt.md
-transcript/0002-plan-review.json
-transcript/0002-plan-review.md
-```
+## Peer Message Protocol
+
+Every pairing turn is one side of an ongoing conversation, not a one-shot review.
+Claude ends each turn with a structured **peer message** back to Codex, and Codex
+must answer it on the next turn. This is what keeps the pair a dialogue between
+equals instead of Codex driving a subordinate.
+
+Pass `--pair-turn` to the helper on every collaborative turn. It attaches
+`references/peer-message.schema.json` and tells Claude to end the turn with this
+envelope (`--peer-message` is a compatibility alias):
+
+- `message_to_codex`: Claude's direct peer message: what it did or concluded,
+  where it disagrees, what the pair should do next.
+- `questions_for_codex`: concrete questions Codex must answer.
+- `proposed_next_turn`: who should hold the pen next (`owner`), the goal, target
+  files, validation.
+- `continuation_state`: `status` of `continue`, `blocked`, `needs-user`, or
+  `done`, plus a one-line reason.
+- `changed_files`: files Claude actually wrote, so Codex reviews the real diff.
+- `validation_requests`: checks Claude wants Codex to run.
+- `disagreements`: open objections Claude is surfacing instead of silently
+  complying.
+
+The helper renders this as a readable `NNNN-kind.md` transcript and prints
+`message_to_codex`, `questions_for_codex`, `continuation_status`, and
+`next_owner` in stdout, so Codex can answer without re-parsing raw JSON.
+
+Codex's obligations each turn the loop continues:
+
+1. Read `message_to_codex` as a peer message, not a report to file.
+2. Answer every `questions_for_codex` and `disagreements` item in the next prompt
+   under `Answering your last message:` before adding a new ask.
+3. Honor or explicitly counter `proposed_next_turn`; do not silently reassign the
+   lead or ignore Claude's handoff.
+4. Run `validation_requests`, or say why not, and report results back.
+5. Route on `continuation_state.status`: `continue` means loop, `blocked` means
+   answer blockers first, `needs-user` means ask the user, `done` means run final
+   diff review.
+
+If Claude returns no peer message, note it in the transcript and continue, but
+real pairing turns default to `--pair-turn`.
 
 ## Calling Claude
 
@@ -289,6 +329,7 @@ bash <skill-dir>/scripts/consult.sh \
   --effort high \
   --permission-mode bypassPermissions \
   --tools write \
+  --pair-turn \
   --shared-skill agents-pair=<skill-dir>/SKILL.md \
   --timeout-seconds 600
 ```
@@ -307,6 +348,7 @@ bash <skill-dir>/scripts/consult.sh \
   --effort high \
   --permission-mode bypassPermissions \
   --tools write \
+  --pair-turn \
   --shared-skill agents-pair=<skill-dir>/SKILL.md \
   --timeout-seconds 600
 ```
@@ -361,12 +403,16 @@ pairing transport.
    information to evaluate or a real decision to make.
 6. **Review the actual diff.** After each write-pass, the other peer reviews
    `git status`, `git diff`, touched files, tests, screenshots/logs, and known
-   tradeoffs. Final review should cover the current diff, not an old plan.
-7. **Resolve disagreements.** Fix concrete issues that survive both reviews. If
+   tradeoffs. Use Claude's peer message `changed_files` as the starting list but
+   verify against the real diff. Final review should cover the current diff, not
+   an old plan.
+7. **Answer the peer message.** When the loop continues after a Claude turn,
+   Codex answers Claude's questions and disagreements before adding new asks.
+8. **Resolve disagreements.** Fix concrete issues that survive both reviews. If
    Claude and Codex disagree, use tests, repo conventions, domain skill rules,
    and user constraints as tie breakers; surface material disagreements in the
    final answer.
-8. **Close.** Final response should mention which capabilities were used, what
+9. **Close.** Final response should mention which capabilities were used, what
    changed, how it was verified, and any Claude-raised concerns intentionally
    deferred.
 
@@ -394,72 +440,13 @@ For goals that span many edits, checks, or decisions, run a durable loop:
 
 The loop should keep momentum. It should not become ceremony around simple work.
 
-## Prompt Templates
+## Prompt Patterns
 
-Plan review:
-
-```text
-Review this implementation plan before the pair edits files.
-
-Goal: <goal>
-Repo constraints: <AGENTS/README/project constraints>
-Plan:
-<plan>
-
-Return only:
-1. Blockers or correctness risks.
-2. Smaller/simpler alternatives.
-3. Tests or runtime proof Codex should gather.
-4. Questions Codex must answer before editing.
-```
-
-Diff review:
-
-```text
-Review the current pair-produced diff as an adversarial reviewer.
-
-Goal: <goal>
-Changed files:
-<paths>
-Diff summary:
-<git diff --stat>
-Tests run:
-<commands and results>
-Known tradeoffs:
-<notes>
-
-Look for bugs, missed edge cases, scope creep, and missing validation. Lead with
-findings ordered by severity. If there are no material issues, say so directly.
-```
-
-Brainstorm:
-
-```text
-Brainstorm options with Codex for this goal.
-
-Goal: <goal>
-Context: <short repo/product context>
-Constraints: <time, risk, style, user preferences>
-
-Give 2-4 approaches, the tradeoff that matters for each, and the one you would
-pick. Avoid generic process advice.
-```
-
-Write pass:
-
-```text
-Take one scoped implementation turn in this repository.
-
-Goal: <goal>
-Target files or areas: <paths>
-Forbidden changes: <unrelated dirty files, generated files, secrets, broad refactors>
-Current evidence: <tests/logs/screenshots/repro notes>
-Expected validation after your turn: <commands Codex will run>
-
-Make the smallest changes that improve the result. Stop after the requested
-scope. Do not commit, push, deploy, or change credentials. In your response,
-summarize touched files and any validation Codex should run next.
-```
+Keep Claude prompts short and concrete: goal, shared skills, current evidence,
+target files, forbidden changes, expected validation, and one clear ask. Review
+turns include the real diff summary and tests run. Write turns name the scoped
+files Claude may edit and when to stop. Continuation turns start by answering the
+previous peer message before the new ask.
 
 ## Guardrails
 
