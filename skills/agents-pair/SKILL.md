@@ -169,11 +169,13 @@ is an autonomous peer by default; downgrade only for a specific safety reason.
   for one magic command: Codex plan + Codex subagents + Claude autonomous
   peer turn + Claude specialists/workflows + `--effort max` where useful +
   repeated cross-review + strict validation.
-- `constrained`: use read-only/no-tools/safe-mode/bare-mode only for sanitized
+- `constrained`: use read-only/no-tools controls only for sanitized
   prompts, secret-heavy workspaces, broken Claude customizations, or a narrow
   diagnostic where autonomy would add risk without improving output. The helper
   denies MCP tools with `--disallowed-tools "mcp__*"` in `none` and `read` modes
-  because Claude's `--tools` flag only limits built-in tools.
+  because Claude's `--tools` flag only limits built-in tools. Do not use
+  `--bare`: agents-pair is subscription-auth only, and Claude bare mode skips
+  OAuth/keychain subscription auth in favor of API-key-style auth.
 
 Do not escalate automatically just because a feature exists. Escalation should
 buy either better search breadth, a stronger adversarial read, domain-specific
@@ -371,18 +373,19 @@ If you bypass the helper, keep the same defaults unless you are intentionally
 running a workflow-enabled pass, and pipe the prompt through stdin instead of
 passing large prompt text as a shell argument.
 
+Agents-pair is subscription-auth only. Never configure or suggest
+`ANTHROPIC_API_KEY`, `apiKeyHelper`, Console/API-key auth, or `--bare` for this
+skill. Claude's docs say bare mode skips OAuth/keychain reads; that conflicts
+with the subscription-only contract, so the helper rejects raw `--bare`, rejects
+settings that contain `apiKeyHelper`, and unsets `ANTHROPIC_API_KEY` before
+launching Claude.
+
 For `--tools none` and `--tools read`, the helper disables slash commands and
-denies MCP tools with `mcp__*` so constrained prompts do not use broader Claude
-surfaces. `--bare` is opt-in with `AGENTS_PAIR_ENABLE_BARE=1` because Claude Code
-2.1.186 can report subscription auth as "Not logged in" when `--bare` is used.
-If `--bare` is re-enabled and Claude hits that auth bug, the helper saves the
-failed attempt as `*.bare-auth-error.*`. For `read`, it retries once without
-`--bare`, switching a first-turn `--session-id` retry to `--resume` because
-Claude may reserve the id before returning the auth failure. For `none`, it does
-not retry after a bare auth failure because no-tools turns must never resume
-conversation history. In `none`, it also appends a system prompt telling Claude
-it has no tools and must not narrate or simulate tool calls. Use these modes only
-as safety escape hatches; normal agents-pair turns stay autonomous.
+denies MCP tools with `mcp__*` so constrained prompts stay compatible with
+Claude subscription auth while avoiding broader Claude surfaces. In `none`, it
+also appends a system prompt telling Claude it has no tools and must not narrate
+or simulate tool calls. Use these modes only as safety escape hatches; normal
+agents-pair turns stay autonomous.
 The helper rejects `--active-session --tools none` because an active session can
 resume prior Claude conversation history; run isolated no-tools consults with an
 explicit fresh `--session-id` and `--out-dir` instead. It also rejects explicit
