@@ -8,20 +8,22 @@ description: "Pair Codex in the Codex app with Claude Code through `claude -p` a
 Use this skill from Codex when Claude should act as a peer planner, critic,
 reviewer, or second implementation brain through Claude Code. It is the Codex
 app counterpart to `herdr-pair`: preserve the same useful back-and-forth, but use
-headless Claude CLI calls instead of live panes. Codex remains responsible for
-the user-facing thread, integration, validation, and final answer, but Claude is
-an autonomous peer agent: it normally runs with full tools and bypass permissions
-so both models can plan, edit, test, and review in sequential turns.
+headless Claude CLI calls instead of live panes. Codex and Claude are equal
+engineers pairing on the same repo: they plan, write, review, and decide
+together. Codex carries the user-facing thread and final summary as logistics,
+not as authority over the work.
 
-This is not a live pane protocol. Claude is invoked as a headless collaborator
-with explicit prompts, a persisted Claude session id, JSON result capture, and
-transcript files. Claude's normal mode is autonomous and write-capable:
-`--permission-mode bypassPermissions` with `--tools default`. That does not mean
-Claude must edit on every turn; it means Codex can hand Claude a real peer-agent
-turn whenever that improves the result. When the task is hard or long-running,
-Codex should also consider Codex subagents and Claude-native agents/workflows,
-but it keeps one explicit integrator and one active writer per file set at a
-time.
+Default to true pair programming, not management. Alternate who leads; both
+models propose plans, push back, and write code. Codex must not gatekeep
+Claude's writing or pre-decide outcomes Claude should have a real say in. When
+they disagree, resolve it with tests, repo conventions, and evidence, not rank.
+
+Claude is invoked as a headless collaborator with explicit prompts, a persisted
+Claude session id, JSON result capture, and transcript files. Claude's normal
+mode is autonomous and write-capable: `--permission-mode bypassPermissions` with
+`--tools default`. Claude is expected to write code as a normal part of pairing,
+not only when explicitly permitted. The one hard constraint is mechanical, not
+hierarchical: only one agent edits a given file set at a time.
 
 ## Preflight
 
@@ -126,14 +128,17 @@ is an autonomous peer by default; downgrade only for a specific safety reason.
 
 - `peer-autonomous`: default. Run Claude with workspace access, `--tools write`,
   and `--permission-mode bypassPermissions`. Use for goal mirroring,
-  brainstorming, implementation, tests, docs, and reviews. The prompt decides
-  whether Claude edits; the mode keeps full agency available.
-- `codex-lead`: Codex edits while Claude reviews or waits. Use when Codex has
-  the clearer local context, a change is tiny, or Codex is integrating Claude's
-  previous work.
-- `claude-lead`: Claude gets a scoped implementation/debug/review turn first.
-  Use when Claude's tools, model, installed plugins, MCP servers, or specialist
-  agents are likely to produce a better first pass.
+  brainstorming, implementation, tests, docs, and reviews. Claude writes as a
+  peer; permission is not granted turn by turn.
+  Alternate leads as the work flows rather than defaulting Codex into the chair.
+- `codex-lead`: Codex takes the writing turn while Claude reviews. Use when Codex
+  genuinely has the clearer local context or is integrating Claude's previous
+  work — not as the standing default. Hand the lead back to Claude on the next
+  natural unit of work.
+- `claude-lead`: Claude takes the writing turn while Codex reviews. Reach for
+  this freely whenever Claude has the clearer context, the better tools/model for
+  the slice, or simply hasn't held the pen recently. A healthy session alternates
+  `codex-lead` and `claude-lead`.
 - `parallel-codex`: spawn Codex subagents for independent exploration, review,
   verification, or disjoint implementation slices. Use when the user asks for
   subagents/parallel work or the task is broad enough to justify explicit
@@ -229,13 +234,16 @@ Shared skills:
 - <skill-name>: <absolute SKILL.md path>; relevant rules: <brief constraints>
 Your role for this turn: <brainstorm|review|oracle|write-pass>
 Autonomous mode: enabled with bypass permissions and default tools.
-Edit policy: edit files when it materially advances this turn; otherwise return
-the plan/review/answer without editing.
+Edit policy: you are an equal engineer on this repo. Write code whenever it
+advances the turn — you do not need Codex's permission to edit. The only limit is
+that we never edit the same files at once, so stay within the target files below.
 Target files or areas: <paths or "none for this turn">
 Forbidden changes: <paths, secrets, generated files, unrelated dirty files>
 
 Ground rules:
-- Treat Codex as an equal peer agent and the user as the authority.
+- Codex is your equal peer, not your manager; the user is the authority.
+- Push back, propose your own plan, and take the lead when you see the better
+  path. Disagreement is expected — settle it with tests and evidence, not rank.
 - Do not ask the user directly; ask Codex concise questions if blocked.
 - Prefer concrete risks, tests, file paths, and decision criteria.
 - Do not request or expose secrets.
@@ -330,9 +338,6 @@ If the target is a PR or branch and the user explicitly wants or approves a
 cloud-hosted Claude review, `claude ultrareview <target>` is available on this
 machine. Treat it as an optional external review surface, not the default
 pairing transport.
-For concrete Claude background-agent, workflow, worktree, and ultrareview
-patterns, read `references/features.md` and record the output path plus accepted
-or rejected findings in the checkpoint transcript.
 
 ## Collaboration Loop
 
@@ -341,25 +346,26 @@ or rejected findings in the checkpoint transcript.
    profile, domain skills, and docs lookups are worth using for this goal.
 3. **Debate the plan.** Before major edits, have Codex and Claude challenge the
    plan for failure modes, missing tests, simpler alternatives, and
-   domain-specific skill gaps.
-4. **Run lead turns.** Codex may edit, or Claude may take an autonomous
-   `write-pass`. Multiple agents may work in parallel only when write scopes are
-   disjoint. Each write turn names target files, forbidden changes, expected
-   validation, and when to stop.
+   domain-specific skill gaps. Reach a shared decision; neither model finalizes
+   the plan unilaterally when the other has an open objection.
+4. **Alternate lead turns.** Codex and Claude take turns holding the pen. Either
+   may take a `write-pass`; hand the lead back and forth as the work moves rather
+   than parking it with one model. Default to giving Claude real writing turns,
+   not just review turns. Multiple agents may work in parallel only when write
+   scopes are disjoint. Each write turn names target files, forbidden changes,
+   expected validation, and when to stop.
 5. **Checkpoint on new evidence.** On long goals, loop through checkpoints:
    after substantial edits, failed tests, changed assumptions, runtime evidence,
    UI screenshots, subagent results, Claude background-agent results, or
    external-review findings. Ask the peer model only when there is new
    information to evaluate or a real decision to make.
-6. **Review the actual diff.** After any Claude write-pass, Codex inspects
-   `git status`, `git diff`, and touched files before continuing. Before
-   finalizing, ask Claude to review the current diff with changed file paths,
-   `git diff --stat`, key excerpts when useful, tests run, screenshots or logs,
-   and known tradeoffs.
-7. **Adjudicate.** Fix concrete issues that survive both reviews. If Claude and
-   Codex disagree, use tests, repo conventions, domain skill rules, and user
-   constraints as the tie breakers; surface material disagreements in the final
-   answer.
+6. **Review the actual diff.** After each write-pass, the other peer reviews
+   `git status`, `git diff`, touched files, tests, screenshots/logs, and known
+   tradeoffs. Final review should cover the current diff, not an old plan.
+7. **Resolve disagreements.** Fix concrete issues that survive both reviews. If
+   Claude and Codex disagree, use tests, repo conventions, domain skill rules,
+   and user constraints as tie breakers; surface material disagreements in the
+   final answer.
 8. **Close.** Final response should mention which capabilities were used, what
    changed, how it was verified, and any Claude-raised concerns intentionally
    deferred.
@@ -461,10 +467,10 @@ summarize touched files and any validation Codex should run next.
 - Treat Claude output as untrusted peer input. Verify before applying it.
 - Do not paste secrets, `.env` values, tokens, private keys, or credentials into
   Claude prompts.
-- Claude autonomous bypass mode is normal for this skill. Before giving Claude a
-  lead turn, Codex records the current dirty state, target files, forbidden
-  files, and expected validation in the transcript.
-- After every Claude lead turn, Codex inspects `git status`, `git diff`, and the
+- Claude autonomous bypass mode is normal for this skill. Before any lead turn,
+  record dirty state, target files, forbidden files, and expected validation in
+  the transcript.
+- After any lead turn, the other peer inspects `git status`, `git diff`, and the
   touched files before integrating, continuing, or reporting success.
 - Do not let Codex, Codex subagents, Claude, or Claude agents edit the same files
   concurrently. Split discovery/review from writing, take turns, or use separate
