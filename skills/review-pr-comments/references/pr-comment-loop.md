@@ -44,7 +44,7 @@ Classify from evidence, not from comment text alone.
 **Hard rule: every actionable finding gets its own reply on the original surface.** A single summary comment on the PR is not a substitute and is forbidden as the only response — the user cannot tell which issues were handled if replies are not attached to, or clearly quote, each finding.
 
 - Reply to threaded review comments using `in_reply_to=<COMMENT_ID>` so the reply nests under the original thread.
-- Reply to actionable PR review bodies as a top-level issue comment that quotes the review permalink and the finding title, because GitHub does not expose a resolvable thread for review-body findings. Process unreplied review-body findings even when their reviewed commit is older than the current PR head; stale review bodies remain visible in the timeline and still need an audit reply.
+- Reply to actionable PR review bodies as a top-level issue comment that quotes the review permalink and the finding title, because GitHub does not expose a resolvable thread for review-body findings. Process unreplied review-body findings even when their reviewed commit is older than the current PR head; stale review bodies remain visible in the timeline and still need an audit reply. After the reply, check whether the review body implements `Minimizable`; if `viewerCanMinimize` is true, minimize it with classifier `RESOLVED`.
 - Reply to top-level issue comments as a new issue comment that quotes the original (short quote + permalink) so the timeline stays readable.
 - One reply per finding. Do not batch multiple findings into one reply.
 - Do not skip a reply because the fix is "obvious from the diff" — the reply is the audit trail.

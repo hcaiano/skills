@@ -371,12 +371,12 @@ If you bypass the helper, keep the same defaults unless you are intentionally
 running a workflow-enabled pass, and pipe the prompt through stdin instead of
 passing large prompt text as a shell argument.
 
-For `--tools none` and `--tools read`, the helper starts Claude with
-`--safe-mode` so local hooks, plugins, MCP, skills, and prompt customizations do
-not observe constrained prompts. In `none`, it also appends a system prompt
-telling Claude it has no tools and must not narrate or simulate tool calls. Use
-these modes only as safety escape hatches; normal agents-pair turns stay
-autonomous.
+For `--tools none` and `--tools read`, the helper starts Claude with `--bare`,
+Claude's minimal mode, so hook, skill, plugin, MCP, auto-memory, and CLAUDE.md
+discovery is skipped for constrained prompts. In `none`, it also appends a system
+prompt telling Claude it has no tools and must not narrate or simulate tool
+calls. Use these modes only as safety escape hatches; normal agents-pair turns
+stay autonomous.
 The helper rejects `--active-session --tools none` because an active session can
 resume prior Claude conversation history; run isolated no-tools consults with an
 explicit fresh `--session-id` and `--out-dir` instead.

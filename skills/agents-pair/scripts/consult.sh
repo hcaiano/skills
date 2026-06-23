@@ -735,7 +735,7 @@ if [[ "$PEER_MESSAGE" == true ]]; then
 fi
 
 if [[ "$TOOLS_MODE" == "none" || "$TOOLS_MODE" == "read" ]]; then
-  cmd+=(--safe-mode)
+  cmd+=(--bare)
 fi
 
 if [[ "$TOOLS_MODE" == "none" ]]; then

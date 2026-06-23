@@ -117,6 +117,37 @@ gh api "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" \
   -f body="$BODY"
 ```
 
+Check whether an actionable review body can be minimized after the audit reply:
+
+```bash
+gh api graphql -f query='
+query($id: ID!) {
+  node(id: $id) {
+    __typename
+    id
+    ... on Minimizable {
+      isMinimized
+      minimizedReason
+      viewerCanMinimize
+    }
+  }
+}' -f id="$REVIEW_NODE_ID"
+```
+
+Minimize a fixed review-body finding that has no resolvable thread:
+
+```bash
+gh api graphql -f query='
+mutation($id: ID!) {
+  minimizeComment(input: {subjectId: $id, classifier: RESOLVED}) {
+    minimizedComment {
+      isMinimized
+      minimizedReason
+    }
+  }
+}' -f id="$REVIEW_NODE_ID"
+```
+
 React to a review comment:
 
 ```bash

@@ -71,10 +71,10 @@ task. Use features only when they move the task forward.
 - `--max-turns` and helper timeouts: bound runaway turns without weakening
   Claude's default autonomy.
 - `--tools none` and `--tools read`: constrained/sanitized escape hatches. The
-  helper also adds `--safe-mode` so Claude hooks, plugins, skills, MCP servers,
-  and prompt customizations are not loaded for that prompt. `none` is also
-  rejected with `--active-session`; isolated no-tools prompts must not resume
-  prior pair conversation history.
+  helper also adds `--bare` so Claude hooks, plugins, skills, MCP servers,
+  CLAUDE.md, and prompt customizations are not loaded for that prompt. `none` is
+  also rejected with `--active-session`; isolated no-tools prompts must not
+  resume prior pair conversation history.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
   `--prompt-suggestions`, and raw `--claude-arg`:
   use only for a concrete task need and record the reason in the transcript.
