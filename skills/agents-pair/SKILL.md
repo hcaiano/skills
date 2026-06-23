@@ -372,8 +372,10 @@ running a workflow-enabled pass, and pipe the prompt through stdin instead of
 passing large prompt text as a shell argument.
 
 For `--tools none`, the helper appends a system prompt telling Claude it has no
-tools and must not narrate or simulate tool calls. Use this only as a safety
-escape hatch for sanitized prompts; normal agents-pair turns stay autonomous.
+tools, must not narrate or simulate tool calls, and starts Claude with
+`--safe-mode` so local hooks, plugins, MCP, skills, and prompt customizations do
+not observe sanitized prompts. Use this only as a safety escape hatch; normal
+agents-pair turns stay autonomous.
 For `--tools none` and `--tools read`, the helper also denies MCP tools with
 `mcp__*` so configured external/private MCP servers are not still callable.
 

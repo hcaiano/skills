@@ -731,6 +731,7 @@ fi
 
 if [[ "$TOOLS_MODE" == "none" ]]; then
   APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}You have no tools this turn. Do not narrate, simulate, or fabricate tool calls; answer only from the prompt text."
+  cmd+=(--safe-mode)
 fi
 
 if [[ -n "$APPEND_SYSTEM_PROMPT" ]]; then
