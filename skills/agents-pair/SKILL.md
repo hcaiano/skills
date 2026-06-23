@@ -187,6 +187,10 @@ context.
   before asking Claude to reason from memory.
 - For debugging, PR shipping, PR comment handling, or repo-specific workflows,
   prefer the dedicated local skill and use Claude as reviewer or second opinion.
+- For long tasks, goals, research, migrations, or work that will need many tool
+  calls/checkpoints, use `planning-with-files`. Keep `task_plan.md`,
+  `findings.md`, and `progress.md` as shared pair state, pass that skill to
+  Claude, and have both agents update the files at checkpoints.
 
 ## Shared Skill Context
 
@@ -312,11 +316,16 @@ real pairing turns default to `--pair-turn`.
 ## Calling Claude
 
 Prefer the bundled helper so prompts go through stdin and responses are captured
-as JSON plus Markdown. The normal pair mode is autonomous:
-`--tools write`, `--permission-mode bypassPermissions`, `--output-format json`,
-Claude slash commands/skills enabled, `--add-dir "$WORKSPACE_ROOT"`, and Claude
-running from `$WORKSPACE_ROOT`. In Claude Code, `--disable-slash-commands`
-disables Claude skills too; pass that flag only for constrained sanitized turns.
+as stream JSON, final JSON, and Markdown. The normal pair mode is autonomous:
+`--tools write`, `--permission-mode bypassPermissions`, Claude slash
+commands/skills enabled, `--add-dir "$WORKSPACE_ROOT"`, and Claude running from
+`$WORKSPACE_ROOT`. In Claude Code, `--disable-slash-commands` disables Claude
+skills too; pass that flag only for constrained sanitized turns.
+`--pair-turn` uses `stream-json` by default, prints bounded live progress
+(`status`, tool calls/results, assistant text snippets, final peer message), and
+saves the full raw stream as `NNNN-kind.stream.jsonl`. Do not try to read hidden
+reasoning; the stream may expose reasoning-block markers or token counts, but the
+useful signal is what Claude says, does, and returns.
 
 First Claude turn for a pair session:
 
@@ -433,11 +442,14 @@ For goals that span many edits, checks, or decisions, run a durable loop:
 3. At each checkpoint, decide whether Codex should lead, Claude should lead, both
    should review, Codex subagents should run, Claude agents/workflows should run,
    a dedicated skill should be loaded, or the user must decide.
-4. Track `no_progress_count`. Increment only when a loop produces no new code,
+4. For durable goals, use `planning-with-files` and update `task_plan.md`,
+   `findings.md`, and `progress.md` after meaningful discoveries, edits, errors,
+   or validation results. Re-read them before major pair decisions.
+5. Track `no_progress_count`. Increment only when a loop produces no new code,
    evidence, decision, or narrowed option; reset it on real progress. At `2`,
    stop the agent loop, summarize the blocker/disagreement, and ask the user for
    a decision or permission to change strategy.
-5. Before finalizing, run one fresh review pass over the actual final diff and
+6. Before finalizing, run one fresh review pass over the actual final diff and
    validation results, not over an outdated plan.
 
 The loop should keep momentum. It should not become ceremony around simple work.

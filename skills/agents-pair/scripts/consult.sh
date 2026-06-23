@@ -36,6 +36,10 @@ Options:
   --allowed-tools LIST    Comma or space-separated allowed tools.
   --disallowed-tools LIST Comma or space-separated denied tools.
   --json-schema JSON|FILE Validate Claude's result against a JSON schema.
+  --stream                Monitor Claude via stream-json. Default for --pair-turn.
+  --no-stream             Force single JSON output and wait silently.
+  --no-stream-partials    Do not request partial assistant text chunks.
+  --stream-text-limit N   Max live assistant text chars to print. Defaults to 3000.
   --pair-turn             Require a structured peer message back to Codex
                           (message, questions, proposed next turn, continuation
                           state, changed files, validation asks). Auto-attaches
@@ -76,6 +80,9 @@ PLUGIN_URLS=()
 ALLOWED_TOOLS=""
 DISALLOWED_TOOLS=""
 JSON_SCHEMA=""
+STREAM_MODE="auto"
+STREAM_PARTIALS=true
+STREAM_TEXT_LIMIT="${CLAUDE_MONITOR_TEXT_LIMIT:-3000}"
 PEER_MESSAGE=false
 APPEND_SYSTEM_PROMPT=""
 CLAUDE_ARGS=()
@@ -199,6 +206,22 @@ while [[ $# -gt 0 ]]; do
       JSON_SCHEMA="${2:-}"
       shift 2
       ;;
+    --stream)
+      STREAM_MODE="on"
+      shift
+      ;;
+    --no-stream)
+      STREAM_MODE="off"
+      shift
+      ;;
+    --no-stream-partials)
+      STREAM_PARTIALS=false
+      shift
+      ;;
+    --stream-text-limit)
+      STREAM_TEXT_LIMIT="${2:-}"
+      shift 2
+      ;;
     --pair-turn|--peer-message)
       PEER_MESSAGE=true
       shift
@@ -271,6 +294,30 @@ if [[ -n "$MAX_TURNS" && ! "$MAX_TURNS" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+if [[ ! "$STREAM_TEXT_LIMIT" =~ ^[0-9]+$ ]]; then
+  echo "error: --stream-text-limit must be a non-negative integer" >&2
+  exit 2
+fi
+
+USE_STREAM=false
+case "$STREAM_MODE" in
+  auto)
+    if [[ "$PEER_MESSAGE" == true ]]; then
+      USE_STREAM=true
+    fi
+    ;;
+  on)
+    USE_STREAM=true
+    ;;
+  off)
+    USE_STREAM=false
+    ;;
+  *)
+    echo "error: internal invalid stream mode: $STREAM_MODE" >&2
+    exit 2
+    ;;
+esac
+
 PROMPT_DIR="$(cd "$(dirname "$PROMPT")" && pwd -P)"
 PROMPT="$PROMPT_DIR/$(basename "$PROMPT")"
 
@@ -296,6 +343,8 @@ BASE="$OUT_DIR/$TURN-$SAFE_KIND"
 JSON_OUT="$BASE.json"
 MD_OUT="$BASE.md"
 TMP_JSON="$JSON_OUT.tmp.$$"
+STREAM_OUT="$BASE.stream.jsonl"
+TMP_STREAM="$STREAM_OUT.tmp.$$"
 
 cmd=(claude -p)
 
@@ -307,8 +356,7 @@ fi
 
 cmd+=(--model "$MODEL"
   --effort "$EFFORT"
-  --permission-mode "$PERMISSION_MODE"
-  --output-format json)
+  --permission-mode "$PERMISSION_MODE")
 
 if [[ -n "$SESSION_NAME" ]]; then
   cmd+=(--name "$SESSION_NAME")
@@ -433,6 +481,15 @@ if [[ -n "$APPEND_SYSTEM_PROMPT" ]]; then
   cmd+=(--append-system-prompt "$APPEND_SYSTEM_PROMPT")
 fi
 
+if [[ "$USE_STREAM" == true ]]; then
+  cmd+=(--output-format stream-json --verbose)
+  if [[ "$STREAM_PARTIALS" == true ]]; then
+    cmd+=(--include-partial-messages)
+  fi
+else
+  cmd+=(--output-format json)
+fi
+
 case "$TOOLS_MODE" in
   none)
     cmd+=(--tools "")
@@ -455,7 +512,7 @@ if ((${#CLAUDE_ARGS[@]} > 0)); then
   cmd+=("${CLAUDE_ARGS[@]}")
 fi
 
-run_claude() {
+run_claude_json() {
   if [[ -z "$TIMEOUT_SECONDS" ]]; then
     (cd "$RUN_CWD" && "${cmd[@]}" < "$PROMPT" > "$TMP_JSON")
     return $?
@@ -486,7 +543,7 @@ run_claude() {
     fi
   ) &
   watchdog=$!
-  wait "$pid"
+  wait "$pid" 2>/dev/null
   status=$?
   kill "$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true
@@ -497,32 +554,134 @@ run_claude() {
   return "$status"
 }
 
+run_claude_stream() {
+  local fifo monitor pid watchdog status monitor_status timed_out
+  fifo="$TMP_STREAM.fifo.$$"
+  timed_out="$TMP_STREAM.timeout.$$"
+  rm -f "$fifo" "$timed_out" "$TMP_STREAM"
+  mkfifo "$fifo"
+
+  CLAUDE_MONITOR_TEXT_LIMIT="$STREAM_TEXT_LIMIT" \
+    "$SCRIPT_DIR/stream_monitor.py" "$TMP_STREAM" < "$fifo" &
+  monitor=$!
+
+  (cd "$RUN_CWD" && "${cmd[@]}" < "$PROMPT" > "$fifo") &
+  pid=$!
+
+  watchdog=""
+  if [[ -n "$TIMEOUT_SECONDS" ]]; then
+    (
+      sleep "$TIMEOUT_SECONDS"
+      if kill -0 "$pid" 2>/dev/null; then
+        touch "$timed_out"
+        kill "$pid" 2>/dev/null || true
+        sleep 2
+        kill -9 "$pid" 2>/dev/null || true
+      fi
+    ) &
+    watchdog=$!
+  fi
+
+  wait "$pid" 2>/dev/null
+  status=$?
+  if [[ -n "$watchdog" ]]; then
+    kill "$watchdog" 2>/dev/null || true
+    wait "$watchdog" 2>/dev/null || true
+  fi
+  wait "$monitor"
+  monitor_status=$?
+  rm -f "$fifo"
+
+  if [[ -f "$timed_out" ]]; then
+    rm -f "$timed_out"
+    return 124
+  fi
+  if [[ "$status" -ne 0 ]]; then
+    return "$status"
+  fi
+  return "$monitor_status"
+}
+
 set +e
-run_claude
+if [[ "$USE_STREAM" == true ]]; then
+  run_claude_stream
+else
+  run_claude_json
+fi
 claude_status=$?
 set -e
 
-if [[ -s "$TMP_JSON" ]]; then
-  mv "$TMP_JSON" "$JSON_OUT"
+if [[ "$USE_STREAM" == true ]]; then
+  if [[ -s "$TMP_STREAM" ]]; then
+    mv "$TMP_STREAM" "$STREAM_OUT"
+  else
+    rm -f "$TMP_STREAM"
+  fi
 else
-  rm -f "$TMP_JSON"
+  if [[ -s "$TMP_JSON" ]]; then
+    mv "$TMP_JSON" "$JSON_OUT"
+  else
+    rm -f "$TMP_JSON"
+  fi
+fi
+
+STREAM_EXTRACT_STATUS=0
+if [[ "$USE_STREAM" == true ]]; then
+  if [[ -f "$STREAM_OUT" ]]; then
+    set +e
+    python3 - "$STREAM_OUT" "$JSON_OUT" <<'PY'
+import json
+import sys
+
+stream_path, json_path = sys.argv[1], sys.argv[2]
+result = None
+with open(stream_path, "r", encoding="utf-8") as f:
+    for line in f:
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(event, dict) and event.get("type") == "result":
+            result = event
+
+if result is None:
+    print(f"error: no result event found in stream: {stream_path}", file=sys.stderr)
+    sys.exit(2)
+
+with open(json_path, "w", encoding="utf-8") as f:
+    json.dump(result, f, indent=2, sort_keys=True)
+    f.write("\n")
+PY
+    STREAM_EXTRACT_STATUS=$?
+    set -e
+  fi
 fi
 
 if [[ "$claude_status" -ne 0 ]]; then
   echo "error: claude exited with status $claude_status" >&2
+  if [[ "$USE_STREAM" == true && -f "$STREAM_OUT" ]]; then
+    ERROR_OUT="$BASE.error.stream.jsonl"
+    mv "$STREAM_OUT" "$ERROR_OUT"
+    echo "partial stream output: $ERROR_OUT" >&2
+  fi
   if [[ -f "$JSON_OUT" ]]; then
     ERROR_OUT="$BASE.error.json"
     mv "$JSON_OUT" "$ERROR_OUT"
-    echo "partial output: $ERROR_OUT" >&2
+    echo "partial result output: $ERROR_OUT" >&2
   fi
   exit "$claude_status"
 fi
 
-python3 - "$JSON_OUT" "$MD_OUT" <<'PY'
+if [[ "$USE_STREAM" == true && "$STREAM_EXTRACT_STATUS" -ne 0 ]]; then
+  exit "$STREAM_EXTRACT_STATUS"
+fi
+
+python3 - "$JSON_OUT" "$MD_OUT" "$STREAM_OUT" <<'PY'
 import json
+import os
 import sys
 
-json_path, md_path = sys.argv[1], sys.argv[2]
+json_path, md_path, stream_path = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(json_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
@@ -600,6 +759,9 @@ summary = {
     "has_structured_output": structured is not None,
     "is_peer_message": is_peer,
 }
+
+if os.path.exists(stream_path):
+    summary["stream"] = stream_path
 
 if is_peer:
     state = structured.get("continuation_state") or {}

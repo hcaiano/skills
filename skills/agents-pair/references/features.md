@@ -31,7 +31,8 @@ task. Use features only when they move the task forward.
 
 ## Claude Surfaces
 
-- `claude -p`: default transport for paired turns. Capture JSON and Markdown.
+- `claude -p`: default transport for paired turns. Capture stream JSON, final
+  JSON, and Markdown.
 - `--resume`: required after the first successful Claude turn; do not reuse
   `--session-id` for continuation.
 - `--permission-mode bypassPermissions`: normal agents-pair mode. Pass it on
@@ -50,6 +51,10 @@ task. Use features only when they move the task forward.
   of asking Claude to reason from memory.
 - `--json-schema`: require structured Claude output when Codex needs to parse
   decisions, findings, file lists, or next actions reliably.
+- `--output-format stream-json`, `--include-partial-messages`, and helper
+  `--stream`: monitor observable Claude progress during long turns. Use the
+  bounded live monitor for status/tool/text snippets and inspect
+  `*.stream.jsonl` only when needed. This does not expose hidden reasoning.
 - `--pair-turn`: the default for real pairing turns. Attaches the bundled
   peer-message schema and makes Claude end each turn with a message back to Codex
   (direct message, questions, proposed next turn, continuation state, changed
@@ -59,7 +64,7 @@ task. Use features only when they move the task forward.
 - `--max-turns` and helper timeouts: bound runaway turns without weakening
   Claude's default autonomy.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
-  `--prompt-suggestions`, `--output-format stream-json`, and raw `--claude-arg`:
+  `--prompt-suggestions`, and raw `--claude-arg`:
   use only for a concrete task need and record the reason in the transcript.
 - `claude ultrareview`: use for approved cloud-hosted multi-agent code review of
   PRs, branches, or large diffs. Prefer `--json` when Codex needs to triage and
