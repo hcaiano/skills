@@ -475,9 +475,12 @@ json_path, md_path = sys.argv[1], sys.argv[2]
 with open(json_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
-result = data.get("result", "")
-if not isinstance(result, str):
-    result = json.dumps(result, indent=2, sort_keys=True)
+if "structured_output" in data and data.get("structured_output") is not None:
+    result = json.dumps(data["structured_output"], indent=2, sort_keys=True)
+else:
+    result = data.get("result", "")
+    if not isinstance(result, str):
+        result = json.dumps(result, indent=2, sort_keys=True)
 
 with open(md_path, "w", encoding="utf-8") as f:
     f.write(result)
@@ -491,6 +494,7 @@ summary = {
     "session_id": data.get("session_id"),
     "duration_ms": data.get("duration_ms"),
     "num_turns": data.get("num_turns"),
+    "has_structured_output": data.get("structured_output") is not None,
 }
 print(json.dumps(summary, sort_keys=True))
 
