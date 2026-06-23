@@ -9,6 +9,15 @@ argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 
 Dedicated entrypoint for the PR comment loop. The policy (modes, categories, classification context, reply format, recheck loop) lives in `references/pr-comment-loop.md`. API endpoints live in `references/github-comment-fetching.md`. Load both before acting.
 
+## When to run (proactive contract — don't wait to be asked)
+
+You OWN the review threads on every PR YOU open. Run this loop **automatically** — without a user request — at two moments, scoped to PRs you created in this work (do not retroactively sweep older/other agents' PRs):
+
+1. **~3-5 min after `gh pr create`** — CodeRabbit, the Codex/ChatGPT connector, and Socket post line comments a few minutes *after* open, not at open.
+2. **After every push** to that PR branch — bots re-review new commits and surface findings progressively.
+
+**Hard reporting gate:** a PR is NOT done, and you must NOT report it as "green / ready / merge-ready / awaiting approval / done," until you have fetched review threads on the current head and confirmed **0 unresolved and 0 unreplied actionable threads**. CI-green ≠ review-clean. A status report is never a substitute for the review pass. The most common failure is declaring a PR ready at open-time and walking away before the bots comment, leaving the last comment unanswered.
+
 ## Inputs
 
 `$ARGUMENTS` is a PR number, URL, or `all`. With no argument, detect the PR from the current branch: `gh pr view --json number -q .number`. `all` is multi-PR expanded mode — list candidates and confirm before processing.
