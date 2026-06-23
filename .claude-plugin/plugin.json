@@ -1,6 +1,7 @@
 {
   "name": "hcaiano-skills",
   "skills": [
+    "./skills/agents-pair",
     "./skills/herdr-pair",
     "./skills/debug-mode",
     "./skills/review-pr-comments",

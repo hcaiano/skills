@@ -20,9 +20,11 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 
 ### Collaboration
 
+- `agents-pair` — pair Codex in the Codex app with Claude through the Claude Code CLI.
 - `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
 
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
+`agents-pair` depends on the local Claude Code CLI (`claude`) being installed and authenticated.
 
 ### Engineering
 

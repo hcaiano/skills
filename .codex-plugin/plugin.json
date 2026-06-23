@@ -13,6 +13,7 @@
     "workflow"
   ],
   "skills": [
+    "./skills/agents-pair",
     "./skills/herdr-pair",
     "./skills/debug-mode",
     "./skills/review-pr-comments",
@@ -32,6 +33,7 @@
     "defaultPrompt": [
       "Use debug-mode to investigate this bug",
       "Use review-pr-comments to handle this PR feedback",
+      "Use agents-pair to collaborate with Claude through the Claude Code CLI",
       "Use herdr-pair to pair with the other agent"
     ],
     "brandColor": "#111111",
