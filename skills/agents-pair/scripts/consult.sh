@@ -937,6 +937,58 @@ fi
 
 if [[ "$claude_status" -ne 0 ]]; then
   echo "error: claude exited with status $claude_status" >&2
+  if [[ -n "$ACTIVE_STATE_PATH" ]]; then
+    python3 - "$ACTIVE_STATE_PATH" "$JSON_OUT" "$STREAM_OUT" "$claude_status" <<'PY'
+import datetime as dt
+import json
+import os
+import sys
+
+state_path, json_path, stream_path, status = sys.argv[1:5]
+
+
+def now() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def has_session_signal() -> bool:
+    for path in (json_path, stream_path):
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                if path.endswith(".jsonl"):
+                    for line in f:
+                        try:
+                            data = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(data, dict) and data.get("session_id"):
+                            return True
+                else:
+                    data = json.load(f)
+                    if isinstance(data, dict) and data.get("session_id"):
+                        return True
+        except (OSError, json.JSONDecodeError):
+            continue
+    return False
+
+
+with open(state_path, "r", encoding="utf-8") as f:
+    state = json.load(f)
+
+if not state.get("session_established") and not has_session_signal():
+    state["session_establishing"] = False
+state["last_error_status"] = int(status)
+state["updated_at"] = now()
+
+tmp = f"{state_path}.tmp.{os.getpid()}"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2, sort_keys=True)
+    f.write("\n")
+os.replace(tmp, state_path)
+PY
+  fi
   if [[ "$USE_STREAM" == true && -f "$STREAM_OUT" ]]; then
     ERROR_OUT="$BASE.error.stream.jsonl"
     mv "$STREAM_OUT" "$ERROR_OUT"

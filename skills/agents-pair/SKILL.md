@@ -106,12 +106,12 @@ Store:
 
 Use `consult.sh --active-session` for normal pair turns. The helper holds a
 workspace lock, loads or creates `active-session.json`, chooses `--session-id`
-for the first attempt and `--resume` after success or an in-flight establish,
-derives the transcript directory, and updates the stored Claude session
-id/checkpoint after success. If the active session is unrelated, record why and
-pass `--new-active-session`; goal mismatches otherwise stop instead of leaking
-work into the wrong Claude conversation. User instructions always override old
-session state.
+for the first attempt and `--resume` after success or a failed establish with a
+Claude session signal, derives the transcript directory, and updates the stored
+Claude session id/checkpoint after success. If the active session is unrelated,
+record why and pass `--new-active-session`; goal mismatches otherwise stop
+instead of leaking work into the wrong Claude conversation. User instructions
+always override old session state.
 
 For long-running goals, update the session after each meaningful checkpoint:
 plan accepted, files edited, tests run, Claude reviewed, Codex subagent returned,
