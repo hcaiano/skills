@@ -70,9 +70,9 @@ task. Use features only when they move the task forward.
   alias.
 - `--max-turns` and helper timeouts: bound runaway turns without weakening
   Claude's default autonomy.
-- `--tools none`: constrained/sanitized escape hatch. The helper also adds
-  `--safe-mode` so Claude hooks, plugins, skills, MCP servers, and prompt
-  customizations are not loaded for that prompt.
+- `--tools none` and `--tools read`: constrained/sanitized escape hatches. The
+  helper also adds `--safe-mode` so Claude hooks, plugins, skills, MCP servers,
+  and prompt customizations are not loaded for that prompt.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
   `--prompt-suggestions`, and raw `--claude-arg`:
   use only for a concrete task need and record the reason in the transcript.

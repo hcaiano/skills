@@ -16,7 +16,7 @@ You OWN the review threads on every PR YOU open. Run this loop **automatically**
 1. **~3-5 min after `gh pr create`** — CodeRabbit, the Codex/ChatGPT connector, and Socket post line comments a few minutes *after* open, not at open.
 2. **After every push** to that PR branch — bots re-review new commits and surface findings progressively.
 
-**Hard reporting gate:** a PR is NOT done, and you must NOT report it as "green / ready / merge-ready / awaiting approval / done," until you have fetched review threads on the current head and confirmed **0 unresolved and 0 unreplied actionable threads**. CI-green ≠ review-clean. A status report is never a substitute for the review pass. The most common failure is declaring a PR ready at open-time and walking away before the bots comment, leaving the last comment unanswered.
+**Hard reporting gate:** a PR is NOT done, and you must NOT report it as "green / ready / merge-ready / awaiting approval / done," until you have fetched review threads, review comments, PR review bodies, and issue comments on the current head and confirmed **0 unresolved and 0 unreplied actionable items**. CI-green ≠ review-clean. A status report is never a substitute for the review pass. The most common failures are declaring a PR ready at open-time before bots comment, and checking only unresolved review threads while missing actionable review-body comments.
 
 ## Inputs
 
@@ -39,12 +39,14 @@ Fail early with a clear blocker instead of discovering environment problems afte
 Fetch all review surfaces for the target PR (commands in `references/github-comment-fetching.md`):
 
 - PR review comments
-- PR reviews
+- PR reviews, including non-empty review bodies
 - issue timeline comments
 - unresolved review threads
 - latest-head checks and mergeability state
 
-Filter resolved/outdated comments unless the user asks to include them. Group by thread and author.
+Filter resolved/outdated comments unless the user asks to include them. Group by thread, review body, and author.
+
+**Review-body comments are first-class feedback.** Some bots put actionable findings in the pull request review body instead of a threaded review comment. Treat a non-empty review body from a bot or human as actionable when it contains a concrete finding title, severity badge, linked file/line, request to change code, or "Useful? React..." feedback block. Review-body findings have no GitHub thread to resolve; they still require a reply as a top-level issue comment quoting the review permalink/title after Fix / False Positive / Out of Scope classification. Do not ignore an unreplied actionable review body just because its reviewed commit is no longer the PR head; classify it against the current code and reply with the commit that fixed it, or explain why it is no longer applicable.
 
 ## Classification
 
@@ -65,7 +67,7 @@ For each Fix:
 3. Stage only the changed files for that fix group.
 4. Batch related fixes into conventional commits.
 5. Run the project quality gate.
-6. After the commit lands, reply on every comment fixed by that commit with the commit SHA (see Reply Format in `references/pr-comment-loop.md`). One reply per comment, even when several share a commit.
+6. After the commit lands, reply on every comment or review-body finding fixed by that commit with the commit SHA (see Reply Format in `references/pr-comment-loop.md`). One reply per finding, even when several share a commit.
 
 For each False Positive / Out of Scope: post the threaded reply immediately with the templated reasoning. Do not wait until the end.
 
@@ -77,8 +79,8 @@ Out of Scope: verify the bug/risk exists, defer low-severity nits with a reply, 
 2. Resolve conflicts.
 3. Rerun the quality gate.
 4. Push normally. Never force push without explicit user ask.
-5. Re-fetch reviewer comments and unresolved threads first. If new actionable feedback appears, handle it before waiting on queued/in-progress CI.
-6. Then re-fetch checks and mergeability, and continue per the shared recheck loop. During this re-fetch, verify every Fix / False Positive / Out of Scope comment has a reply from your account on the original thread (review comments: match `in_reply_to_id`; issue comments: a follow-up that quotes the original permalink). Post anything missing before reporting complete. A general PR summary is never a substitute.
+5. Re-fetch reviewer comments, review bodies, and unresolved threads first. If new actionable feedback appears, handle it before waiting on queued/in-progress CI.
+6. Then re-fetch checks and mergeability, and continue per the shared recheck loop. During this re-fetch, verify every Fix / False Positive / Out of Scope item has a reply from your account on the original surface (review comments: match `in_reply_to_id`; review bodies and issue comments: a follow-up issue comment that quotes the original permalink/title). Post anything missing before reporting complete. A general PR summary is never a substitute.
 
 ## Summary Report
 

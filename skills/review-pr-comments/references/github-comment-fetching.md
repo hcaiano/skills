@@ -23,6 +23,15 @@ Reviews:
 gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" --paginate
 ```
 
+Non-empty review bodies can contain actionable findings that are not present as
+review-thread nodes. Fetch and classify them explicitly:
+
+```bash
+gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" --paginate |
+  jq -r '.[] | select((.body // "") != "") |
+    [.id, .user.login, .commit_id, .html_url, .body] | @json'
+```
+
 Top-level issue comments:
 
 ```bash
@@ -94,6 +103,14 @@ gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments" \
 ```
 
 Reply to a top-level issue comment:
+
+```bash
+gh api "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" \
+  -f body="$BODY"
+```
+
+Reply to an actionable PR review body with a top-level issue comment that quotes
+the review permalink and finding title:
 
 ```bash
 gh api "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" \

@@ -14,6 +14,7 @@
   ],
   "skills": [
     "./skills/agents-pair",
+    "./skills/check-logs",
     "./skills/herdr-pair",
     "./skills/debug-mode",
     "./skills/review-pr-comments",
@@ -32,6 +33,7 @@
     ],
     "defaultPrompt": [
       "Use debug-mode to investigate this bug",
+      "Use check-logs to inspect an existing herdr/turbo dev TUI",
       "Use review-pr-comments to handle this PR feedback",
       "Use agents-pair to collaborate with Claude through the Claude Code CLI",
       "Use herdr-pair to pair with the other agent"

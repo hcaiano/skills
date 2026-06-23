@@ -32,6 +32,7 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 
 ### Workflow
 
+- `check-logs` — read an existing herdr/turbo dev TUI's app logs without starting or stopping servers.
 - `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
 - `ship-it` — commit, push, open/update PRs, and keep checking CI/review feedback.
 
@@ -72,6 +73,7 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 ## Publishing
 
 The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `skills/_deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.
+Claude Code always scans the root `skills/` directory for plugin skills, so any skill kept directly under `skills/` must be active and listed in both manifests. Move non-shipping skills under `skills/_deprecated/` or out of the plugin root.
 
 ## License
 

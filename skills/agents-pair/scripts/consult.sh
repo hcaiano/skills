@@ -729,9 +729,12 @@ if [[ "$PEER_MESSAGE" == true ]]; then
   APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}You and Codex are equal engineers on this repo, mid-conversation. Do your real work this turn (write code, review, investigate) and then end by emitting the required peer-message structured output. Use message_to_codex to speak to Codex directly as a peer: state what you did or concluded, push back where you disagree, and say what the pair should do next. Fill every schema field; use empty arrays when you have no questions, disagreements, changed files, or validation requests. Put your handoff in proposed_next_turn, edited files in changed_files, and set continuation_state.status honestly (continue/blocked/needs-user/done). Codex is required to read and answer this message next turn, so write it as one side of an ongoing dialogue, not a closing report."$'\n'
 fi
 
+if [[ "$TOOLS_MODE" == "none" || "$TOOLS_MODE" == "read" ]]; then
+  cmd+=(--safe-mode)
+fi
+
 if [[ "$TOOLS_MODE" == "none" ]]; then
   APPEND_SYSTEM_PROMPT="${APPEND_SYSTEM_PROMPT}You have no tools this turn. Do not narrate, simulate, or fabricate tool calls; answer only from the prompt text."
-  cmd+=(--safe-mode)
 fi
 
 if [[ -n "$APPEND_SYSTEM_PROMPT" ]]; then
