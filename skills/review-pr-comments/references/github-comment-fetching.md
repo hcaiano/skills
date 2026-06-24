@@ -100,12 +100,14 @@ conversation is closed in GitHub's UI.
 Summarize unresolved threads without dropping outdated ones:
 
 ```bash
-gh api graphql -f owner="${OWNER_REPO%/*}" -f name="${OWNER_REPO#*/}" -F number="$PR_NUMBER" -f query='
-query($owner: String!, $name: String!, $number: Int!) {
+gh api graphql --paginate --slurp \
+  -f owner="${OWNER_REPO%/*}" -f name="${OWNER_REPO#*/}" -F number="$PR_NUMBER" -f query='
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       headRefOid
-      reviewThreads(first: 100) {
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
         nodes {
           id
           isResolved
@@ -127,17 +129,18 @@ query($owner: String!, $name: String!, $number: Int!) {
       }
     }
   }
-}' --jq '.data.repository.pullRequest as $pr |
-  {head: $pr.headRefOid,
-   unresolved: [$pr.reviewThreads.nodes[]
+}' | jq '.[0].data.repository.pullRequest.headRefOid as $head |
+  [.[].data.repository.pullRequest.reviewThreads.nodes[]] as $threads |
+  {head: $head,
+   unresolved: [$threads[]
      | select(.isResolved == false)
      | {id, path, line, isOutdated,
         comments: [.comments.nodes[]
           | {databaseId, url, author: .author.login, createdAt, outdated,
              commit: .commit.oid,
              title: (.body | split("\n") | map(select(length > 0))[0:2])}]}],
-   resolved_count: ([$pr.reviewThreads.nodes[] | select(.isResolved == true)] | length),
-   total_threads: ($pr.reviewThreads.nodes | length)}'
+   resolved_count: ([$threads[] | select(.isResolved == true)] | length),
+   total_threads: ($threads | length)}'
 ```
 
 Verify one review thread after replying or resolving:
