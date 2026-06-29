@@ -1,7 +1,7 @@
 {
   "name": "agent-workflows",
   "version": "0.1.0",
-  "description": "Custom agent skills for debugging, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
+  "description": "Custom agent skills for debugging, QA loops, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
   "author": {
     "name": "Henrique Caiano"
   },
@@ -10,6 +10,7 @@
     "./skills/check-logs",
     "./skills/herdr-pair",
     "./skills/debug-mode",
+    "./skills/test-fix-loop",
     "./skills/review-pr-comments",
     "./skills/ship-it"
   ]
