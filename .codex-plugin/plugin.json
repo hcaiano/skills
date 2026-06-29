@@ -1,7 +1,7 @@
 {
-  "name": "hcaiano-skills",
+  "name": "agent-workflows",
   "version": "0.1.0",
-  "description": "Henrique Caiano's custom agent skills for debugging, PR review workflows, shipping, and Claude/Codex collaboration.",
+  "description": "Custom agent skills for debugging, QA loops, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
   "author": {
     "name": "Henrique Caiano"
   },
@@ -13,15 +13,18 @@
     "workflow"
   ],
   "skills": [
+    "./skills/agents-pair",
+    "./skills/check-logs",
     "./skills/herdr-pair",
     "./skills/debug-mode",
+    "./skills/test-fix-loop",
     "./skills/review-pr-comments",
     "./skills/ship-it"
   ],
   "interface": {
-    "displayName": "hcaiano skills",
+    "displayName": "Agent workflows",
     "shortDescription": "Custom local agent workflow skills",
-    "longDescription": "Personal skills for hypothesis-driven debugging, PR review comment handling, PR shipping, and Claude/Codex collaboration workflows.",
+    "longDescription": "Workflow skills for hypothesis-driven debugging, paired QA loops, PR review comment handling, PR shipping, and Claude/Codex collaboration.",
     "developerName": "Henrique Caiano",
     "category": "Coding",
     "capabilities": [
@@ -31,7 +34,10 @@
     ],
     "defaultPrompt": [
       "Use debug-mode to investigate this bug",
+      "Use check-logs to inspect an existing herdr/turbo dev TUI",
+      "Use test-fix-loop to test and fix an app end to end with Claude and Codex",
       "Use review-pr-comments to handle this PR feedback",
+      "Use agents-pair to collaborate with Claude through the Claude Code CLI",
       "Use herdr-pair to pair with the other agent"
     ],
     "brandColor": "#111111",

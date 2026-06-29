@@ -39,11 +39,33 @@ For each actionable-looking comment:
 
 Classify from evidence, not from comment text alone.
 
+## Inventory Rules
+
+Build a checklist from the live GitHub surfaces on every loop iteration:
+
+- every GraphQL review thread with `isResolved=false`, including threads where
+  `isOutdated=true`;
+- every non-empty actionable PR review body that is not minimized/resolved;
+- every top-level issue comment that looks actionable and has no follow-up reply
+  from your account quoting its permalink/title;
+- every processed finding whose required reply, thread resolution, or review-body
+  minimization cannot be verified.
+
+`isOutdated=true` only means the diff hunk moved. It does not mean the thread is
+closed. If GitHub still reports `isResolved=false`, the user can still see it as
+an open issue. Reply with the current classification, resolve the thread when
+appropriate, and re-query the exact thread id.
+
 ## Reply Format
 
-**Hard rule: every actionable finding gets its own threaded reply on the original comment.** A single summary comment on the PR is not a substitute and is forbidden as the only response — the user cannot tell which issues were handled if replies are not attached to each thread.
+**Hard rule: every actionable finding gets its own reply on the original surface.** A single summary comment on the PR is not a substitute and is forbidden as the only response — the user cannot tell which issues were handled if replies are not attached to, or clearly quote, each finding.
 
 - Reply to threaded review comments using `in_reply_to=<COMMENT_ID>` so the reply nests under the original thread.
+- After replying to a Fix / False Positive / Out of Scope review thread, resolve
+  the thread when GraphQL exposes `resolveReviewThread`, then re-query that exact
+  thread and require `isResolved=true`. A posted reply alone is not enough for a
+  clean UI state.
+- Reply to actionable PR review bodies as a top-level issue comment that quotes the review permalink and the finding title, because GitHub does not expose a resolvable thread for review-body findings. Process unreplied review-body findings even when their reviewed commit is older than the current PR head; stale review bodies remain visible in the timeline and still need an audit reply. Only after every actionable finding in that same review body has been classified, fixed or deferred, and replied to, check whether the review body implements `Minimizable`; if `viewerCanMinimize` is true, minimize it with classifier `RESOLVED`.
 - Reply to top-level issue comments as a new issue comment that quotes the original (short quote + permalink) so the timeline stays readable.
 - One reply per finding. Do not batch multiple findings into one reply.
 - Do not skip a reply because the fix is "obvious from the diff" — the reply is the audit trail.
@@ -60,25 +82,29 @@ If a single commit fixes multiple comments, reply on each comment individually, 
 
 ## Recheck Loop
 
-After every push, inspect all latest-head surfaces again:
+After every push, reply, thread resolution, or review-body minimization, inspect
+all review surfaces again:
 
 - new comments
-- unresolved review threads
+- unresolved review threads, including outdated unresolved threads
+- actionable PR review bodies
+- unminimized actionable review bodies
+- unreplied actionable issue comments
 - CI/check status
 - mergeability/conflict state
 - branch staleness against target
 
-**Reviewer-first invariant:** never wait on pending CI while there are unresolved, non-outdated review threads, fresh reviewer comments, or unreplied actionable findings. Reviewer feedback is the immediate work queue. Pending CI is background signal until the review surface is clean.
+**Reviewer-first invariant:** never wait on pending CI while there are unresolved review threads of any age, fresh reviewer comments, unminimized actionable review-body findings, or unreplied actionable findings. Reviewer feedback is the immediate work queue. Pending CI is background signal until the review surface is clean.
 
 Use this order after each push:
 
 1. Record the latest head SHA from the PR.
-2. Fetch unresolved review threads, review comments, reviews, and issue comments.
-3. If active review feedback exists, classify the whole current sweep and group compatible fixes. Fix all actionable items from that sweep before pushing unless they conflict or one fix is risky enough to isolate. Then run the local quality gate, commit, push, reply on each original thread, resolve threads when appropriate, and restart the loop. Do not wait for CI before doing this.
+2. Fetch unresolved review threads, review comments, PR review bodies, and issue comments.
+3. If any inventory item exists, classify the whole current sweep and group compatible fixes. Fix all actionable items from that sweep before pushing unless they conflict or one fix is risky enough to isolate. Then run the local quality gate, commit, push, reply on each original thread, resolve threads when appropriate, minimize processed review bodies when allowed, and restart the loop. Do not wait for CI before doing this.
 4. Only when the reviewer surface is quiet, check CI status for the latest head.
 5. If a CI check has completed with a real failure, read the failed logs, fix, run the local quality gate, commit, push, and restart the loop.
 6. If CI is only queued or in progress and reviewer feedback is clean, it is acceptable to wait/poll CI, but every poll must re-check reviewer threads/comments before checking CI again.
 
 This avoids wasting a full CI cycle after every reviewer fix. Bots often post comments while CI is still running, and any fix push restarts CI anyway. The only signal that strictly requires green CI is the final done condition.
 
-Success requires two consecutive clean rechecks on the latest head. A clean recheck means reviewer feedback is quiet, every Fix / False Positive / Out of Scope item has a threaded reply, CI is green for the latest head, the branch is synced, and GitHub reports the PR mergeable. Stop with a precise blocker when auth/rate limits prevent inspection, CI remains pending without progress after repeated reviewer-clean polls, merge conflicts require broader judgment, or the next action needs expanded-mode confirmation.
+Success requires two consecutive clean rechecks on the same latest head. A clean recheck means the inventory is empty: `0` unresolved review threads total, `0` unminimized actionable review bodies, `0` unreplied actionable issue comments, every Fix / False Positive / Out of Scope item has a reply on the original surface, every processed review thread is confirmed `isResolved=true`, every processed review-body finding is minimized when minimization is allowed, CI is green for the latest head, the branch is synced, and GitHub reports the PR mergeable. The second clean recheck must happen at least 3 minutes after the most recent push, review reply, thread resolution, or review-body minimization. If a bot posts late feedback, a thread remains unresolved, or a review body remains visually open during that window, handle it and restart the two-clean-recheck count. Stop with a precise blocker when auth/rate limits prevent inspection, CI remains pending without progress after repeated reviewer-clean polls, merge conflicts require broader judgment, or the next action needs expanded-mode confirmation.

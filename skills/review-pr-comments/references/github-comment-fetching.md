@@ -23,6 +23,18 @@ Reviews:
 gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" --paginate
 ```
 
+Non-empty review bodies can contain actionable findings that are not present as
+review-thread nodes. Fetch and classify them explicitly:
+
+```bash
+gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/reviews" --paginate |
+  jq -r '.[] | select((.body // "") != "") |
+    {rest_id: .id, node_id: .node_id, author: .user.login, commit_id: .commit_id, html_url: .html_url, body: .body} | @json'
+```
+
+Use `node_id`, not the numeric REST `rest_id`, as `$REVIEW_NODE_ID` for the
+GraphQL minimization checks below.
+
 Top-level issue comments:
 
 ```bash
@@ -81,7 +93,83 @@ query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
 }'
 ```
 
-Treat unresolved, non-outdated threads as active unless the latest comment is clearly informational or already addressed by a later commit.
+Treat every `isResolved=false` thread as review inventory, even when
+`isOutdated=true`. Outdated means the diff hunk moved; it does not mean the
+conversation is closed in GitHub's UI.
+
+Summarize unresolved threads without dropping outdated ones:
+
+```bash
+gh api graphql --paginate --slurp \
+  -f owner="${OWNER_REPO%/*}" -f name="${OWNER_REPO#*/}" -F number="$PR_NUMBER" -f query='
+query($owner: String!, $name: String!, $number: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      reviewThreads(first: 100, after: $endCursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 20) {
+            nodes {
+              databaseId
+              author { login }
+              body
+              url
+              createdAt
+              outdated
+              commit { oid }
+            }
+          }
+        }
+      }
+    }
+  }
+}' | jq '.[0].data.repository.pullRequest.headRefOid as $head |
+  [.[].data.repository.pullRequest.reviewThreads.nodes[]] as $threads |
+  {head: $head,
+   unresolved: [$threads[]
+     | select(.isResolved == false)
+     | {id, path, line, isOutdated,
+        comments: [.comments.nodes[]
+          | {databaseId, url, author: .author.login, createdAt, outdated,
+             commit: .commit.oid,
+             title: (.body | split("\n") | map(select(length > 0))[0:2])}]}],
+   resolved_count: ([$threads[] | select(.isResolved == true)] | length),
+   total_threads: ($threads | length)}'
+```
+
+Verify one review thread after replying or resolving:
+
+```bash
+gh api graphql -f query='
+query($id: ID!) {
+  node(id: $id) {
+    ... on PullRequestReviewThread {
+      id
+      isResolved
+      isOutdated
+      path
+      line
+      comments(first: 20) {
+        nodes {
+          databaseId
+          author { login }
+          body
+          url
+        }
+      }
+    }
+  }
+}' -f id="$THREAD_NODE_ID"
+```
+
+If the verification still shows `isResolved=false`, the loop is not clean. Do
+not report completion; resolve or classify the blocker under Needs attention.
 
 ## Replies
 
@@ -93,11 +181,64 @@ gh api "repos/$OWNER_REPO/pulls/$PR_NUMBER/comments" \
   -F in_reply_to="$COMMENT_ID"
 ```
 
+Resolve a processed review thread:
+
+```bash
+gh api graphql -f query='
+mutation($id: ID!) {
+  resolveReviewThread(input: {threadId: $id}) {
+    thread {
+      id
+      isResolved
+    }
+  }
+}' -f id="$THREAD_NODE_ID"
+```
+
 Reply to a top-level issue comment:
 
 ```bash
 gh api "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" \
   -f body="$BODY"
+```
+
+Reply to an actionable PR review body with a top-level issue comment that quotes
+the review permalink and finding title:
+
+```bash
+gh api "repos/$OWNER_REPO/issues/$PR_NUMBER/comments" \
+  -f body="$BODY"
+```
+
+Check whether an actionable review body can be minimized after the audit reply:
+
+```bash
+gh api graphql -f query='
+query($id: ID!) {
+  node(id: $id) {
+    __typename
+    id
+    ... on Minimizable {
+      isMinimized
+      minimizedReason
+      viewerCanMinimize
+    }
+  }
+}' -f id="$REVIEW_NODE_ID"
+```
+
+Minimize a fixed review-body finding that has no resolvable thread:
+
+```bash
+gh api graphql -f query='
+mutation($id: ID!) {
+  minimizeComment(input: {subjectId: $id, classifier: RESOLVED}) {
+    minimizedComment {
+      isMinimized
+      minimizedReason
+    }
+  }
+}' -f id="$REVIEW_NODE_ID"
 ```
 
 React to a review comment:

@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AgentsPairPeerMessage",
+  "description": "Structured message Claude returns to Codex at the end of every pairing turn so the pair stays a real back-and-forth between equal engineers instead of a one-shot review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "message_to_codex",
+    "questions_for_codex",
+    "proposed_next_turn",
+    "continuation_state",
+    "changed_files",
+    "validation_requests",
+    "disagreements"
+  ],
+  "properties": {
+    "message_to_codex": {
+      "type": "string",
+      "description": "Direct peer-to-peer message in Claude's own voice: what you did or concluded this turn, where you disagree, and what you think the pair should do. Speak to Codex as an equal engineer, not as a subordinate filing a report."
+    },
+    "questions_for_codex": {
+      "type": "array",
+      "description": "Concrete questions Codex must answer before or during the next turn. Empty only if you genuinely have none.",
+      "items": { "type": "string" }
+    },
+    "proposed_next_turn": {
+      "type": "object",
+      "description": "Your proposal for what happens next. Codex may counter it, but should not silently ignore it.",
+      "additionalProperties": false,
+      "properties": {
+        "owner": {
+          "type": "string",
+          "enum": ["codex", "claude", "either", "both", "user"],
+          "description": "Who should hold the pen next and why it should be them."
+        },
+        "goal": {
+          "type": "string",
+          "description": "The specific next unit of work."
+        },
+        "target_files": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Files/areas the next turn should touch. Keep write scopes disjoint from the other agent."
+        },
+        "validation": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Checks the next turn should run to prove the work."
+        }
+      },
+      "required": ["owner", "goal"]
+    },
+    "continuation_state": {
+      "type": "object",
+      "description": "Whether the loop should continue and who should drive.",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["continue", "blocked", "needs-user", "done"],
+          "description": "continue: hand back for the next turn. blocked: you need Codex input/answers first. needs-user: a human decision is required. done: this goal is complete and validated."
+        },
+        "reason": {
+          "type": "string",
+          "description": "One line on why this status, especially for blocked, needs-user, or done."
+        }
+      },
+      "required": ["status"]
+    },
+    "changed_files": {
+      "type": "array",
+      "description": "Files you actually wrote or modified this turn, so Codex reviews the real diff.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string" },
+          "summary": { "type": "string", "description": "What changed and why." }
+        },
+        "required": ["path"]
+      }
+    },
+    "validation_requests": {
+      "type": "array",
+      "description": "Specific things you want Codex to run, verify, or check that you could not or should not verify yourself this turn.",
+      "items": { "type": "string" }
+    },
+    "disagreements": {
+      "type": "array",
+      "description": "Open points where you disagree with Codex's plan or with the current direction, with your reasoning. Surface these instead of silently complying.",
+      "items": { "type": "string" }
+    }
+  }
+}

@@ -1,8 +1,8 @@
-# hcaiano skills
+# Agent Workflow Skills
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Personal agent skills that are maintained locally and shared across Claude, Codex, and other agent runtimes.
+Agent skills maintained locally and shared across Claude, Codex, and other agent runtimes.
 
 This repo keeps metadata at the root, distributable skills under `skills/`, and small local maintenance scripts under `scripts/`.
 
@@ -20,9 +20,11 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 
 ### Collaboration
 
+- `agents-pair` — pair Codex in the Codex app with Claude through the Claude Code CLI.
 - `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
 
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
+`agents-pair` depends on the local Claude Code CLI (`claude`) being installed and authenticated.
 
 ### Engineering
 
@@ -30,6 +32,8 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 
 ### Workflow
 
+- `check-logs` — read an existing herdr/turbo dev TUI's app logs without starting or stopping servers.
+- `test-fix-loop` — run a paired Claude/Codex QA loop that tests a target for real, fixes findings, and ships PRs.
 - `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
 - `ship-it` — commit, push, open/update PRs, and keep checking CI/review feedback.
 
@@ -69,7 +73,8 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 
 ## Publishing
 
-The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `skills/_deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.
+The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `_deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.
+Claude Code always scans the root `skills/` directory for plugin skills, so any skill kept directly under `skills/` must be active and listed in both manifests. Move non-shipping skills under `_deprecated/` or out of the plugin root.
 
 ## License
 
