@@ -57,6 +57,8 @@ Options:
   --append-system-prompt TEXT
                            Extra system prompt text for this consult.
   --claude-arg ARG        Raw Claude CLI arg passthrough. Repeatable.
+                          --setting-sources is not allowed; default Claude
+                          settings sources are disabled to preserve subscription auth.
   --disable-slash-commands Disable Claude slash commands and skills.
   --enable-slash-commands Kept for compatibility; slash commands are enabled by default.
 EOF
@@ -404,6 +406,10 @@ if ((${#CLAUDE_ARGS[@]} > 0)); then
         echo "error: pass Claude settings through --settings, not --claude-arg, so agents-pair can enforce subscription-only auth" >&2
         exit 2
         ;;
+      --setting-sources|--setting-sources=*)
+        echo "error: --claude-arg --setting-sources is not allowed; agents-pair disables default Claude settings sources to preserve subscription auth" >&2
+        exit 2
+        ;;
       *apiKeyHelper*|*ANTHROPIC_API_KEY*)
         echo "error: Claude API-key auth is not allowed in agents-pair raw args; use the logged-in Claude subscription session" >&2
         exit 2
@@ -698,6 +704,8 @@ fi
 cmd+=(--model "$MODEL"
   --effort "$EFFORT"
   --permission-mode "$PERMISSION_MODE")
+
+cmd+=(--setting-sources "")
 
 if [[ -n "$SESSION_NAME" ]]; then
   cmd+=(--name "$SESSION_NAME")

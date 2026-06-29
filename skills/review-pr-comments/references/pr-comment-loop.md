@@ -65,7 +65,7 @@ appropriate, and re-query the exact thread id.
   the thread when GraphQL exposes `resolveReviewThread`, then re-query that exact
   thread and require `isResolved=true`. A posted reply alone is not enough for a
   clean UI state.
-- Reply to actionable PR review bodies as a top-level issue comment that quotes the review permalink and the finding title, because GitHub does not expose a resolvable thread for review-body findings. Process unreplied review-body findings even when their reviewed commit is older than the current PR head; stale review bodies remain visible in the timeline and still need an audit reply. After the reply, check whether the review body implements `Minimizable`; if `viewerCanMinimize` is true, minimize it with classifier `RESOLVED`.
+- Reply to actionable PR review bodies as a top-level issue comment that quotes the review permalink and the finding title, because GitHub does not expose a resolvable thread for review-body findings. Process unreplied review-body findings even when their reviewed commit is older than the current PR head; stale review bodies remain visible in the timeline and still need an audit reply. Only after every actionable finding in that same review body has been classified, fixed or deferred, and replied to, check whether the review body implements `Minimizable`; if `viewerCanMinimize` is true, minimize it with classifier `RESOLVED`.
 - Reply to top-level issue comments as a new issue comment that quotes the original (short quote + permalink) so the timeline stays readable.
 - One reply per finding. Do not batch multiple findings into one reply.
 - Do not skip a reply because the fix is "obvious from the diff" — the reply is the audit trail.

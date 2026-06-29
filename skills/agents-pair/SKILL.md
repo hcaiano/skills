@@ -376,11 +376,12 @@ passing large prompt text as a shell argument.
 Agents-pair is subscription-auth only. Never configure or suggest
 `ANTHROPIC_API_KEY`, `apiKeyHelper`, Console/API-key auth, or `--bare` for this
 skill. Claude's docs say bare mode skips OAuth/keychain reads; that conflicts
-with the subscription-only contract, so the helper rejects raw `--bare`, rejects
-settings that contain `apiKeyHelper` or provider-auth environment variables,
-scrubs provider/API auth variables from the subprocess environment, and launches
-Claude with `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1` so settings-file provider
-auth cannot override the logged-in subscription path.
+with the subscription-only contract, so the helper rejects raw `--bare`, disables
+default Claude settings sources with `--setting-sources ""`, rejects attempts to
+override that through raw args, rejects explicit settings that contain
+`apiKeyHelper` or provider-auth environment variables, scrubs provider/API auth
+variables from the subprocess environment, and launches Claude with
+`CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1`.
 
 For `--tools none` and `--tools read`, the helper disables slash commands and
 denies MCP tools with `mcp__*` so constrained prompts stay compatible with

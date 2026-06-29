@@ -51,12 +51,12 @@ link_one() {
   echo "linked $target -> $src"
 }
 
-find_args=("$REPO/skills" -name SKILL.md -not -path '*/node_modules/*')
-if [ "$INCLUDE_DEPRECATED" != true ]; then
-  find_args+=(-not -path "$REPO/skills/_deprecated/*")
+find_roots=("$REPO/skills")
+if [ "$INCLUDE_DEPRECATED" = true ]; then
+  find_roots+=("$REPO/_deprecated")
 fi
 
-find "${find_args[@]}" -print0 |
+find "${find_roots[@]}" -name SKILL.md -not -path '*/node_modules/*' -print0 |
 while IFS= read -r -d '' skill_md; do
   src="$(dirname "$skill_md")"
   link_one "$src" "$HOME/.agents/skills"

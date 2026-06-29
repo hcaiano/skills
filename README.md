@@ -1,8 +1,8 @@
-# hcaiano skills
+# Agent Workflow Skills
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Personal agent skills that are maintained locally and shared across Claude, Codex, and other agent runtimes.
+Agent skills maintained locally and shared across Claude, Codex, and other agent runtimes.
 
 This repo keeps metadata at the root, distributable skills under `skills/`, and small local maintenance scripts under `scripts/`.
 
@@ -72,8 +72,8 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 
 ## Publishing
 
-The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `skills/_deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.
-Claude Code always scans the root `skills/` directory for plugin skills, so any skill kept directly under `skills/` must be active and listed in both manifests. Move non-shipping skills under `skills/_deprecated/` or out of the plugin root.
+The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `_deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.
+Claude Code always scans the root `skills/` directory for plugin skills, so any skill kept directly under `skills/` must be active and listed in both manifests. Move non-shipping skills under `_deprecated/` or out of the plugin root.
 
 ## License
 

@@ -1,7 +1,7 @@
 {
-  "name": "hcaiano-skills",
+  "name": "agent-workflows",
   "version": "0.1.0",
-  "description": "Henrique Caiano's custom agent skills for debugging, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
+  "description": "Custom agent skills for debugging, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
   "author": {
     "name": "Henrique Caiano"
   },

@@ -10,7 +10,7 @@ fi
 
 cd "$REPO"
 if [ "$INCLUDE_DEPRECATED" = true ]; then
-  find skills -name SKILL.md -not -path '*/node_modules/*' | sort
+  find skills _deprecated -name SKILL.md -not -path '*/node_modules/*' | sort
 else
-  find skills -name SKILL.md -not -path '*/node_modules/*' -not -path 'skills/_deprecated/*' | sort
+  find skills -name SKILL.md -not -path '*/node_modules/*' | sort
 fi
