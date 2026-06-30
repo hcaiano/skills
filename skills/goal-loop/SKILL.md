@@ -1,13 +1,13 @@
 ---
-name: test-fix-loop
-description: "Goal-driven improvement loop run by Claude + Codex as a pair: the human names one target and what 'better' means, and the agents iteratively test it for real (browser/computer-use, dev logs, runtime debugging), improve it — correctness, behavior, performance, UX, polish, whatever the goal is — and ship autonomous PRs, looping until the goal's quality bar and the peer both pass. Use when the user invokes /test-fix-loop, or asks to 'keep improving <thing> until it's right', 'QA and fix this app', 'test the whole app and fix what's broken', 'make <X> better and don't stop until it's solid', or wants a paired self-improving loop on something specific. The human supplies a target + intent; the agents plan and set the goal themselves."
+name: goal-loop
+description: "Goal-driven improvement loop run by Claude + Codex as a pair: the human names one target and what 'better' means, and the agents iteratively test it for real (browser/computer-use, dev logs, runtime debugging), improve it — correctness, behavior, performance, UX, polish, whatever the goal is — and ship autonomous PRs, looping until the goal's quality bar and the peer both pass. Use when the user invokes /goal-loop, or asks to 'keep improving <thing> until it's right', 'QA and fix this app', 'test the whole app and fix what's broken', 'make <X> better and don't stop until it's solid', or wants a paired self-improving loop on something specific. The human supplies a target + intent; the agents plan and set the goal themselves."
 user-invocable: true
 argument-hint: "<app/scope> [free-form intent for this run]"
 ---
 
-# Test-Fix Loop
+# Goal Loop
 
-A reusable, goal-driven improvement loop. The human runs `/test-fix-loop <target>
+A reusable, goal-driven improvement loop. The human runs `/goal-loop <target>
 <intent>` to name **one thing to improve** and what "better" means; the two agents
 (Claude + Codex) **plan and set the goal themselves**, break the target into testable
 stories, validate them with real execution, improve whatever the goal covers
@@ -75,7 +75,7 @@ Everything below serves this. It is what lets "no iteration cap" coexist with
    Never rebase a shared branch; merge `origin/main` if you need upstream.
 4. Bootstrap `herdr-pair` (find or spawn the peer; write the session file).
 5. Create the **full** tracker set BEFORE any peer kickoff:
-   `.planning/<YYYY-MM-DD>-<target>-test-fix-loop/` with `task_plan.md`,
+   `.planning/<YYYY-MM-DD>-<target>-goal-loop/` with `task_plan.md`,
    `findings.md`, `progress.md`, AND `skill-improvements.md` — each with its
    initial schema sections. Do not send the Goal Block until all four exist (the
    peer is told to read `progress.md` immediately; a missing file is a protocol
@@ -123,7 +123,7 @@ normal herdr-pair headered protocol.
 Goal Block template (fill from the contract):
 
 ```
-/goal Co-run the test-fix-loop with Claude as peers via herdr-pair (sid=<SID>).
+/goal Co-run the goal-loop with Claude as peers via herdr-pair (sid=<SID>).
 Read first and obey: planning-with-files, herdr-pair, debug-mode, check-logs,
 review-pr-comments, plus CLAUDE.md + nearest AGENTS.md (+ impeccable +
 packages/ds/AGENTS.md when the goal touches UI).
@@ -144,7 +144,7 @@ The coordinator (Claude) itself does **not** need `/goal` — it just runs the l
 
 **Codex-invoked path:** Codex is already coordinator. After Phase 0 it must
 **start/record its own active goal** from the same Goal Block content — using Codex
-goal machinery when available, otherwise treating the current `/test-fix-loop`
+goal machinery when available, otherwise treating the current `/goal-loop`
 invocation as the active goal — and send Claude a normal
 `[agent codex -> claude kind=task …]` message carrying the Scope Contract, tracker
 path, partition, and exit criteria. Claude never needs a `/goal` token.
@@ -276,7 +276,7 @@ remains."
 
 ## Tracker schema (planning-with-files)
 
-`.planning/<YYYY-MM-DD>-<target>-test-fix-loop/`:
+`.planning/<YYYY-MM-DD>-<target>-goal-loop/`:
 
 - **task_plan.md** — Scope Contract, PR-split policy, the story backlog (Phase 1).
 - **findings.md** — one entry per finding + the per-story Improvement Ledger.

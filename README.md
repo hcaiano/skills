@@ -33,7 +33,7 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 ### Workflow
 
 - `check-logs` — read an existing herdr/turbo dev TUI's app logs without starting or stopping servers.
-- `test-fix-loop` — run a paired Claude/Codex QA loop that tests a target for real, fixes findings, and ships PRs.
+- `goal-loop` — name one target and what "better" means; Claude and Codex keep improving that one thing with real testing until the goal's quality bar and the peer both pass. (Formerly `test-fix-loop`.)
 - `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
 - `ship-it` — commit, push, open/update PRs, and keep checking CI/review feedback.
 
