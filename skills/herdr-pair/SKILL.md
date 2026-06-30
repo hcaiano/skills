@@ -67,6 +67,7 @@ Triggered by `/herdr-pair <task>` in either pane. The receiving agent is the ini
    SID="$(date +%s)-$(openssl rand -hex 2)"
    TAB_SLUG="${TAB_ID//:/_}"
    SESSION_DIR="$HOME/.herdr-coworkers/<workspace_id>/$TAB_SLUG"
+   [ -f "$SESSION_DIR/session.json" ] && { echo "stale session.json for this tab — stop and ask the user to resume or overwrite" >&2; exit 1; }
    mkdir -p "$SESSION_DIR"
    TMP="$SESSION_DIR/session.json.tmp.$$"
    cat > "$TMP" <<JSON
