@@ -43,8 +43,11 @@ claude -p --model opus --permission-mode bypassPermissions \
   content. Run `--safe-mode` (disables all customizations in one flag — CLAUDE.md,
   skills, slash commands, plugins, hooks, MCP servers, custom agents/commands)
   together with `--tools ""` (no built-ins), a clean env, and a **fresh** session
-  (never `--resume`). Never put secrets in the prompt; if you can't fully lock the
-  turn down, don't run it.
+  (never `--resume`). `--safe-mode` does *not* override Enterprise **managed policy**
+  (a policy `UserPromptSubmit` hook can still inject context before the model sees the
+  prompt), so under managed policy you can't guarantee isolation — abort the sanitized
+  turn rather than trust it. Never put secrets in the prompt; if you can't fully lock
+  the turn down, don't run it.
 - To watch progress live, stream with `--output-format stream-json --verbose
   --include-partial-messages` (all three are needed to actually receive tokens). For
   Claude agents, MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
