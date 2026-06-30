@@ -58,6 +58,9 @@ per message:
   a one-line note next to the goal).
 - Continue with `--resume <session_id>` on later turns, and re-pass
   `--permission-mode bypassPermissions` (it isn't carried over).
+- Run every call from `$WORKSPACE_ROOT` (`cd` into it first). `--resume` looks up the
+  session in the current project directory and its worktrees, so resuming from a
+  parent/other directory won't find the conversation.
 - Start a new conversation when the goal genuinely changes — and always for an
   isolated/sanitized turn (never `--resume` into one).
 - For durable goal state that survives context loss, use the hub's shared plan
