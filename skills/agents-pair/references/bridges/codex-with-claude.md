@@ -27,16 +27,15 @@ claude -p --model opus --permission-mode bypassPermissions \
   Claude writes code as a normal peer turn, bounded only by the write lease — not
   granted turn by turn.
 - **Subscription auth only — never an API key.** Hard invariant: every pair turn
-  uses the logged-in subscription, never API / cloud-provider / gateway credentials.
-  Those outrank subscription OAuth, so the guarantee is a *clean environment* — not a
-  fixed denylist. Before the call, strip every `ANTHROPIC_*` auth/routing var
-  (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
-  `ANTHROPIC_CUSTOM_HEADERS`, …), all provider toggles/credentials
-  (`CLAUDE_CODE_USE_BEDROCK`/`VERTEX`/`FOUNDRY`, `AWS_BEARER_TOKEN_BEDROCK`,
-  `ANTHROPIC_AWS_API_KEY`, …), and neutralize a settings `apiKeyHelper` with
-  `--setting-sources`. Claude's env-vars + auth-precedence docs are the
-  authoritative list. If you can't guarantee a clean environment, don't pass the
-  turn off as subscription-only. Never `--bare`.
+  uses the logged-in subscription, never API key, cloud-provider, or gateway
+  credentials. **Verify, don't just scrub:** run `claude auth status` and confirm the
+  active method is the subscription; if it's anything else — API key, provider, or an
+  active gateway session — abort the turn rather than route it through non-subscription
+  auth. Then keep the environment clean as defense-in-depth so a scrubbed call can't
+  silently re-introduce one: strip every `ANTHROPIC_*` auth/routing var and all
+  cloud-provider toggles/credentials, and neutralize a settings `apiKeyHelper`
+  (`--setting-sources`). Never `--bare`. If you can't confirm subscription auth, don't
+  run the turn.
 - **Constrained turns** (narrow diagnostic): drop bypass, restrict built-in tools
   with `--tools Read,Grep,Glob`, and deny MCP with `--disallowedTools "mcp__*"`
   (`--tools` doesn't affect MCP; `--allowedTools` only auto-approves).
