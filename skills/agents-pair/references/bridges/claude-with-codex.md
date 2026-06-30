@@ -24,10 +24,12 @@ shopt -s nullglob
 cands=("$HOME"/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs)
 COMPANION="$(printf '%s\n' "${cands[@]}" | sort -V | tail -1)"
 [ -z "$COMPANION" ] && COMPANION="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
+[ -f "$COMPANION" ] || COMPANION=""   # neither cache nor marketplace script present
 ```
 
-(Avoid `ls` here — it can append a `*` to executables and break the path.) If that
-finds nothing, don't improvise: tell the user to run `/codex:setup`.
+(Avoid `ls` here — it can append a `*` to executables and break the path.) If
+`$COMPANION` is empty — nothing is installed — don't improvise: tell the user to
+run `/codex:setup`.
 
 ## Preflight
 
