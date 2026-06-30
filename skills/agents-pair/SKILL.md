@@ -91,12 +91,39 @@ questions before adding new asks. The bridge says how that message is carried.
 4. Review the real diff. Done when the other peer has read touched files,
    inspected `git diff`, and run or requested the relevant checks.
 5. Close with a final audit. Done when the final diff, validation, peer questions,
-   and remaining disagreements are accounted for. On long goals, keep
-   `planning-with-files` notes and ask the user if two cycles produce no progress.
+   and remaining disagreements are accounted for. On long goals, keep the shared
+   plan below and ask the user if two cycles produce no progress.
+
+## Shared plan (long goals)
+
+For a goal that spans many checkpoints — a migration, multi-feature work, research
+— give the pair a durable shared brain with `planning-with-files`: `task_plan.md`
+(plan and decisions), `findings.md` (evidence and peer findings), `progress.md`
+(what changed, what was validated, decisions, what remains). Separate contexts make
+these files the common ground; they also survive `/clear` and compaction. Once it
+exists, the peer message references the plan instead of restating it.
+
+The plan files are themselves write-leased:
+
+- the **coordinator** — the agent that took the original goal, fixed until an
+  explicit handoff, *not* the rotating write lead — owns `task_plan.md` and
+  `progress.md`;
+- the **peer** appends to `findings.md` (nothing to append when it found nothing)
+  and reports its changed files, validation, and decisions in the peer message;
+- both read freely and re-read before major decisions.
+
+`progress.md` is coordinator-only — a code write lease doesn't grant the right to
+write it; the coordinator records each checkpoint from the peer message. Keep it
+semantic: sid, pane ids, rounds, and turn state stay in the bridge's session state,
+never copied here. At close, the coordinator drains `findings.md` into accepted /
+deferred / resolved.
+
+Skip all of this for a quick review or one-shot delegation; there the peer message
+and the diff are the state.
 
 ## Domain skills still apply
 
 Pairing doesn't replace them. For UI, use `impeccable` and have the peer critique
-against it. For APIs, check current docs before reasoning from memory. For long
-goals, share `planning-with-files` state. Tell the peer which skill's rules bind
-this turn. For advanced Codex/Claude surfaces, see `references/features.md`.
+against it. For APIs, check current docs before reasoning from memory. Tell the
+peer which skill's rules bind this turn. For advanced Codex/Claude surfaces, see
+`references/features.md`.
