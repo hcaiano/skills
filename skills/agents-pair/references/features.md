@@ -35,17 +35,15 @@ source of truth — verify flag names with `claude --help` / `codex --help`.
 You drive `claude -p` directly (see `bridges/codex-with-claude.md`). Reach for
 these flags when the turn needs them:
 
-- `--output-format json`: result + `session_id` (use `stream-json` to watch
-  progress; neither exposes hidden reasoning).
-- Session continuity: capture the `session_id` from the first JSON and pass
-  `--resume <session_id>` on later turns; re-pass `--permission-mode
-  bypassPermissions` (it isn't carried over). Durable goal state → the hub's shared
-  plan (`planning-with-files`).
-- `--permission-mode bypassPermissions` + default tools + `--add-dir
-  "$WORKSPACE_ROOT"`: write-capable autonomous peer turn.
-- Constrained turns: `--allowedTools Read,Grep,Glob` (or stricter) for sanitized
-  prompts, secret-heavy repos, or narrow diagnostics. Subscription auth only —
-  never `--bare` or API-key auth.
+(The bridge owns the core — calling `claude -p`, session resume via `session_id`,
+the subscription-auth rule, and the peer message. This lists only the *advanced*
+flags on top of that.)
+
+- `--output-format json` / `stream-json`: machine-readable result, or live progress
+  on long turns (neither exposes hidden reasoning).
+- `--add-dir "$WORKSPACE_ROOT"`: give Claude the workspace on a write-capable turn.
+- `--allowedTools Read,Grep,Glob` (or stricter): constrained turns for sanitized
+  prompts, secret-heavy repos, or narrow diagnostics.
 - `--effort`: `high`/`xhigh` for hard work, `max` for architecture, security,
   production-risk, UI-quality, or large-diff review.
 - `--agents` / `--agent`, `claude agents`: focused Claude specialists or parallel
@@ -55,10 +53,6 @@ these flags when the turn needs them:
   relevant Claude-native tools, plugins, and settings for the turn.
 - `--json-schema`: structured Claude output when you need to parse decisions,
   findings, file lists, or next actions reliably.
-- Peer message: ask Claude (in the prompt) to end each turn with its peer message
-  (what it did, disagreements, proposed next turn + owner, changed files,
-  validation asks); it returns that as text. Answer it next turn. See "How a turn
-  ends" in `SKILL.md`.
 - `--max-turns` and timeouts: bound runaway turns without weakening autonomy.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`: use only for a concrete task need.
 - `claude ultrareview <target> --json`: approved cloud-hosted multi-agent review of

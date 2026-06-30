@@ -19,7 +19,8 @@ Send the prompt on stdin and capture JSON, so you get both the result and the
 session id:
 
 ```bash
-claude -p --model opus --permission-mode bypassPermissions --output-format json < prompt.md
+claude -p --model opus --permission-mode bypassPermissions \
+  --add-dir "$WORKSPACE_ROOT" --output-format json < prompt.md > result.json
 ```
 
 - **Autonomous and write-capable by default** (`bypassPermissions`, default tools).
