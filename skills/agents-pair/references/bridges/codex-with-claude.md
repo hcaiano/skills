@@ -26,28 +26,11 @@ claude -p --model opus --permission-mode bypassPermissions \
 - **Autonomous and write-capable by default** (`bypassPermissions`, default tools).
   Claude writes code as a normal peer turn, bounded only by the write lease — not
   granted turn by turn.
-- **Subscription auth only — never an API key.** Hard invariant: every pair turn
-  uses the logged-in subscription, never API key, cloud-provider, or gateway
-  credentials. **Verify, don't just scrub:** run `claude auth status` and confirm the
-  active method is the subscription; if it's anything else — API key, provider, or an
-  active gateway session — abort the turn rather than route it through non-subscription
-  auth. Then keep the environment clean as defense-in-depth so a scrubbed call can't
-  silently re-introduce one: strip every `ANTHROPIC_*` auth/routing var and all
-  cloud-provider toggles/credentials, and neutralize a settings `apiKeyHelper`
-  (`--setting-sources`). Never `--bare`. If you can't confirm subscription auth, don't
-  run the turn.
-- **Constrained turns** (narrow diagnostic): drop bypass, restrict built-in tools
-  with `--tools Read,Grep,Glob`, and deny MCP with `--disallowedTools "mcp__*"`
-  (`--tools` doesn't affect MCP; `--allowedTools` only auto-approves).
-- **Isolated turns** (sanitized prompt, secret-heavy repo): nothing may inject repo
-  content. Run `--safe-mode` (disables all customizations in one flag — CLAUDE.md,
-  skills, slash commands, plugins, hooks, MCP servers, custom agents/commands)
-  together with `--tools ""` (no built-ins), a clean env, and a **fresh** session
-  (never `--resume`). `--safe-mode` does *not* override Enterprise **managed policy**
-  (a policy `UserPromptSubmit` hook can still inject context before the model sees the
-  prompt), so under managed policy you can't guarantee isolation — abort the sanitized
-  turn rather than trust it. Never put secrets in the prompt; if you can't fully lock
-  the turn down, don't run it.
+- **Subscription auth, never an API key.** Use the logged-in subscription (you keep
+  it configured); don't pass `--bare` or wire in an API key.
+- **Narrow or sanitized turns:** for a read-only diagnostic, limit the tools with
+  `--tools Read,Grep,Glob`; for a secret-heavy repo, lock it down with `--safe-mode
+  --tools ""` and a fresh session, and keep secrets out of the prompt.
 - To watch progress live, stream with `--output-format stream-json --verbose
   --include-partial-messages` (all three are needed to actually receive tokens). For
   Claude agents, MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
@@ -61,9 +44,8 @@ per message:
   a one-line note next to the goal).
 - Continue with `--resume <session_id>` on later turns, and re-pass
   `--permission-mode bypassPermissions` (it isn't carried over).
-- Run every call from `$WORKSPACE_ROOT` (`cd` into it first). `--resume` looks up the
-  session in the current project directory and its worktrees, so resuming from a
-  parent/other directory won't find the conversation.
+- Run from `$WORKSPACE_ROOT` (`cd` in first) — `--resume` finds the session by the
+  current project directory.
 - Start a new conversation when the goal genuinely changes — and always for an
   isolated/sanitized turn (never `--resume` into one).
 - For durable goal state that survives context loss, use the hub's shared plan
