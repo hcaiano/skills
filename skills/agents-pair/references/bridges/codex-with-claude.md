@@ -37,6 +37,9 @@ claude -p --model opus --permission-mode bypassPermissions \
   drop bypass, restrict built-in tools with `--tools Read,Grep,Glob`, and deny
   configured MCP tools with `--disallowedTools "mcp__*"` (`--tools` doesn't affect
   MCP tools; `--allowedTools` only auto-approves). Never expose secrets in the prompt.
+  For a fully **isolated** sanitized turn use `--tools ""` (no built-ins) and run it
+  **fresh** — don't `--resume` the pair session, so it can't read repo secrets or
+  inherit earlier sensitive context.
 - Use `--output-format stream-json` to watch progress live. For Claude agents,
   MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
 
@@ -49,7 +52,8 @@ per message:
   a one-line note next to the goal).
 - Continue with `--resume <session_id>` on later turns, and re-pass
   `--permission-mode bypassPermissions` (it isn't carried over).
-- Start a new conversation only when the goal genuinely changes.
+- Start a new conversation when the goal genuinely changes — and always for an
+  isolated/sanitized turn (never `--resume` into one).
 - For durable goal state that survives context loss, use the hub's shared plan
   (`planning-with-files`) — that's the system of record, not a bespoke session file.
 
