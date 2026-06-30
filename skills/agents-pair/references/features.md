@@ -39,8 +39,8 @@ these flags when the turn needs them:
 the subscription-auth rule, and the peer message. This lists only the *advanced*
 flags on top of that.)
 
-- `--output-format json` / `stream-json`: machine-readable result, or live progress
-  on long turns (neither exposes hidden reasoning).
+- `--output-format json`, or `stream-json --verbose --include-partial-messages` for
+  a live token stream on long turns (neither exposes hidden reasoning).
 - `--add-dir "$WORKSPACE_ROOT"`: give Claude the workspace on a write-capable turn.
 - `--tools Read,Grep,Glob` + `--disallowedTools "mcp__*"`: constrained turns —
   restrict built-in tools AND deny configured MCP tools (`--tools` doesn't affect

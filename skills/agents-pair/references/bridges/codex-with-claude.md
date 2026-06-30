@@ -43,8 +43,9 @@ claude -p --model opus --permission-mode bypassPermissions \
   For a fully **isolated** sanitized turn use `--tools ""` (no built-ins) and run it
   **fresh** — don't `--resume` the pair session, so it can't read repo secrets or
   inherit earlier sensitive context.
-- Use `--output-format stream-json` to watch progress live. For Claude agents,
-  MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
+- To watch progress live, stream with `--output-format stream-json --verbose
+  --include-partial-messages` (all three are needed to actually receive tokens). For
+  Claude agents, MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
 
 ## Resuming the session (multi-turn pairing)
 
