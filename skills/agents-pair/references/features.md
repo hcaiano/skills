@@ -1,13 +1,14 @@
 # Agents Pair Feature Playbook
 
 Use this reference when selecting advanced Codex or Claude surfaces for a paired
-task. Use features only when they move the task forward.
+task. Use features only when they move the task forward. The local CLIs are the
+source of truth — verify flag names with `claude --help` / `codex --help`.
 
 ## Codex Surfaces
 
-- Goals: mirror the Codex goal into Claude's first prompt and the pair session
-  state. Carry the goal contract through checkpoints until complete, blocked, or
-  changed by the user.
+- Goals: mirror the Codex goal into Claude's first prompt and the shared plan.
+  Carry the goal contract through checkpoints until complete, blocked, or changed
+  by the user.
 - Codex subagents: spawn for explicit parallel work, independent review, repo
   archaeology, verification, log/test investigation, or disjoint implementation
   slices. Keep write scopes separate and integrate results in the main thread.
@@ -31,54 +32,37 @@ task. Use features only when they move the task forward.
 
 ## Claude Surfaces
 
-- `claude -p`: default transport for paired turns. Capture stream JSON, final
-  JSON, and Markdown.
-- Helper `--active-session`: normal agents-pair transport. It loads or creates
-  the workspace active-session record, reuses the same Claude conversation with
-  `--resume` after the first successful turn or a failed establish that produced
-  a Claude session signal, derives the transcript directory, writes the returned
-  Claude session id/checkpoint back after success, and serializes active calls
-  with a workspace lock. Use `--new-active-session` only after recording why the
-  old session is stale.
-- `--resume`: required after the first successful Claude turn; do not reuse
-  `--session-id` for continuation.
-- `--permission-mode bypassPermissions`: normal agents-pair mode. Pass it on
-  resumed turns too because bypass mode is not automatically carried over.
-- Helper `--tools write`: normal write-capable surface for autonomous peer work.
-  The helper passes Claude `--tools default` and `--add-dir "$WORKSPACE_ROOT"`.
-- `--effort`: use `high` or `xhigh` for normal hard work; use `max` for
-  architecture, security, production-risk, UI-quality, or large-diff review.
-- `--agents`/`--agent`: create focused Claude specialists for repeated roles or
-  one-off expert passes.
-- `claude agents`: use Claude background agents for parallel independent
-  sessions that Codex can monitor. Poll with `claude agents --json` and store
-  each session id plus summary in the transcript.
-- `--mcp-config`, `claude mcp`, `--plugin-dir`, `--plugin-url`, `--settings`:
-  load relevant Claude-native tools, plugins, and settings for the turn instead
-  of asking Claude to reason from memory.
-- `--json-schema`: require structured Claude output when Codex needs to parse
-  decisions, findings, file lists, or next actions reliably.
-- `--output-format stream-json`, `--include-partial-messages`, and helper
-  `--stream`: monitor observable Claude progress during long turns. Use the
-  bounded live monitor for status/tool/text snippets and inspect
-  `*.stream.jsonl` only when needed. This does not expose hidden reasoning.
-- `--pair-turn`: the default for real pairing turns. Attaches the bundled
-  peer-message schema and makes Claude end each turn with a message back to Codex
-  (direct message, questions, proposed next turn, continuation state, changed
-  files, validation asks). Codex must answer that message on the next turn. See
-  the Peer Message Protocol in SKILL.md. `--peer-message` is a compatibility
-  alias.
-- `--max-turns` and helper timeouts: bound runaway turns without weakening
-  Claude's default autonomy.
-- Helper `--tools none` and `--tools read`: constrained/sanitized escape hatches.
-  See `bridges/codex-with-claude-helper.md` for exact no-tools, read-only, and
-  subscription-auth behavior.
-- `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
-  `--prompt-suggestions`, and raw `--claude-arg`:
-  use only for a concrete task need and record the reason in the transcript.
-- `claude ultrareview`: use for approved cloud-hosted multi-agent code review of
-  PRs, branches, or large diffs. Prefer `--json` when Codex needs to triage and
-  fold findings into the checkpoint loop.
+You drive `claude -p` directly (see `bridges/codex-with-claude.md`). Reach for
+these flags when the turn needs them:
+
+- `--output-format json`: result + `session_id` (use `stream-json` to watch
+  progress; neither exposes hidden reasoning).
+- Session continuity: capture the `session_id` from the first JSON and pass
+  `--resume <session_id>` on later turns; re-pass `--permission-mode
+  bypassPermissions` (it isn't carried over). Durable goal state → the hub's shared
+  plan (`planning-with-files`).
+- `--permission-mode bypassPermissions` + default tools + `--add-dir
+  "$WORKSPACE_ROOT"`: write-capable autonomous peer turn.
+- Constrained turns: `--allowedTools Read,Grep,Glob` (or stricter) for sanitized
+  prompts, secret-heavy repos, or narrow diagnostics. Subscription auth only —
+  never `--bare` or API-key auth.
+- `--effort`: `high`/`xhigh` for hard work, `max` for architecture, security,
+  production-risk, UI-quality, or large-diff review.
+- `--agents` / `--agent`, `claude agents`: focused Claude specialists or parallel
+  background sessions; poll `claude agents --json` and store each session id +
+  summary.
+- `--mcp-config`, `claude mcp`, `--plugin-dir`, `--plugin-url`, `--settings`: load
+  relevant Claude-native tools, plugins, and settings for the turn.
+- `--json-schema`: structured Claude output when you need to parse decisions,
+  findings, file lists, or next actions reliably.
+- Peer message: ask Claude (in the prompt) to end each turn with its peer message
+  (what it did, disagreements, proposed next turn + owner, changed files,
+  validation asks); it returns that as text. Answer it next turn. See "How a turn
+  ends" in `SKILL.md`.
+- `--max-turns` and timeouts: bound runaway turns without weakening autonomy.
+- `--chrome`, `--ide`, `--from-pr`, `--worktree`: use only for a concrete task need.
+- `claude ultrareview <target> --json`: approved cloud-hosted multi-agent review of
+  PRs, branches, or large diffs; fold findings into the checkpoint loop.
 
 ## Concrete Claude Patterns
 
@@ -88,41 +72,30 @@ Inspect Claude background agents started under this workspace:
 claude agents --cwd "$WORKSPACE_ROOT" --json
 ```
 
-Run a workflow-enabled Claude turn. Claude skills/slash commands are available
-by default; add plugins/MCP/settings only when relevant:
+Run a workflow-enabled Claude turn (skills/slash commands are on by default; add
+plugins/MCP/settings only when relevant):
 
 ```bash
-bash <skill-dir>/scripts/consult.sh \
-  --active-session \
-  --kind workflow \
-  --prompt "$PROMPT_FILE" \
-  --workspace "$WORKSPACE_ROOT" \
+claude -p --resume "$SESSION_ID" \
   --permission-mode bypassPermissions \
-  --tools write \
   --plugin-dir "$PLUGIN_DIR" \
-  --timeout-seconds 1200
+  --output-format json < "$PROMPT_FILE" > "$TRANSCRIPT_DIR/workflow.json"
 ```
 
-Run an isolated Claude worktree experiment when the write scope may conflict
-with the current checkout. Capture the returned transcript/output path and
-inspect before copying changes back:
+Run an isolated Claude worktree experiment when the write scope may conflict with
+the current checkout; capture the output and inspect before copying changes back:
 
 ```bash
-claude -p \
-  --worktree agents-pair-experiment \
+claude -p --worktree agents-pair-experiment \
   --permission-mode bypassPermissions \
-  --tools default \
-  --effort xhigh \
   --output-format json < "$PROMPT_FILE" > "$TRANSCRIPT_DIR/worktree.json"
 ```
 
-Run approved cloud-hosted multi-agent review and capture machine-readable
-findings for triage:
+Run approved cloud-hosted multi-agent review and capture machine-readable findings:
 
 ```bash
-claude ultrareview "$TARGET" --json --timeout 30 \
-  > "$TRANSCRIPT_DIR/ultrareview.json"
+claude ultrareview "$TARGET" --json > "$TRANSCRIPT_DIR/ultrareview.json"
 ```
 
-For each pattern, write a checkpoint summary that names the command, output
-file, changed files if any, findings accepted/rejected, and next action.
+For each pattern, write a checkpoint summary that names the command, output file,
+changed files if any, findings accepted/rejected, and next action.
