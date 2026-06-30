@@ -293,7 +293,5 @@ browser/session id, tester, status.
 - **Stale testing** — evidence from a prior epoch cannot close a story; re-test.
 - **Branch safety** — fresh branch from `origin/main`; never absorb unrelated dirty
   files; never auto-merge; never `--no-verify`; never force-push.
-- **User override always wins** — a submitted human message beats any peer message;
-  surface the contradiction in your next peer message.
-- **Stalemate / no progress** — same disagreement twice, or five turns with no new
-  artifact → `kind=handoff` to the human with the current tracker state.
+- **Peer guards** — use `herdr-pair`'s user-override, stalemate, and
+  no-new-artifact/handoff guards; include the current tracker state in any handoff.

@@ -9,7 +9,7 @@ WB="$(herdr tab create --workspace "$WS" --label workbench \
   | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0,"utf8")).result.tab.tab_id)')"
 ```
 
-Then record `workbench.tab_id = $WB` in `~/.herdr-coworkers/$WS/session.json` using the same atomic JSON-update pattern from the main SKILL.md.
+Then record `workbench.tab_id = $WB` in the per-tab session file `~/.herdr-coworkers/$WS/$TAB_SLUG/session.json` (`TAB_SLUG=${TAB_ID//:/_}`) using the same atomic JSON-update pattern from the main SKILL.md.
 
 ## Running processes inside the workbench
 

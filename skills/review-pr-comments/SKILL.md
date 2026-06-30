@@ -54,18 +54,16 @@ Fail early with a clear blocker, not after edits:
    `github-comment-fetching.md`): review comments, review bodies, issue comments,
    unresolved threads (including `isOutdated=true`), latest-head checks, and
    mergeability. Build the inventory per the reference's Inventory Rules.
-2. **Classify and reply** per the reference (categories, required context, bot
-   detection, reply format, thread resolution, review-body minimization). For each
-   Fix: read the file + surrounding code, apply the smallest change, batch related
-   fixes into conventional commits, run the quality gate, then reply on each fixed
-   finding with the commit SHA. Post False Positive / Out of Scope replies
-   immediately.
+2. **Classify and reply** per the reference (it owns categories, required context,
+   bot detection, reply format, thread resolution, and review-body minimization).
+   For each Fix: read the file + surrounding code, apply the smallest change, batch
+   related fixes into conventional commits, run the quality gate — then reply per
+   the reference's policy.
 3. **Push**: rebase or merge the target branch per repo convention, resolve
    conflicts, rerun the quality gate, push (never force-push without an explicit
    ask).
-4. **Recheck** per the reference's Recheck Loop: reviewer surfaces before CI, two
-   consecutive clean rechecks on the same head ≥3 min apart, reset the count on any
-   new finding. Stop only on the reference's clean state or a precise blocker.
+4. **Recheck** per the reference's Recheck Loop until its clean-stop condition holds
+   — reviewer surfaces before CI, reset on any new finding.
 
 ## Summary Report
 
