@@ -44,8 +44,8 @@ task. Use features only when they move the task forward.
   `--session-id` for continuation.
 - `--permission-mode bypassPermissions`: normal agents-pair mode. Pass it on
   resumed turns too because bypass mode is not automatically carried over.
-- `--tools default` and `--add-dir "$WORKSPACE_ROOT"`: normal tool surface for
-  autonomous peer work.
+- Helper `--tools write`: normal write-capable surface for autonomous peer work.
+  The helper passes Claude `--tools default` and `--add-dir "$WORKSPACE_ROOT"`.
 - `--effort`: use `high` or `xhigh` for normal hard work; use `max` for
   architecture, security, production-risk, UI-quality, or large-diff review.
 - `--agents`/`--agent`: create focused Claude specialists for repeated roles or
@@ -70,16 +70,9 @@ task. Use features only when they move the task forward.
   alias.
 - `--max-turns` and helper timeouts: bound runaway turns without weakening
   Claude's default autonomy.
-- `--tools none` and `--tools read`: constrained/sanitized escape hatches. The
-  helper disables slash commands and denies MCP tools with `mcp__*`.
-  Agents-pair is subscription-auth only: do not use `--bare`, `ANTHROPIC_API_KEY`,
-  or `apiKeyHelper`. Claude's bare mode skips OAuth/keychain subscription auth,
-  so the helper rejects raw `--bare`, disables default Claude settings sources,
-  rejects raw attempts to change `--setting-sources`, rejects explicit settings
-  with `apiKeyHelper` or provider-auth environment variables, scrubs provider/API
-  auth variables, and launches Claude with
-  `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1`. `none` is also rejected with
-  `--active-session` and explicit `--resume`.
+- Helper `--tools none` and `--tools read`: constrained/sanitized escape hatches.
+  See `bridges/codex-with-claude-helper.md` for exact no-tools, read-only, and
+  subscription-auth behavior.
 - `--chrome`, `--ide`, `--from-pr`, `--worktree`, `--tmux`,
   `--prompt-suggestions`, and raw `--claude-arg`:
   use only for a concrete task need and record the reason in the transcript.

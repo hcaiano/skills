@@ -1,6 +1,6 @@
 ---
 name: agents-pair
-description: "Pair the agent you are running in with a peer AI agent (Codex, Claude, ...) as equal engineers to plan, implement, review, debate, or delegate. Use whenever the user wants a second agent involved: 'pair with Codex', 'have Codex review this diff', 'delegate this to Codex', 'get Codex's opinion', 'adversarial review with Codex', 'work with Claude', 'have Claude review the plan', 'mirror this goal into Claude', or run long multi-agent goal loops. Routes to the right transport for your host->peer direction (Claude Code <-> Codex via the codex plugin; Codex <-> Claude via headless `claude -p`). For paired UI/frontend work, route design decisions through the impeccable skill."
+description: "Pair with a peer AI agent. Use when the user asks to pair with Codex or Claude, delegate a scoped slice, request peer review, run an adversarial challenge, mirror a long goal loop, or use live herdr pairing. Routes Claude Code<->Codex through the codex plugin, Codex<->Claude through headless `claude -p`, and live panes through `herdr-pair`. For paired UI work, use `impeccable`."
 ---
 
 # Agents Pair
@@ -27,6 +27,27 @@ No bridge for the peer they asked for (Gemini, Grok, Cursor, ...)? Say so, then
 offer the nearest pairing or go solo. Adding a peer later is just a new bridge
 file; this hub doesn't change.
 
+## Live or headless
+
+The bridges above are the **headless** surface: an ephemeral peer, scoped prompt
+in, clean result out. Inside herdr there is a **live** surface: a peer already
+running in a tab, warm with its own context, that the user watches. `herdr-pair`
+owns that protocol: pane identity, session state, and turn transport.
+
+Go live only when it earns it:
+
+- In herdr (`HERDR_ENV=1`) with a real opposite-agent pane in your tab, or when the
+  user asks for live pairing → hand off to `herdr-pair`.
+- No live peer, or a narrow delegation/review where headless is cheaper and
+  cleaner → stay headless. Don't go live just because `HERDR_ENV=1`, and don't let
+  both surfaces track session state for the same collaboration.
+
+**Write lease.** One agent holds the pen for a declared scope: owner, target
+files, forbidden changes, validation, and stop point. The other agent stays
+read/review-only on that scope until handoff; either renegotiates before editing
+out of scope. Broad concurrent work needs disjoint leases, separate worktrees, or
+headless delegation. `herdr-pair` enforces live turns; the hub sets the rule.
+
 ## When to pair
 
 Default to pairing on non-trivial work; skip it on trivial edits. Worth a peer:
@@ -40,12 +61,10 @@ Don't pair as ceremony, and don't escalate just because a feature exists.
 
 ## Rules that matter
 
-A capable agent already knows how to collaborate. These are the ones easy to get
-wrong, so hold them:
+Easy to get wrong — hold these:
 
-- **One writer per file set.** Only one agent holds the pen on a given set of
-  files at a time; hand off before the peer touches them. Take turns or split
-  scopes; parallel work only on disjoint files.
+- **Write lease.** Hold one lease per file set. Take turns or split scopes;
+  parallel work only on disjoint leases.
 - **Verify peer output.** It's a peer's patch, not ground truth. After any peer
   writing turn, read `git diff` and the touched files and run tests before you
   build on it.
@@ -53,8 +72,7 @@ wrong, so hold them:
   real disagreements instead of quietly complying or quietly overruling.
 - **Stay in scope and safe.** No secrets in peer prompts. No commit, push, merge,
   deploy, or credential change unless the user asked and you confirmed the exact
-  action. No broad refactors riding along. Keep the user's global rules (e.g.
-  `trash` not `rm -rf`, never commit to `main` unprompted).
+  action. No broad refactors riding along. Keep the user's global rules.
 
 ## How a turn ends
 
@@ -65,11 +83,16 @@ questions before adding new asks. The bridge says how that message is carried.
 
 ## The loop
 
-Clarify the goal and mirror it to the peer → debate the plan before big edits →
-take turns writing, each turn naming its files and stop point → review the real
-diff after each turn → resolve what survives both reads → one fresh audit of the
-final diff before you answer. On long goals, keep shared notes with
-`planning-with-files`, and stop to ask the user if two cycles produce no progress.
+1. Clarify and route. Done when the peer, surface, bridge, and shared goal are
+   explicit.
+2. Debate before big edits. Done when open objections are resolved or recorded.
+3. Write under a lease. Done when each writing turn names owner, files, forbidden
+   changes, validation, and stop point before edits begin.
+4. Review the real diff. Done when the other peer has read touched files,
+   inspected `git diff`, and run or requested the relevant checks.
+5. Close with a final audit. Done when the final diff, validation, peer questions,
+   and remaining disagreements are accounted for. On long goals, keep
+   `planning-with-files` notes and ask the user if two cycles produce no progress.
 
 ## Domain skills still apply
 

@@ -1,10 +1,7 @@
 # Bridge: Claude with Codex
 
 You're Claude Code; your peer is Codex, via the OpenAI **codex** plugin. The hub
-(`SKILL.md`) has the pairing rules — this is the transport. Codex is an equal
-engineer: delegate real work to it, have it review your diff before you ship, let
-it challenge risky designs, and run long jobs in the background while you keep
-moving. Verify its output against the real diff before you trust it.
+(`SKILL.md`) carries the pairing contract; this bridge is the transport.
 
 ## Two ways in
 
@@ -34,23 +31,26 @@ finds nothing, don't improvise: tell the user to run `/codex:setup`.
 
 ## Preflight
 
-- Confirm Codex is ready: `node "$COMPANION" setup --json` (or `/codex:setup`). If
-  it reports missing or unauthenticated, stop and point the user to `/codex:setup`
-  — don't roll your own install or auth.
-- Know the workspace (`git rev-parse --show-toplevel`); Codex tracks jobs per repo.
-- Check `git status` first, so you can tell Codex's edits from pre-existing work
-  and never hand Codex files you have open.
+1. Resolve `COMPANION`. Done when it points at `codex-companion.mjs`, or the user
+   has been told to run `/codex:setup`.
+2. Confirm Codex is ready: `node "$COMPANION" setup --json` (or `/codex:setup`).
+   Done when setup reports ready, or the run has stopped with the setup fix.
+3. Resolve the workspace with `git rev-parse --show-toplevel`. Done when the repo
+   root is known.
+4. Check `git status`. Done when pre-existing dirty files are known and the Codex
+   write lease avoids files you are already editing.
 
 ## Delegating work
 
-Shape the request operator-style (see Prompting below), then call the subagent.
+Shape the request as one clear task (see Prompting below), then call the subagent.
 Embed Codex routing flags in the prompt text — the subagent extracts them:
 `--write` (the default; omit only for read-only diagnosis or research), `--resume`
-(continue Codex's last thread) or `--fresh`, `--model spark` (maps to
-`gpt-5.3-codex-spark`), `--effort <none|minimal|low|medium|high|xhigh>`. Leave
-model and effort unset unless the user asked. `--background`/`--wait` don't apply
-here — the subagent ignores them; background via the Agent tool's
-`run_in_background` instead.
+(continue Codex's last thread) or `--fresh`. Leave `--model` unset so Codex runs
+its latest default. Leave `--effort` unset for routine work and raise it
+(`high`/`xhigh`) only for a hard, risky, or high-stakes slice — and tighten the
+prompt before reaching for more reasoning. Pass either flag explicitly only when
+the user names one. `--background`/`--wait` don't apply here — the subagent ignores
+them; background via the Agent tool's `run_in_background` instead.
 
 ```
 Agent(subagent_type: "codex:codex-rescue",
@@ -59,9 +59,8 @@ Agent(subagent_type: "codex:codex-rescue",
                test in src/auth/session.test.ts.")
 ```
 
-For long or open-ended work, run it with `run_in_background: true`, then keep
-working on files Codex isn't touching; you're notified on completion, and the job
-also shows up in `status`/`result`.
+For a **background job**, run the Agent with `run_in_background: true`, then keep
+working on a disjoint write lease. The job also shows up in `status`/`result`.
 
 When it returns, **verify before integrating**: read `git diff` and the touched
 files, run the tests. If Codex failed or never ran, say so and stop — don't
@@ -97,16 +96,23 @@ node "$COMPANION" result <id>       # final output of a finished job
 node "$COMPANION" cancel <id>       # stop a running one
 ```
 
-Show `result` in full. While a job runs, make progress on a disjoint slice and
-checkpoint when it lands.
+Show `result` in full. While a background job runs, make progress on a disjoint
+write lease and checkpoint when it lands.
 
 ## Prompting Codex
 
-Use the `gpt-5-4-prompting` skill. Prompt Codex like an operator: compact,
-XML-tagged, one task per run. Give it `<task>` plus context, the output shape you
-want, and what "done" means. Add a verification loop for code, grounding rules for
-review/research, an action-safety note for write runs. On follow-ups, `--resume`
-and send only the delta instruction.
+Give the subagent one clear task per run:
+
+```text
+Goal: <one outcome>
+Context: <repo facts Codex needs>
+Write lease: <owner, target files, forbidden changes, stop point>
+Done: <checkable completion criterion>
+Validation: <tests, diff review, evidence rules>
+```
+
+The rescue subagent tightens your wording before sending. On follow-ups, use
+`--resume` with only the delta instruction.
 
 ## Handoff dialogue
 
