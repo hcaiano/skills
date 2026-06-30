@@ -6,7 +6,7 @@ A separate tab in the same workspace where long-running shared processes (server
 
 ```bash
 WB="$(herdr tab create --workspace "$WS" --label workbench \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')"
+  | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0,"utf8")).result.tab.tab_id)')"
 ```
 
 Then record `workbench.tab_id = $WB` in `~/.herdr-coworkers/$WS/session.json` using the same atomic JSON-update pattern from the main SKILL.md.
