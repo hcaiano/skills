@@ -1,17 +1,20 @@
 ---
-name: test-fix-loop
-description: "Self-improving test/fix loop for any app in this repo, run by Claude + Codex as a pair. Enumerates a target's features into user stories, tests them for real (browser/computer-use, dev logs, runtime debugging), fixes everything it finds — bugs through UX polish — and ships autonomous PRs, looping until a quality gate and the peer both pass. Use when the user invokes /test-fix-loop, or asks to 'test and fix every feature', 'QA loop on <app>', 'test the whole app and fix what's broken', 'go through every feature and make it better', or wants a paired self-improving test/fix run. The human supplies a target + intent; the agents plan and set the goal themselves."
+name: goal-loop
+description: "Goal-driven improvement loop run by Claude + Codex as a pair: the human names one target and what 'better' means, and the agents iteratively test it for real (browser/computer-use, dev logs, runtime debugging), improve it — correctness, behavior, performance, UX, polish, whatever the goal is — and ship autonomous PRs, looping until the goal's quality bar and the peer both pass. Use when the user invokes /goal-loop, or asks to 'keep improving <thing> until it's right', 'QA and fix this app', 'test the whole app and fix what's broken', 'make <X> better and don't stop until it's solid', or wants a paired self-improving loop on something specific. The human supplies a target + intent; the agents plan and set the goal themselves."
 user-invocable: true
 argument-hint: "<app/scope> [free-form intent for this run]"
 ---
 
-# Test-Fix Loop
+# Goal Loop
 
-A reusable, self-improving QA loop. The human runs `/test-fix-loop <target> <intent>`
-and the two agents (Claude + Codex) **plan and set the goal themselves**, enumerate
-the target into user stories, test them with real execution, fix everything found
-(functional bugs through subjective polish), and ship autonomous PRs — looping until
-a quality gate and the peer both pass.
+A reusable, goal-driven improvement loop. The human runs `/goal-loop <target>
+<intent>` to name **one thing to improve** and what "better" means; the two agents
+(Claude + Codex) **plan and set the goal themselves**, break the target into testable
+stories, validate them with real execution, improve whatever the goal covers
+(correctness, behavior, performance, UX, polish), and ship autonomous PRs — looping
+until the goal's quality bar and the peer both pass. Design is one possible
+dimension, not the focus: route UI work through `impeccable` only when the goal
+touches the interface.
 
 The human never hand-authors a `/goal` prompt. The skill owns goal generation: it
 synthesizes a Scope Contract from the human's target/intent, then a **Goal Block**
@@ -42,11 +45,13 @@ Read and obey these before touching anything:
   Use current herdr CLI verbs (`herdr pane read <id> --source recent --lines N`,
   `herdr pane send-text`/`send-keys`); run `herdr pane --help` rather than trusting
   remembered examples. *(dogfood SI-009)*
-- `impeccable` and `design` — ALL design/UX/polish work routes through these.
+- `impeccable` — when the goal touches UI, route design/UX/polish work through it
+  (its `critique` / `audit` / `polish` commands score and fix the interface). Skip
+  it for non-UI goals.
 - `review-pr-comments` (and/or `ship-it`) — the PR review loop after opening.
-- Repo `CLAUDE.md` + nearest `AGENTS.md` + `packages/ds/AGENTS.md` — hard rules,
-  especially the DS rules (reusable UI only in `packages/ds`, semantic tokens, no
-  app-local primitives, no direct `@radix-ui`/`@base-ui` in apps).
+- Repo `CLAUDE.md` + nearest `AGENTS.md` — hard rules. For UI goals, also
+  `packages/ds/AGENTS.md` (DS rules: reusable UI only in `packages/ds`, semantic
+  tokens, no app-local primitives, no direct `@radix-ui`/`@base-ui` in apps).
 
 Record in `progress.md` that each lane read these before its first edit.
 
@@ -70,7 +75,7 @@ Everything below serves this. It is what lets "no iteration cap" coexist with
    Never rebase a shared branch; merge `origin/main` if you need upstream.
 4. Bootstrap `herdr-pair` (find or spawn the peer; write the session file).
 5. Create the **full** tracker set BEFORE any peer kickoff:
-   `.planning/<YYYY-MM-DD>-<target>-test-fix-loop/` with `task_plan.md`,
+   `.planning/<YYYY-MM-DD>-<target>-goal-loop/` with `task_plan.md`,
    `findings.md`, `progress.md`, AND `skill-improvements.md` — each with its
    initial schema sections. Do not send the Goal Block until all four exist (the
    peer is told to read `progress.md` immediately; a missing file is a protocol
@@ -96,11 +101,13 @@ mutates product decisions. Phase 0 pins it down. Write a **Scope Contract** into
 - **Story unit** — default: a user story per **route / entrypoint / API / job**,
   crossed with role/state when behavior differs materially. The human's intent
   overrides this default.
-- **Quality gates** — what "PASS" means; impeccable rubric in play for UI.
+- **Quality gates** — what "PASS" / "better" means for this goal; for UI goals the
+  impeccable rubric is the bar.
 - **PR-split policy** — see Phase 4.
 - **Record-only categories** — what the loop must NOT auto-fix (see Guards).
-- **Expected-behavior sources** — code **+ live UX + tests + product/docs copy +
-  sane conventions**. Never code alone (code can encode the bug).
+- **Expected-behavior sources** — code **+ runtime behavior (live UX when the goal
+  is UI) + tests + product/docs copy + sane conventions**. Never code alone (code
+  can encode the bug).
 
 If ambiguity affects blast radius (what gets edited/shipped), **ask the human once**
 before editing. Otherwise proceed.
@@ -116,14 +123,16 @@ normal herdr-pair headered protocol.
 Goal Block template (fill from the contract):
 
 ```
-/goal Co-run the test-fix-loop with Claude as peers via herdr-pair (sid=<SID>).
+/goal Co-run the goal-loop with Claude as peers via herdr-pair (sid=<SID>).
 Read first and obey: planning-with-files, herdr-pair, debug-mode, check-logs,
-impeccable, design, review-pr-comments, plus CLAUDE.md + packages/ds/AGENTS.md.
+review-pr-comments, plus CLAUDE.md + nearest AGENTS.md (+ impeccable +
+packages/ds/AGENTS.md when the goal touches UI).
 Target + Scope Contract + tracker: .planning/<DIR>/ (read task_plan.md now).
 Your lane: <peer partition>. Honor leases + test epochs in progress.md.
 Invariant: only current-epoch evidence closes a story; only a named measurable
 delta opens a fix iteration. Test for real with your browser + computer-use on
-your own session. Fix everything in scope incl. UX/polish (UI via impeccable+DS).
+your own session. Improve the dimensions the Scope Contract names (e.g. correctness,
+behavior, perf, UX, polish; UI via impeccable).
 Ship via autonomous PRs (never auto-merge). Work until exit criteria are met.
 Coordinate with Claude using [agent codex -> claude kind=... sid=<SID>] messages.
 ```
@@ -135,7 +144,7 @@ The coordinator (Claude) itself does **not** need `/goal` — it just runs the l
 
 **Codex-invoked path:** Codex is already coordinator. After Phase 0 it must
 **start/record its own active goal** from the same Goal Block content — using Codex
-goal machinery when available, otherwise treating the current `/test-fix-loop`
+goal machinery when available, otherwise treating the current `/goal-loop`
 invocation as the active goal — and send Claude a normal
 `[agent codex -> claude kind=task …]` message carrying the Scope Contract, tracker
 path, partition, and exit criteria. Claude never needs a `/goal` token.
@@ -200,10 +209,11 @@ execution before it can be marked PASS/FAIL.
 - **Test epochs** — every test result is stamped with a `test_epoch` (git SHA +
   app-server restart id/time + route partition + session id + tester). See Epochs.
 
-## Phase 3 — Fix (everything in scope, incl. polish)
+## Phase 3 — Improve (everything in scope toward the goal)
 
-Fix functional bugs **and** UX/logistical issues **and** subjective polish/redesign —
-everything except `record-only` categories.
+Improve everything the goal covers — functional bugs, behavior, performance,
+UX/logistical issues, and (for UI goals) subjective polish/redesign — everything
+except `record-only` categories.
 
 - **Consumer / usefulness gate (before fixing).** A fix that makes a cron/endpoint go
   green is worthless if nothing consumes its output — that is a feature to REMOVE, not
@@ -215,10 +225,10 @@ everything except `record-only` categories.
 - **Leases** — before editing a path, the writer records a lease in `progress.md`
   (path glob + story id + epoch). While a write lease is open on a partition, testers
   on that partition run discovery/smoke only and label any finding `STALE_UNTIL_RETEST`.
-- **DS gate** — any change to reusable UI first reads `impeccable` + `design` +
-  `packages/ds/AGENTS.md`, runs the impeccable context loader, and records whether the
-  change is app-specific or DS-owned. Reusable UI lands in `packages/ds`, never as an
-  app-local primitive.
+- **DS gate (UI goals)** — any change to reusable UI first reads `impeccable` +
+  `packages/ds/AGENTS.md`, runs the relevant `impeccable` command (`critique` /
+  `audit` / `polish`), and records whether the change is app-specific or DS-owned.
+  Reusable UI lands in `packages/ds`, never as an app-local primitive.
 - **Improvement Ledger** (per story, in `findings.md`) — baseline evidence, rubric
   scores, changed files, before/after screenshots or CLI evidence, remaining deltas.
   A story may open another fix iteration **only if it first names a measurable delta**:
@@ -250,7 +260,8 @@ impacted stories `NEEDS_RETEST`. Only current-epoch evidence can close a story.
 
 1. Every in-scope story is `PASS`, `FIXED`+re-tested, `CONVERGED`, or `DEFERRED` with
    an owner-approved reason — each with current-epoch evidence.
-2. The impeccable/quality gate passes for every UI story; the peer agrees.
+2. The goal's quality bar passes for every story (the impeccable rubric for UI
+   goals); the peer agrees.
 3. **Two consecutive clean sweeps at the same git head** find nothing new.
 4. Both agents exchange `accepted` (the herdr-pair completion signal).
 
@@ -265,7 +276,7 @@ remains."
 
 ## Tracker schema (planning-with-files)
 
-`.planning/<YYYY-MM-DD>-<target>-test-fix-loop/`:
+`.planning/<YYYY-MM-DD>-<target>-goal-loop/`:
 
 - **task_plan.md** — Scope Contract, PR-split policy, the story backlog (Phase 1).
 - **findings.md** — one entry per finding + the per-story Improvement Ledger.
@@ -293,7 +304,5 @@ browser/session id, tester, status.
 - **Stale testing** — evidence from a prior epoch cannot close a story; re-test.
 - **Branch safety** — fresh branch from `origin/main`; never absorb unrelated dirty
   files; never auto-merge; never `--no-verify`; never force-push.
-- **User override always wins** — a submitted human message beats any peer message;
-  surface the contradiction in your next peer message.
-- **Stalemate / no progress** — same disagreement twice, or five turns with no new
-  artifact → `kind=handoff` to the human with the current tracker state.
+- **Peer guards** — use `herdr-pair`'s user-override, stalemate, and
+  no-new-artifact/handoff guards; include the current tracker state in any handoff.

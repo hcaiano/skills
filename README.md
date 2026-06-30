@@ -20,11 +20,11 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 
 ### Collaboration
 
-- `agents-pair` — pair Codex in the Codex app with Claude through the Claude Code CLI.
+- `agents-pair` — pair the agent you're in with a peer agent as equal engineers. A host-neutral hub that routes by direction: Claude Code ↔ Codex via the codex plugin, Codex ↔ Claude via the headless `claude -p` CLI. New peers (Gemini, Grok, ...) are added as bridge files without touching the hub.
 - `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
 
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
-`agents-pair` depends on the local Claude Code CLI (`claude`) being installed and authenticated.
+`agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`).
 
 ### Engineering
 
@@ -33,7 +33,7 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 ### Workflow
 
 - `check-logs` — read an existing herdr/turbo dev TUI's app logs without starting or stopping servers.
-- `test-fix-loop` — run a paired Claude/Codex QA loop that tests a target for real, fixes findings, and ships PRs.
+- `goal-loop` — name one target and what "better" means; Claude and Codex keep improving that one thing with real testing until the goal's quality bar and the peer both pass. (Formerly `test-fix-loop`.)
 - `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
 - `ship-it` — commit, push, open/update PRs, and keep checking CI/review feedback.
 

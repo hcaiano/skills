@@ -1,23 +1,24 @@
 ---
 name: ship-it
-description: "Full PR lifecycle: splits unstaged changes into logical conventional commits, runs the project's quality gate, creates or updates the PR, then keeps polling CI and reviewer comments until the PR reaches a stable clean state rather than stopping after a tiny fixed loop."
+description: "Ship a PR end to end. Use when the user asks to ship, commit, push, open or update a PR, handle CI, handle reviewer comments, or get a branch ready for review. Splits changes into conventional commits, runs the quality gate, opens/updates the PR, and loops until CI and review are clean."
 user-invocable: true
 argument-hint: "[branch name or PR number]"
 ---
 
 # Ship It
 
-Full PR lifecycle automation — from uncommitted changes to a reviewed, CI-passing PR.
-
-## When to use
-
-"ship it", "ship this", "get this ready for review", "commit everything and open a PR", "push and handle CI", "submit for review", or any request for the full commit-push-CI-review cycle end to end.
+Full PR lifecycle automation: commit, quality gate, push, PR, CI, and review
+loop. The leading word is **clean**: the PR is not done until the latest head is
+clean across local checks, CI, reviewer surfaces, branch sync, and mergeability.
 
 ## Phase 1: Commit
 
 1. Run `git status` and `git diff` to understand all changes.
 2. Group changes into logical conventional commits (`feat:`, `fix:`, `chore:`, etc.).
 3. Stage and commit each group with a message focused on the *why*.
+
+Done when every intended change is committed in a logical conventional commit and
+the working tree contains no unrelated staged changes.
 
 ## Phase 2: Quality gate
 
@@ -28,41 +29,45 @@ Run the project's quality gate before push — local first catches what CI would
 3. **Other ecosystems:** `Cargo.toml` → `cargo check && cargo clippy && cargo build`. `go.mod` → `go vet ./... && go build ./...`. Python pyproject with ruff/mypy → `ruff check && mypy . && pytest`. Adjust to what's actually configured.
 4. **Fallback:** ask the user what the gate is, then persist the answer in the PR summary so re-runs don't re-detect.
 
-If any check fails, fix the root cause and commit fixes as separate conventional commits (`fix(lint): ...`, `fix(types): ...`). Re-run until clean.
+If any check fails, fix the root cause and commit fixes as separate conventional
+commits (`fix(lint): ...`, `fix(types): ...`). Re-run until clean.
+
+Done when the detected project quality gate passes locally, or a precise blocker
+has been reported.
 
 ## Phase 3: Push & PR
 
-Push the branch (`-u` if needed). Create the PR with `gh pr create` — short title, summary bullets, test plan. If a PR already exists for the branch, update its description rather than opening a new one. Never force-push to a shared branch.
+Push the branch (`-u` if needed). Create the PR with `gh pr create`: short title,
+summary bullets, test plan. If a PR already exists for the branch, update its
+description rather than opening a new one. Never force-push to a shared branch.
+
+Done when the remote branch exists and one PR points at it with an accurate
+description.
 
 ## Phase 4: CI & review loop
 
-Run the recheck loop documented in `../review-pr-comments/references/pr-comment-loop.md`. It covers mode-split safety, comment classification, reply format, and the "two consecutive clean rechecks" stop condition. Don't re-implement that policy here.
+Run the shared loop in `../review-pr-comments/references/pr-comment-loop.md`;
+load `../review-pr-comments/references/github-comment-fetching.md` when fetching
+GitHub surfaces. Do not re-implement that policy here.
 
-**Reviewer-first invariant:** after every push, look for reviewer comments and unresolved review threads before waiting on CI. Do not sit on queued/in-progress checks while CodeRabbit, Codex, a human reviewer, or another bot has raised an actionable issue. Every fix push restarts CI, so reviewer feedback should be drained first; CI is final validation once that surface is quiet.
+Ship-it adds only these deltas:
 
-After each push:
-
-1. **Reviewer sweep first.** Fetch latest comments + unresolved review threads using `../review-pr-comments/references/github-comment-fetching.md`.
-2. **If reviewer feedback is actionable, handle the current sweep now.** Classify per the shared reference, group compatible fixes, make the smallest changes, run the local quality gate, commit, push, reply on each original thread with the commit SHA, resolve threads when appropriate, then restart Phase 4. Do not wait for pending CI.
-3. **Only when the reviewer sweep is quiet, inspect CI.**
-   - For completed real failures: read logs with `gh run view {run_id} --log-failed`, fix the root cause, run the local quality gate, commit, push, then restart Phase 4.
-   - For queued/in-progress checks: wait only in short polls, and each poll starts again at step 1 with reviewer comments before checking CI.
-4. **Do not leave review replies behind.** Every Fix / False Positive / Out of Scope finding needs a threaded reply on the original comment before reporting the loop clean. A PR summary comment is not enough.
-5. **Sync with target branch** before claiming ready:
+1. Run the Phase 2 quality gate before every fix push.
+2. Commit loop fixes as logical conventional commits.
+3. Push every fix commit to the PR branch.
+4. Before claiming done, sync with the PR's target branch:
    ```bash
-   git fetch origin main
-   git merge --no-edit origin/main
+   BASE_BRANCH="$(gh pr view --json baseRefName -q .baseRefName)"
+   git fetch origin "$BASE_BRANCH"
+   git merge --no-edit "origin/$BASE_BRANCH"
    ```
-   Resolve conflicts immediately, re-run the quality gate, push. If the merge created a new head, restart the recheck loop.
+   Resolve conflicts, re-run the quality gate, and push. If the sync creates a
+   new head, restart the shared loop.
+
+Done when the shared loop reaches its clean state on the latest head after the
+target-branch sync, or reports its precise blocker.
 
 ## Done condition
 
-Ship it is done when the latest head shows:
-
-- No new actionable comments on the latest head.
-- No unresolved review threads.
-- No pending or failing checks relevant to the latest head.
-- Branch synced with the target.
-- GitHub reports the PR as mergeable.
-
-Two consecutive rechecks meeting all of the above. Stop before that condition only when the shared reference's "stop with a precise blocker" criteria fire (auth/rate limits, checks stop changing across repeated rechecks, merge conflicts requiring broader judgment, expanded-mode confirmation needed). Never declare ready while threads or latest-head checks are still pending. Don't merge — that's the user's call.
+Ship it is done when Phase 4 is clean and the PR remains mergeable. Do not merge;
+that is the user's call.
