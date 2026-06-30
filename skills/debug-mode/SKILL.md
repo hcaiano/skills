@@ -1,22 +1,29 @@
 ---
 name: debug-mode
-description: "Hypothesis-driven debugging with runtime evidence. Use for unresolved bugs, unexpected behavior, flaky runtime issues, production/local reproduction gaps, and vague reports like 'it's broken', 'not working', 'getting an error', or 'why is this happening'. Do not use when the root cause and fix are already obvious. Instruments code with structured logging, collects reproduction data, then confirms or rejects hypotheses before attempting any fix."
+description: "Evidence debugging for unresolved bugs. Use when behavior is broken, flaky, environment-specific, or unexplained and the root cause is not proven. Build hypotheses, collect runtime evidence, and fix only after evidence identifies the cause."
 user-invocable: true
 argument-hint: "[description of the bug]"
 ---
 
 # Debug Mode
 
-For bugs where the root cause is not yet proven — avoid plausible fixes that only pass once.
+Use the **evidence loop** when the root cause is not proven. Avoid plausible fixes
+that only pass once.
 
 ## Workflow
 
-1. **Understand** - gather symptoms, affected surface, expected behavior, actual behavior, and the smallest reproduction path.
-2. **Hypothesize** - write 2-3 ranked hypotheses with a concrete observation that would confirm or reject each one.
-3. **Instrument** - add temporary structured logging at the decision points that distinguish the hypotheses.
-4. **Reproduce** - trigger the bug and collect logs. If the flow is auth-walled or user-specific, ask the user to reproduce and wait.
-5. **Analyze** - compare the logs against the hypotheses. Reject hypotheses explicitly when evidence disproves them.
-6. **Fix** - only after evidence identifies the root cause. Make the smallest fix and remove all temporary instrumentation.
+1. **Understand.** Done when symptoms, affected surface, expected behavior,
+   actual behavior, and smallest reproduction path are known.
+2. **Hypothesize.** Done when 2-3 ranked hypotheses each name the observation
+   that would confirm or reject it.
+3. **Instrument.** Done when temporary structured logs distinguish the
+   hypotheses without leaking secrets.
+4. **Reproduce.** Done when the bug has been triggered and logs collected. If the
+   flow is auth-walled or user-specific, ask the user to reproduce and wait.
+5. **Analyze.** Done when evidence confirms one hypothesis or rejects all current
+   hypotheses explicitly.
+6. **Fix.** Done when the smallest evidence-backed fix is applied and all
+   temporary instrumentation is removed.
 
 ## Instrumentation Contract
 
@@ -33,13 +40,15 @@ Prefer structured events over prose logs. Each event should include enough conte
 }
 ```
 
-Use `scripts/debug-server.py` when a local HTTP collector is useful:
+Use `scripts/debug-server.mjs` when a local HTTP collector is useful:
 
 ```bash
-python3 <skill-dir>/scripts/debug-server.py --port 8765 --output /tmp/debug-events.jsonl
+node <skill-dir>/scripts/debug-server.mjs --port 8765 --output <debug-events.jsonl>
 ```
 
-The server accepts `POST /log` with a JSON body and writes JSONL. Confirm it is listening before adding app-side logging. Stop it after analysis, remove all instrumentation, and keep only the evidence summary in the final report.
+The server accepts `POST /log` with a JSON body and writes JSONL. Confirm it is
+listening before adding app-side logging. Stop it after analysis, remove all
+instrumentation, and keep only the evidence summary in the final report.
 
 If localhost is unreachable, log to the app's normal logger or a local file with the same fields.
 
