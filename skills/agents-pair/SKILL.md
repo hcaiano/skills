@@ -97,29 +97,22 @@ questions before adding new asks. The bridge says how that message is carried.
 ## Shared plan (long goals)
 
 For a goal that spans many checkpoints — a migration, multi-feature work, research
-— give the pair a durable shared brain with `planning-with-files`: `task_plan.md`
-(plan and decisions), `findings.md` (evidence and peer findings), `progress.md`
-(what changed, what was validated, decisions, what remains). Separate contexts make
-these files the common ground; they also survive `/clear` and compaction. Once it
-exists, the peer message references the plan instead of restating it.
+— track it with `planning-with-files`; that skill owns the `task_plan.md` /
+`findings.md` / `progress.md` contract and the recovery behavior. agents-pair adds
+only the **pairing delta**: the plan files are a shared, write-leased set, so two
+agents don't collide on them.
 
-The plan files are themselves write-leased:
+- The **coordinator** — the agent that took the goal, fixed until an explicit
+  handoff, *not* the rotating write lead — owns `task_plan.md` and `progress.md`.
+- The **peer** appends to `findings.md` and reports its changed files, validation,
+  and decisions in the peer message; the coordinator records the checkpoint.
+- `progress.md` is coordinator-only (a code write lease doesn't grant it) and stays
+  semantic — sid, pane ids, rounds, and turn state live in the bridge's session
+  state, never copied here.
 
-- the **coordinator** — the agent that took the original goal, fixed until an
-  explicit handoff, *not* the rotating write lead — owns `task_plan.md` and
-  `progress.md`;
-- the **peer** appends to `findings.md` (nothing to append when it found nothing)
-  and reports its changed files, validation, and decisions in the peer message;
-- both read freely and re-read before major decisions.
-
-`progress.md` is coordinator-only — a code write lease doesn't grant the right to
-write it; the coordinator records each checkpoint from the peer message. Keep it
-semantic: sid, pane ids, rounds, and turn state stay in the bridge's session state,
-never copied here. At close, the coordinator drains `findings.md` into accepted /
-deferred / resolved.
-
-Skip all of this for a quick review or one-shot delegation; there the peer message
-and the diff are the state.
+Once the plan exists, the peer message references it instead of restating it. Skip
+it entirely for a quick review or one-shot delegation; there the peer message and
+the diff are the state.
 
 ## Domain skills still apply
 
