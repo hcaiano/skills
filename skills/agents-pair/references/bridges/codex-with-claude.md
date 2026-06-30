@@ -26,13 +26,16 @@ claude -p --model opus --permission-mode bypassPermissions \
 - **Autonomous and write-capable by default** (`bypassPermissions`, default tools).
   Claude writes code as a normal peer turn, bounded only by the write lease — not
   granted turn by turn.
-- **Subscription auth only.** `claude -p` uses `ANTHROPIC_API_KEY` /
-  `ANTHROPIC_AUTH_TOKEN` / provider vars *ahead* of the subscription when they're set
-  in the environment — so clear them for the call (and don't configure `apiKeyHelper`
-  or pass `--bare`):
+- **Subscription auth only.** Auth precedence is API key → cloud provider →
+  `apiKeyHelper` → subscription OAuth, so anything higher silently preempts the
+  subscription. Clear them for the call (and don't pass `--bare`):
   ```bash
-  env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN claude -p ...
+  env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN \
+      -u CLAUDE_CODE_USE_BEDROCK -u CLAUDE_CODE_USE_VERTEX -u CLAUDE_CODE_USE_FOUNDRY \
+      claude -p ...
   ```
+  If loaded Claude settings define an `apiKeyHelper`, restrict which settings files
+  load with `--setting-sources` so it isn't picked up.
 - **Constrained turns** (sanitized prompt, secret-heavy repo, narrow diagnostic):
   drop bypass, restrict built-in tools with `--tools Read,Grep,Glob`, and deny
   configured MCP tools with `--disallowedTools "mcp__*"` (`--tools` doesn't affect
