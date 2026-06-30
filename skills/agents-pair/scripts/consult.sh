@@ -513,134 +513,7 @@ if [[ "$ACTIVE_SESSION" == true ]]; then
   trap cleanup_active_lock EXIT
 
   set +e
-  active_output="$(python3 - "$WORKSPACE" "$KIND" "$GOAL" "$NEW_ACTIVE_SESSION" <<'PY'
-import datetime as dt
-import hashlib
-import json
-import os
-from pathlib import Path
-import re
-import sys
-import uuid
-
-workspace, kind, goal, new_requested = sys.argv[1:5]
-force_new = new_requested == "true"
-workspace_path = Path(workspace).resolve()
-workspace_hash = hashlib.sha256(str(workspace_path).encode()).hexdigest()[:16]
-root = Path.home() / ".agents-pair" / "workspaces" / workspace_hash
-active_path = root / "active-session.json"
-root.mkdir(parents=True, exist_ok=True)
-
-
-def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def safe_kind(value: str) -> str:
-    value = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-")
-    return value or "pair"
-
-
-def write_state(state: dict) -> None:
-    active_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = active_path.with_name(f"{active_path.name}.tmp.{os.getpid()}")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, sort_keys=True)
-        f.write("\n")
-    os.replace(tmp, active_path)
-
-
-def new_state() -> dict:
-    ts = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    pair_session_id = f"{ts}-{safe_kind(kind)}"
-    claude_session_id = str(uuid.uuid4())
-    transcript_dir = root / "sessions" / pair_session_id / "transcript"
-    transcript_dir.mkdir(parents=True, exist_ok=True)
-    return {
-        "workspace_root": str(workspace_path),
-        "workspace_hash": workspace_hash,
-        "session_id": pair_session_id,
-        "claude_session_id": claude_session_id,
-        "goal": goal,
-        "model": None,
-        "effort": None,
-        "capability_profile": "peer-autonomous",
-        "status": "active",
-        "session_established": False,
-        "session_establishing": False,
-        "turn": 0,
-        "no_progress_count": 0,
-        "checkpoints": [],
-        "created_at": now(),
-        "updated_at": now(),
-    }
-
-
-state = None
-if active_path.exists() and force_new:
-    with open(active_path, "r", encoding="utf-8") as f:
-        existing = json.load(f)
-    recorded_workspace = Path(existing.get("workspace_root", "")).resolve()
-    if recorded_workspace != workspace_path:
-        raise SystemExit(
-            f"error: active-session workspace mismatch: {recorded_workspace} != {workspace_path}"
-        )
-    archive_dir = root / "sessions" / str(existing.get("session_id", "unknown"))
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    existing["status"] = "stale"
-    existing["stale_reason"] = "replaced by --new-active-session"
-    existing["updated_at"] = now()
-    with open(archive_dir / "session-state.json", "w", encoding="utf-8") as f:
-        json.dump(existing, f, indent=2, sort_keys=True)
-        f.write("\n")
-    state = new_state()
-    state["replaces_session_id"] = existing.get("session_id")
-    write_state(state)
-elif active_path.exists():
-    with open(active_path, "r", encoding="utf-8") as f:
-        state = json.load(f)
-    recorded_workspace = Path(state.get("workspace_root", "")).resolve()
-    if recorded_workspace != workspace_path:
-        raise SystemExit(
-            f"error: active-session workspace mismatch: {recorded_workspace} != {workspace_path}"
-        )
-    if state.get("status") != "active":
-        state = new_state()
-        write_state(state)
-else:
-    state = new_state()
-    write_state(state)
-
-if goal and not state.get("goal"):
-    state["goal"] = goal
-    state["updated_at"] = now()
-    write_state(state)
-elif goal and state.get("goal") and state.get("goal") != goal:
-    raise SystemExit(
-        "error: active pair-session goal differs from --goal; omit --goal to continue the existing session "
-        "or pass --new-active-session after recording why the old session is stale"
-    )
-
-if "session_established" not in state:
-    raise SystemExit(
-        "error: active-session.json is from an older format and lacks session_established; "
-        "resume it once explicitly with --session-id ... --resume or mark it stale before using --active-session"
-    )
-
-claude_session_id = state.get("claude_session_id")
-if not claude_session_id:
-    raise SystemExit("error: active-session.json is missing claude_session_id")
-
-transcript_dir = root / "sessions" / state["session_id"] / "transcript"
-transcript_dir.mkdir(parents=True, exist_ok=True)
-
-print(str(active_path))
-print(state["session_id"])
-print(str(transcript_dir))
-print(claude_session_id)
-print("true" if (state.get("session_established") or state.get("session_establishing")) else "false")
-PY
-  )"
+  active_output="$(node "$SCRIPT_DIR/session-state.mjs" init "$WORKSPACE" "$KIND" "$GOAL" "$NEW_ACTIVE_SESSION")"
   active_status=$?
   set -e
   if [[ "$active_status" -ne 0 ]]; then
@@ -873,24 +746,7 @@ if ((${#CLAUDE_ARGS[@]} > 0)); then
 fi
 
 if [[ -n "$ACTIVE_STATE_PATH" && "$RESUME_SESSION" != true ]]; then
-  python3 - "$ACTIVE_STATE_PATH" "$KIND" <<'PY'
-import datetime as dt
-import json
-import os
-import sys
-
-state_path, kind = sys.argv[1:3]
-with open(state_path, "r", encoding="utf-8") as f:
-    state = json.load(f)
-state["session_establishing"] = True
-state["last_attempt_kind"] = kind
-state["updated_at"] = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-tmp = f"{state_path}.tmp.{os.getpid()}"
-with open(tmp, "w", encoding="utf-8") as f:
-    json.dump(state, f, indent=2, sort_keys=True)
-    f.write("\n")
-os.replace(tmp, state_path)
-PY
+  node "$SCRIPT_DIR/session-state.mjs" mark-establishing "$ACTIVE_STATE_PATH" "$KIND"
 fi
 
 run_claude_json() {
@@ -943,7 +799,7 @@ run_claude_stream() {
   mkfifo "$fifo"
 
   CLAUDE_MONITOR_TEXT_LIMIT="$STREAM_TEXT_LIMIT" \
-    "$SCRIPT_DIR/stream_monitor.py" "$TMP_STREAM" < "$fifo" &
+    node "$SCRIPT_DIR/stream_monitor.mjs" "$TMP_STREAM" < "$fifo" &
   monitor=$!
 
   (cd "$RUN_CWD" && CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST=1 "${cmd[@]}" < "$PROMPT" > "$fifo") &
@@ -1014,29 +870,7 @@ STREAM_EXTRACT_STATUS=0
 if [[ "$USE_STREAM" == true ]]; then
   if [[ -f "$STREAM_OUT" ]]; then
     set +e
-    python3 - "$STREAM_OUT" "$JSON_OUT" <<'PY'
-import json
-import sys
-
-stream_path, json_path = sys.argv[1], sys.argv[2]
-result = None
-with open(stream_path, "r", encoding="utf-8") as f:
-    for line in f:
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(event, dict) and event.get("type") == "result":
-            result = event
-
-if result is None:
-    print(f"error: no result event found in stream: {stream_path}", file=sys.stderr)
-    sys.exit(2)
-
-with open(json_path, "w", encoding="utf-8") as f:
-    json.dump(result, f, indent=2, sort_keys=True)
-    f.write("\n")
-PY
+    node "$SCRIPT_DIR/session-state.mjs" extract-result "$STREAM_OUT" "$JSON_OUT"
     STREAM_EXTRACT_STATUS=$?
     set -e
   fi
@@ -1045,56 +879,7 @@ fi
 if [[ "$claude_status" -ne 0 ]]; then
   echo "error: claude exited with status $claude_status" >&2
   if [[ -n "$ACTIVE_STATE_PATH" ]]; then
-    python3 - "$ACTIVE_STATE_PATH" "$JSON_OUT" "$STREAM_OUT" "$claude_status" <<'PY'
-import datetime as dt
-import json
-import os
-import sys
-
-state_path, json_path, stream_path, status = sys.argv[1:5]
-
-
-def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def has_session_signal() -> bool:
-    for path in (json_path, stream_path):
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                if path.endswith(".jsonl"):
-                    for line in f:
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(data, dict) and data.get("session_id"):
-                            return True
-                else:
-                    data = json.load(f)
-                    if isinstance(data, dict) and data.get("session_id"):
-                        return True
-        except (OSError, json.JSONDecodeError):
-            continue
-    return False
-
-
-with open(state_path, "r", encoding="utf-8") as f:
-    state = json.load(f)
-
-if not state.get("session_established") and not has_session_signal():
-    state["session_establishing"] = False
-state["last_error_status"] = int(status)
-state["updated_at"] = now()
-
-tmp = f"{state_path}.tmp.{os.getpid()}"
-with open(tmp, "w", encoding="utf-8") as f:
-    json.dump(state, f, indent=2, sort_keys=True)
-    f.write("\n")
-os.replace(tmp, state_path)
-PY
+    node "$SCRIPT_DIR/session-state.mjs" record-error "$ACTIVE_STATE_PATH" "$JSON_OUT" "$STREAM_OUT" "$claude_status"
   fi
   if [[ "$USE_STREAM" == true && -f "$STREAM_OUT" ]]; then
     ERROR_OUT="$BASE.error.stream.jsonl"
@@ -1114,108 +899,7 @@ if [[ "$USE_STREAM" == true && "$STREAM_EXTRACT_STATUS" -ne 0 ]]; then
 fi
 
 set +e
-render_output="$(python3 - "$JSON_OUT" "$MD_OUT" "$STREAM_OUT" <<'PY'
-import json
-import os
-import sys
-
-json_path, md_path, stream_path = sys.argv[1], sys.argv[2], sys.argv[3]
-with open(json_path, "r", encoding="utf-8") as f:
-    data = json.load(f)
-
-structured = data.get("structured_output")
-is_peer = isinstance(structured, dict) and "message_to_codex" in structured
-
-
-def render_peer(peer):
-    lines = ["# Claude peer message", "", peer.get("message_to_codex", "").strip(), ""]
-    questions = peer.get("questions_for_codex") or []
-    if questions:
-        lines.append("## Questions for Codex")
-        lines += [f"- {q}" for q in questions]
-        lines.append("")
-    disagreements = peer.get("disagreements") or []
-    if disagreements:
-        lines.append("## Disagreements")
-        lines += [f"- {d}" for d in disagreements]
-        lines.append("")
-    nxt = peer.get("proposed_next_turn") or {}
-    if nxt:
-        lines.append("## Proposed next turn")
-        if nxt.get("owner"):
-            lines.append(f"- owner: {nxt['owner']}")
-        if nxt.get("goal"):
-            lines.append(f"- goal: {nxt['goal']}")
-        for tf in nxt.get("target_files") or []:
-            lines.append(f"- target: {tf}")
-        for v in nxt.get("validation") or []:
-            lines.append(f"- validation: {v}")
-        lines.append("")
-    changed = peer.get("changed_files") or []
-    if changed:
-        lines.append("## Changed files")
-        for c in changed:
-            path = c.get("path", "")
-            summ = c.get("summary", "")
-            lines.append(f"- {path}{(' - ' + summ) if summ else ''}")
-        lines.append("")
-    asks = peer.get("validation_requests") or []
-    if asks:
-        lines.append("## Validation requests")
-        lines += [f"- {a}" for a in asks]
-        lines.append("")
-    state = peer.get("continuation_state") or {}
-    if state:
-        status = state.get("status", "")
-        reason = state.get("reason", "")
-        lines.append(f"## Continuation: {status}{(' - ' + reason) if reason else ''}")
-        lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
-
-
-if is_peer:
-    result = render_peer(structured)
-elif structured is not None:
-    result = json.dumps(structured, indent=2, sort_keys=True)
-else:
-    result = data.get("result", "")
-    if not isinstance(result, str):
-        result = json.dumps(result, indent=2, sort_keys=True)
-
-with open(md_path, "w", encoding="utf-8") as f:
-    f.write(result)
-    if result and not result.endswith("\n"):
-        f.write("\n")
-
-summary = {
-    "json": json_path,
-    "markdown": md_path,
-    "is_error": data.get("is_error", False),
-    "session_id": data.get("session_id"),
-    "duration_ms": data.get("duration_ms"),
-    "num_turns": data.get("num_turns"),
-    "has_structured_output": structured is not None,
-    "is_peer_message": is_peer,
-}
-
-if os.path.exists(stream_path):
-    summary["stream"] = stream_path
-
-if is_peer:
-    state = structured.get("continuation_state") or {}
-    summary["peer"] = {
-        "message_to_codex": structured.get("message_to_codex", ""),
-        "questions_for_codex": structured.get("questions_for_codex") or [],
-        "continuation_status": state.get("status"),
-        "next_owner": (structured.get("proposed_next_turn") or {}).get("owner"),
-    }
-
-print(json.dumps(summary, sort_keys=True))
-
-if data.get("is_error"):
-    sys.exit(2)
-PY
-)"
+render_output="$(node "$SCRIPT_DIR/session-state.mjs" render "$JSON_OUT" "$MD_OUT" "$STREAM_OUT")"
 render_status=$?
 set -e
 if [[ -n "$render_output" ]]; then
@@ -1223,126 +907,11 @@ if [[ -n "$render_output" ]]; then
 fi
 
 if [[ "$render_status" -ne 0 && -n "$ACTIVE_STATE_PATH" ]]; then
-  python3 - "$ACTIVE_STATE_PATH" "$JSON_OUT" "$STREAM_OUT" "$render_status" <<'PY'
-import datetime as dt
-import json
-import os
-import sys
-
-state_path, json_path, stream_path, status = sys.argv[1:5]
-
-
-def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def has_session_signal() -> bool:
-    for path in (json_path, stream_path):
-        if not os.path.exists(path):
-            continue
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                if path.endswith(".jsonl"):
-                    for line in f:
-                        try:
-                            data = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(data, dict) and data.get("session_id"):
-                            return True
-                else:
-                    data = json.load(f)
-                    if isinstance(data, dict) and data.get("session_id"):
-                        return True
-        except (OSError, json.JSONDecodeError):
-            continue
-    return False
-
-
-with open(state_path, "r", encoding="utf-8") as f:
-    state = json.load(f)
-
-if not state.get("session_established") and not has_session_signal():
-    state["session_establishing"] = False
-state["last_error_status"] = int(status)
-state["last_error_stage"] = "render"
-state["updated_at"] = now()
-
-tmp = f"{state_path}.tmp.{os.getpid()}"
-with open(tmp, "w", encoding="utf-8") as f:
-    json.dump(state, f, indent=2, sort_keys=True)
-    f.write("\n")
-os.replace(tmp, state_path)
-PY
+  node "$SCRIPT_DIR/session-state.mjs" record-render-error "$ACTIVE_STATE_PATH" "$JSON_OUT" "$STREAM_OUT" "$render_status"
 fi
 
 if [[ "$render_status" -eq 0 && -n "$ACTIVE_STATE_PATH" ]]; then
-  python3 - "$ACTIVE_STATE_PATH" "$JSON_OUT" "$MD_OUT" "$STREAM_OUT" "$MODEL" "$EFFORT" "$KIND" <<'PY'
-import datetime as dt
-import json
-import os
-import sys
-
-state_path, json_path, md_path, stream_path, model, effort, kind = sys.argv[1:8]
-
-
-def now() -> str:
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-with open(state_path, "r", encoding="utf-8") as f:
-    state = json.load(f)
-with open(json_path, "r", encoding="utf-8") as f:
-    result = json.load(f)
-
-if result.get("is_error"):
-    raise SystemExit(0)
-
-structured = result.get("structured_output")
-peer_status = None
-next_owner = None
-if isinstance(structured, dict):
-    peer_status = (structured.get("continuation_state") or {}).get("status")
-    next_owner = (structured.get("proposed_next_turn") or {}).get("owner")
-
-turn = int(state.get("turn") or 0) + 1
-checkpoint = {
-    "turn": turn,
-    "kind": kind,
-    "json": json_path,
-    "markdown": md_path,
-    "updated_at": now(),
-}
-if os.path.exists(stream_path):
-    checkpoint["stream"] = stream_path
-if peer_status:
-    checkpoint["peer_status"] = peer_status
-if next_owner:
-    checkpoint["next_owner"] = next_owner
-
-state["claude_session_id"] = result.get("session_id") or state.get("claude_session_id")
-state["session_established"] = True
-state["session_establishing"] = False
-state["model"] = model
-state["effort"] = effort
-state["turn"] = turn
-state["last_kind"] = kind
-state["last_json"] = json_path
-state["last_markdown"] = md_path
-if os.path.exists(stream_path):
-    state["last_stream"] = stream_path
-state["last_peer_status"] = peer_status
-state["last_next_owner"] = next_owner
-state["updated_at"] = now()
-state.setdefault("checkpoints", []).append(checkpoint)
-state["checkpoints"] = state["checkpoints"][-50:]
-
-tmp = f"{state_path}.tmp.{os.getpid()}"
-with open(tmp, "w", encoding="utf-8") as f:
-    json.dump(state, f, indent=2, sort_keys=True)
-    f.write("\n")
-os.replace(tmp, state_path)
-PY
+  node "$SCRIPT_DIR/session-state.mjs" record-success "$ACTIVE_STATE_PATH" "$JSON_OUT" "$MD_OUT" "$STREAM_OUT" "$MODEL" "$EFFORT" "$KIND"
 fi
 
 exit "$render_status"
