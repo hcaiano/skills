@@ -26,8 +26,9 @@ claude -p --model opus --permission-mode bypassPermissions \
 - **Autonomous and write-capable by default** (`bypassPermissions`, default tools).
   Claude writes code as a normal peer turn, bounded only by the write lease — not
   granted turn by turn.
-- **Subscription auth only.** API-key, cloud-provider, and gateway credentials all
-  outrank subscription OAuth, so the guarantee is a *clean environment* — not a
+- **Subscription auth only — never an API key.** Hard invariant: every pair turn
+  uses the logged-in subscription, never API / cloud-provider / gateway credentials.
+  Those outrank subscription OAuth, so the guarantee is a *clean environment* — not a
   fixed denylist. Before the call, strip every `ANTHROPIC_*` auth/routing var
   (`ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`,
   `ANTHROPIC_CUSTOM_HEADERS`, …), all provider toggles/credentials
@@ -36,13 +37,16 @@ claude -p --model opus --permission-mode bypassPermissions \
   `--setting-sources`. Claude's env-vars + auth-precedence docs are the
   authoritative list. If you can't guarantee a clean environment, don't pass the
   turn off as subscription-only. Never `--bare`.
-- **Constrained turns** (sanitized prompt, secret-heavy repo, narrow diagnostic):
-  drop bypass, restrict built-in tools with `--tools Read,Grep,Glob`, and deny
-  configured MCP tools with `--disallowedTools "mcp__*"` (`--tools` doesn't affect
-  MCP tools; `--allowedTools` only auto-approves). Never expose secrets in the prompt.
-  For a fully **isolated** sanitized turn use `--tools ""` (no built-ins) and run it
-  **fresh** — don't `--resume` the pair session, so it can't read repo secrets or
-  inherit earlier sensitive context.
+- **Constrained turns** (narrow diagnostic): drop bypass, restrict built-in tools
+  with `--tools Read,Grep,Glob`, and deny MCP with `--disallowedTools "mcp__*"`
+  (`--tools` doesn't affect MCP; `--allowedTools` only auto-approves).
+- **Isolated turns** (sanitized prompt, secret-heavy repo): the guarantee is that
+  *nothing* can inject repo content — no skill, slash command, MCP server, settings
+  file, built-in tool, or prior turn. Load nothing: `--tools ""` (no built-ins),
+  `--disable-slash-commands` (no skills/commands), `--strict-mcp-config` with no
+  `--mcp-config` (no MCP), `--setting-sources ""` (no CLAUDE.md/skills/plugins/hooks),
+  a clean env, and a **fresh** session (never `--resume`). Never put secrets in the
+  prompt; if you can't fully lock the turn down, don't run it.
 - To watch progress live, stream with `--output-format stream-json --verbose
   --include-partial-messages` (all three are needed to actually receive tokens). For
   Claude agents, MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
