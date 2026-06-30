@@ -42,10 +42,11 @@ flags on top of that.)
 - `--output-format json`, or `stream-json --verbose --include-partial-messages` for
   a live token stream on long turns (neither exposes hidden reasoning).
 - `--add-dir "$WORKSPACE_ROOT"`: give Claude the workspace on a write-capable turn.
-- `--tools Read,Grep,Glob` + `--disallowedTools "mcp__*"`: constrained turns —
-  restrict built-in tools AND deny configured MCP tools (`--tools` doesn't affect
-  MCP; `--allowedTools` only auto-approves). For sanitized prompts, secret-heavy
-  repos, or narrow diagnostics.
+- `--tools Read,Grep,Glob` + `--disallowedTools "mcp__*"`: constrained turns for a
+  **narrow diagnostic** — restrict built-in tools AND deny configured MCP tools
+  (`--tools` doesn't affect MCP; `--allowedTools` only auto-approves). Sanitized
+  prompts and secret-heavy repos are *not* read-capable — they use the bridge's
+  **Isolated turns** recipe (load nothing).
 - `--effort`: `high`/`xhigh` for hard work, `max` for architecture, security,
   production-risk, UI-quality, or large-diff review.
 - `--agents` / `--agent`, `claude agents`: focused Claude specialists or parallel
