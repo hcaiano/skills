@@ -29,8 +29,9 @@ claude -p --model opus --permission-mode bypassPermissions \
 - **Subscription auth only.** Never pass `--bare` or set `ANTHROPIC_API_KEY` /
   `apiKeyHelper` / any API-key auth — use the logged-in subscription session.
 - **Constrained turns** (sanitized prompt, secret-heavy repo, narrow diagnostic):
-  drop bypass and limit tools (e.g. `--allowedTools Read,Grep,Glob`); never expose
-  secrets in the prompt.
+  drop bypass and restrict the *available* tools with `--tools Read,Grep,Glob`
+  (`--allowedTools` only auto-approves; it doesn't restrict). Never expose secrets
+  in the prompt.
 - Use `--output-format stream-json` to watch progress live. For Claude agents,
   MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
 

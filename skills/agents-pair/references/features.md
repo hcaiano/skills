@@ -42,8 +42,9 @@ flags on top of that.)
 - `--output-format json` / `stream-json`: machine-readable result, or live progress
   on long turns (neither exposes hidden reasoning).
 - `--add-dir "$WORKSPACE_ROOT"`: give Claude the workspace on a write-capable turn.
-- `--allowedTools Read,Grep,Glob` (or stricter): constrained turns for sanitized
-  prompts, secret-heavy repos, or narrow diagnostics.
+- `--tools Read,Grep,Glob` (or stricter): restrict the *available* tools for
+  constrained turns — sanitized prompts, secret-heavy repos, narrow diagnostics.
+  (`--allowedTools` only auto-approves tools; it does not restrict them.)
 - `--effort`: `high`/`xhigh` for hard work, `max` for architecture, security,
   production-risk, UI-quality, or large-diff review.
 - `--agents` / `--agent`, `claude agents`: focused Claude specialists or parallel
