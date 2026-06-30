@@ -40,13 +40,12 @@ claude -p --model opus --permission-mode bypassPermissions \
 - **Constrained turns** (narrow diagnostic): drop bypass, restrict built-in tools
   with `--tools Read,Grep,Glob`, and deny MCP with `--disallowedTools "mcp__*"`
   (`--tools` doesn't affect MCP; `--allowedTools` only auto-approves).
-- **Isolated turns** (sanitized prompt, secret-heavy repo): the guarantee is that
-  *nothing* can inject repo content — no skill, slash command, MCP server, settings
-  file, built-in tool, or prior turn. Load nothing: `--tools ""` (no built-ins),
-  `--disable-slash-commands` (no skills/commands), `--strict-mcp-config` with no
-  `--mcp-config` (no MCP), `--setting-sources ""` (no CLAUDE.md/skills/plugins/hooks),
-  a clean env, and a **fresh** session (never `--resume`). Never put secrets in the
-  prompt; if you can't fully lock the turn down, don't run it.
+- **Isolated turns** (sanitized prompt, secret-heavy repo): nothing may inject repo
+  content. Run `--safe-mode` (disables all customizations in one flag — CLAUDE.md,
+  skills, slash commands, plugins, hooks, MCP servers, custom agents/commands)
+  together with `--tools ""` (no built-ins), a clean env, and a **fresh** session
+  (never `--resume`). Never put secrets in the prompt; if you can't fully lock the
+  turn down, don't run it.
 - To watch progress live, stream with `--output-format stream-json --verbose
   --include-partial-messages` (all three are needed to actually receive tokens). For
   Claude agents, MCP/plugins, worktrees, or `ultrareview`, see `../features.md`.
