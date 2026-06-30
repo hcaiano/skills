@@ -46,44 +46,28 @@ description.
 
 ## Phase 4: CI & review loop
 
-Run the recheck loop documented in
-`../review-pr-comments/references/pr-comment-loop.md`. It covers mode-split
-safety, comment classification, reply format, and the two-clean-rechecks stop
-condition. Do not re-implement that policy here.
+Run the shared loop in `../review-pr-comments/references/pr-comment-loop.md`;
+load `../review-pr-comments/references/github-comment-fetching.md` when fetching
+GitHub surfaces. Do not re-implement that policy here.
 
-**Reviewer-first invariant:** after every push, look for reviewer comments and unresolved review threads before waiting on CI. Do not sit on queued/in-progress checks while CodeRabbit, Codex, a human reviewer, or another bot has raised an actionable issue. Every fix push restarts CI, so reviewer feedback should be drained first; CI is final validation once that surface is quiet.
+Ship-it adds only these deltas:
 
-After each push:
-
-1. **Reviewer sweep first.** Fetch latest comments + unresolved review threads using `../review-pr-comments/references/github-comment-fetching.md`.
-2. **If reviewer feedback is actionable, handle the current sweep now.** Classify per the shared reference, group compatible fixes, make the smallest changes, run the local quality gate, commit, push, reply on each original thread with the commit SHA, resolve threads when appropriate, then restart Phase 4. Do not wait for pending CI.
-3. **Only when the reviewer sweep is quiet, inspect CI.**
-   - For completed real failures: read logs with `gh run view {run_id} --log-failed`, fix the root cause, run the local quality gate, commit, push, then restart Phase 4.
-   - For queued/in-progress checks: wait only in short polls, and each poll starts again at step 1 with reviewer comments before checking CI.
-4. **Do not leave review replies behind.** Every Fix / False Positive / Out of Scope finding needs a threaded reply on the original comment before reporting the loop clean. A PR summary comment is not enough.
-5. **Sync with target branch** before claiming ready:
+1. Run the Phase 2 quality gate before every fix push.
+2. Commit loop fixes as logical conventional commits.
+3. Push every fix commit to the PR branch.
+4. Before claiming done, sync with the PR's target branch:
    ```bash
-   git fetch origin main
-   git merge --no-edit origin/main
+   BASE_BRANCH="$(gh pr view --json baseRefName -q .baseRefName)"
+   git fetch origin "$BASE_BRANCH"
+   git merge --no-edit "origin/$BASE_BRANCH"
    ```
-   Resolve conflicts immediately, re-run the quality gate, push. If the merge created a new head, restart the recheck loop.
+   Resolve conflicts, re-run the quality gate, and push. If the sync creates a
+   new head, restart the shared loop.
 
-Done when the review loop reports two consecutive clean rechecks on the same
-latest head and CI has no pending or failing relevant checks.
+Done when the shared loop reaches its clean state on the latest head after the
+target-branch sync, or reports its precise blocker.
 
 ## Done condition
 
-Ship it is done when the latest head shows:
-
-- No new actionable comments on the latest head.
-- No unresolved review threads.
-- No pending or failing checks relevant to the latest head.
-- Branch synced with the target.
-- GitHub reports the PR as mergeable.
-
-Two consecutive rechecks meeting all of the above. Stop before that condition
-only when the shared reference's "stop with a precise blocker" criteria fire
-(auth/rate limits, checks stop changing across repeated rechecks, merge conflicts
-requiring broader judgment, expanded-mode confirmation needed). Never declare
-ready while threads or latest-head checks are still pending. Do not merge; that is
-the user's call.
+Ship it is done when Phase 4 is clean and the PR remains mergeable. Do not merge;
+that is the user's call.
