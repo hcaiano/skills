@@ -19,7 +19,8 @@
     "./skills/debug-mode",
     "./skills/goal-loop",
     "./skills/review-pr-comments",
-    "./skills/ship-it"
+    "./skills/ship-it",
+    "./skills/delegate"
   ],
   "interface": {
     "displayName": "Agent workflows",
@@ -38,7 +39,8 @@
       "Use goal-loop to keep improving one thing end to end with Claude and Codex",
       "Use review-pr-comments to handle this PR feedback",
       "Use agents-pair to collaborate with Claude through the Claude Code CLI",
-      "Use herdr-pair to pair with the other agent"
+      "Use herdr-pair to pair with the other agent",
+      "Use delegate to orchestrate work across Opus, Sonnet, and Codex"
     ],
     "brandColor": "#111111",
     "screenshots": []

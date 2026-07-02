@@ -12,6 +12,7 @@
     "./skills/debug-mode",
     "./skills/goal-loop",
     "./skills/review-pr-comments",
-    "./skills/ship-it"
+    "./skills/ship-it",
+    "./skills/delegate"
   ]
 }
