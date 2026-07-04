@@ -7,6 +7,7 @@
   },
   "skills": [
     "./skills/agents-pair",
+    "./skills/art-director",
     "./skills/check-logs",
     "./skills/herdr-pair",
     "./skills/debug-mode",

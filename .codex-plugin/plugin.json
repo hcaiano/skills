@@ -14,6 +14,7 @@
   ],
   "skills": [
     "./skills/agents-pair",
+    "./skills/art-director",
     "./skills/check-logs",
     "./skills/herdr-pair",
     "./skills/debug-mode",
@@ -39,6 +40,7 @@
       "Use goal-loop to keep improving one thing end to end with Claude and Codex",
       "Use review-pr-comments to handle this PR feedback",
       "Use agents-pair to collaborate with Claude through the Claude Code CLI",
+      "Use art-director to explore many design directions with Codex generating mockups",
       "Use herdr-pair to pair with the other agent",
       "Use delegate to orchestrate work across Opus, Sonnet, and Codex"
     ],
