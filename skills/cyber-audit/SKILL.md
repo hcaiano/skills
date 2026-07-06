@@ -39,22 +39,22 @@ npm ls -g --depth=0 2>/dev/null | grep -i "<pkg>"; pnpm ls -g --depth=0 2>/dev/n
 # below cannot see global roots outside $HOME.
 for root in "$(npm root -g 2>/dev/null)" "$(pnpm root -g 2>/dev/null)" \
             /opt/homebrew/lib/node_modules /usr/local/lib/node_modules; do
-  [ -d "$root" ] && find "$root" -maxdepth 2 -type d -path "*/<pkg>" 2>/dev/null
+  [ -d "$root" ] && find "$root" -type d -path "*/<pkg>" 2>/dev/null   # any depth: direct, scoped @vendor/pkg, or transitive under */node_modules/
 done
 find ~ -maxdepth 10 -type d -path "*/node_modules/<pkg>" 2>/dev/null \
   | grep -v -E "(Library/Caches|\.Trash)"      # local copies; -path matches scoped @vendor/pkg too
 find ~/code ~/Desktop ~/Downloads -maxdepth 8 -type f \
   \( -name "package.json" -o -name "package-lock.json" \
-     -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) 2>/dev/null \
-  | xargs grep -l "<pkg>" 2>/dev/null                              # direct + transitive
+     -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) -print0 2>/dev/null \
+  | xargs -0 grep -l "<pkg>" 2>/dev/null                           # direct + transitive; -print0/-0 survives spaces in paths
 
 # --- Python ecosystem ---
 which python3 pip pipx uv
 pip list 2>/dev/null | grep -i "<pkg>"
 pipx list 2>/dev/null | grep -i "<pkg>"        # pipx-managed CLI apps (own venvs, not in pip list)
 uv tool list 2>/dev/null | grep -i "<pkg>"     # uv-managed tools (own venvs)
-find ~/code -maxdepth 6 -name "requirements*.txt" -o -name "pyproject.toml" \
-  -o -name "poetry.lock" -o -name "uv.lock" 2>/dev/null | xargs grep -l "<pkg>" 2>/dev/null
+find ~/code -maxdepth 6 -type f \( -name "requirements*.txt" -o -name "pyproject.toml" \
+  -o -name "poetry.lock" -o -name "uv.lock" \) -print0 2>/dev/null | xargs -0 grep -l "<pkg>" 2>/dev/null
 
 # --- Homebrew / system binaries ---
 brew list --versions <formula> 2>/dev/null
