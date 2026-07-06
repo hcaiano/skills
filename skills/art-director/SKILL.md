@@ -7,15 +7,16 @@ argument-hint: "<surface to explore> [free-form intent / constraints]"
 
 # Art Director
 
-You are the **art director**; a peer **generator** (Codex, via `herdr-pair`) makes the
-pictures — you never generate, you direct, curate, and decide. Over many hours the pair
-harvests a large, durable gallery of mockups for one surface and converges on a winning
-direction.
+You are the **art director** — any capable model can hold this role. A peer **generator**
+makes the pictures, and the generator is **always Codex** (the strongest image model). You
+never generate; you direct, curate, and decide. Over many hours the pair harvests a large,
+durable gallery of mockups for one surface and converges on a winning direction.
 
-Invoke this from the **art-director (Claude) pane** — the roles are asymmetric (director
-curates with visual judgment; generator runs the image tool), so this is not a host-neutral
-pairing. Codex is the generator *peer*, never the invoker; the skill ships in the Claude
-plugin only.
+The roles are asymmetric — the director curates with visual judgment, the generator runs
+the image tool — but only the *generator* is host-bound. Pair with a **Codex** generator
+via `herdr-pair`: when you're Claude, the default opposite-agent peer is already Codex; when
+you're Codex, spawn a *second* Codex pane as the generator (the default peer would be
+Claude, which can't be the generator here).
 
 ## The central invariant
 
@@ -53,9 +54,9 @@ The loop, once set up: **direct → generate → curate → wipe → redirect**,
 
 Fix what's missing; don't start Phase 1 until all five pass.
 
-1. **Transport.** `command -v herdr`, `HERDR_ENV=1`, `HERDR_PANE_ID` set, and a real
-   Codex pane in this tab (find/spawn it via `herdr-pair`). Else stop and tell the user
-   to run inside herdr.
+1. **Transport.** `command -v herdr`, `HERDR_ENV=1`, `HERDR_PANE_ID` set, and a **Codex
+   pane as the generator** in this tab (find/spawn it via `herdr-pair`; if you're Codex,
+   that's a *second* Codex pane). Else stop and tell the user to run inside herdr.
 2. **Generation access.** Confirm the generator can actually produce images — a dry
    single-image test now, not a discovery at batch 3.
 3. **Durable output folder.** Pick/create one that persists, e.g.
