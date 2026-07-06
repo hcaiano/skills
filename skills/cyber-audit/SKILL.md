@@ -30,10 +30,16 @@ Determine whether this machine is exposed to a specific advisory, and leave a wr
 
 ```bash
 # --- Node / npm ecosystem (supply-chain advisories) ---
-which npm pnpm yarn; npm root -g; pnpm root -g 2>/dev/null
-ls /opt/homebrew/lib/node_modules                                  # global npm
+which npm pnpm yarn
+# global installs — grep the roots npm/pnpm actually report, so this works on
+# Linux and Intel macOS (/usr/local) as well as Apple Silicon Homebrew, not a
+# hardcoded path. find ~ below cannot see global roots outside $HOME.
+for root in "$(npm root -g 2>/dev/null)" "$(pnpm root -g 2>/dev/null)" \
+            /opt/homebrew/lib/node_modules /usr/local/lib/node_modules; do
+  [ -d "$root" ] && ls "$root" 2>/dev/null | grep -i "<pkg>" && echo "  ^ in $root"
+done
 find ~ -maxdepth 10 -type d -path "*/node_modules/<pkg>" 2>/dev/null \
-  | grep -v -E "(Library/Caches|\.Trash)"      # installed copies; -path matches scoped @vendor/pkg too
+  | grep -v -E "(Library/Caches|\.Trash)"      # local copies; -path matches scoped @vendor/pkg too
 find ~/code ~/Desktop ~/Downloads -maxdepth 8 -type f \
   \( -name "package.json" -o -name "package-lock.json" \
      -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) 2>/dev/null \
