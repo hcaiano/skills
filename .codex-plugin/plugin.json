@@ -21,7 +21,9 @@
     "./skills/goal-loop",
     "./skills/review-pr-comments",
     "./skills/ship-it",
-    "./skills/delegate"
+    "./skills/delegate",
+    "./skills/cyber-audit",
+    "./skills/setup-help"
   ],
   "interface": {
     "displayName": "Agent workflows",
