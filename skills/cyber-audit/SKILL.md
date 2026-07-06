@@ -105,9 +105,14 @@ None — diagnostic only, no files modified outside the report directory.
 
 ## Verdict wording
 
-- **Not affected.** — package/binary absent, or installed but patched, or not running and not exposed.
-- **Affected.** — vulnerable version present *and* reachable by the attack vector.
-- **Partially affected.** — present but mitigated (installed but service not running, or listener bound to loopback only). Spell out the mitigation.
+The attack vector decides which check proves exposure — apply it before picking a verdict:
+
+- **Supply-chain / malicious-package advisories** — a present vulnerable version is *itself* exposure (install-time and import-time payloads already executed); a process/listener check is irrelevant. Presence → **Affected**; only absence or a patched version is **Not affected**. Never downgrade to Partially/Not affected because "nothing is running".
+- **Network / service (RCE) advisories** — exposure needs the vulnerable code to be *reachable* (running + listening), so the running/listener check applies.
+
+- **Not affected.** — package/binary absent, or installed but patched; or (network/service advisories only) installed but not running and not exposed.
+- **Affected.** — vulnerable version present *and* reachable by the attack vector — where for supply-chain/malicious-package advisories a present vulnerable version is reachable by definition.
+- **Partially affected.** — present but mitigated; valid only for service-style advisories (installed but service not running, or listener bound to loopback only). Not a valid downgrade for a supply-chain payload that already ran. Spell out the mitigation.
 
 ## When to break the read-only rule
 
