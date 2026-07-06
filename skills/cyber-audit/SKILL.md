@@ -28,15 +28,18 @@ Determine whether this machine is exposed to a specific advisory, and leave a wr
 
 ## Check menu (pick what's relevant)
 
+Starting points, not a script — adapt to the advisory. **Prefer each tool's own "list installed" command** (`npm/pnpm ls -g`, `pipx list`, `uv tool list`, `brew list`, `pip list`) over guessing install paths; a filesystem `find` is the fallback for when no lister or manifest covers a location. When you do search paths, make the match path-aware so scoped names (`@vendor/pkg`) are found.
+
 ```bash
 # --- Node / npm ecosystem (supply-chain advisories) ---
 which npm pnpm yarn
-# global installs — grep the roots npm/pnpm actually report, so this works on
-# Linux and Intel macOS (/usr/local) as well as Apple Silicon Homebrew, not a
-# hardcoded path. find ~ below cannot see global roots outside $HOME.
+npm ls -g --depth=0 2>/dev/null | grep -i "<pkg>"; pnpm ls -g --depth=0 2>/dev/null | grep -i "<pkg>"   # native global listers (preferred)
+# fallback — search the roots npm/pnpm actually report (covers Linux/Intel /usr/local,
+# not just Apple Silicon Homebrew). path-aware so scoped @vendor/pkg is found; find ~
+# below cannot see global roots outside $HOME.
 for root in "$(npm root -g 2>/dev/null)" "$(pnpm root -g 2>/dev/null)" \
             /opt/homebrew/lib/node_modules /usr/local/lib/node_modules; do
-  [ -d "$root" ] && ls "$root" 2>/dev/null | grep -i "<pkg>" && echo "  ^ in $root"
+  [ -d "$root" ] && find "$root" -maxdepth 2 -type d -path "*/<pkg>" 2>/dev/null
 done
 find ~ -maxdepth 10 -type d -path "*/node_modules/<pkg>" 2>/dev/null \
   | grep -v -E "(Library/Caches|\.Trash)"      # local copies; -path matches scoped @vendor/pkg too
@@ -48,6 +51,8 @@ find ~/code ~/Desktop ~/Downloads -maxdepth 8 -type f \
 # --- Python ecosystem ---
 which python3 pip pipx uv
 pip list 2>/dev/null | grep -i "<pkg>"
+pipx list 2>/dev/null | grep -i "<pkg>"        # pipx-managed CLI apps (own venvs, not in pip list)
+uv tool list 2>/dev/null | grep -i "<pkg>"     # uv-managed tools (own venvs)
 find ~/code -maxdepth 6 -name "requirements*.txt" -o -name "pyproject.toml" \
   -o -name "poetry.lock" -o -name "uv.lock" 2>/dev/null | xargs grep -l "<pkg>" 2>/dev/null
 
