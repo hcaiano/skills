@@ -27,12 +27,20 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
 `agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`). `delegate`'s Codex lane has the same plugin dependency but degrades to Claude-only routing without it.
 
+`art-director` composes several external skills instead of vendoring them; install the ones your run needs (it degrades gracefully when an optional one is absent):
+
+- **Required:** `herdr-pair` (and thus the `herdr` CLI) for the live generator loop, `grill-me` for brief intake, and `imagegen-frontend-web` for website generation.
+- **Conditional:** `imagegen-frontend-mobile` (app-screen surfaces), `impeccable` (taste/quality bar and the build handoff), `brandkit` (identity/system-proof boards), and `image-to-code` / `web-design-guidelines` (build handoff + audit).
+
+None are bundled in this repo — `art-director` documents the dependency rather than copying their internals.
+
 ### Engineering
 
 - `debug-mode` — hypothesis-driven debugging with runtime evidence.
 
 ### Workflow
 
+- `art-director` — run a long design-exploration loop: you act as art director and Codex generates many mockups per batch; you curate, wipe its context, and redirect on a fresh axis until the gallery converges on a winning direction. Works for blank-slate (new/rebrand) and established-brand (creative-within-guardrails) projects. Composes `herdr-pair` (generator transport), `grill-me` (brief intake), `imagegen-frontend-web` (generation), and `impeccable` (taste + build handoff).
 - `check-logs` — read an existing herdr/turbo dev TUI's app logs without starting or stopping servers.
 - `goal-loop` — name one target and what "better" means; Claude and Codex keep improving that one thing with real testing until the goal's quality bar and the peer both pass. (Formerly `test-fix-loop`.)
 - `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
