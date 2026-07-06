@@ -27,7 +27,12 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
 `agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`). `delegate`'s Codex lane has the same plugin dependency but degrades to Claude-only routing without it.
 
-`art-director` composes several skills instead of vendoring them: `herdr-pair` (and thus the `herdr` CLI) for the live generator loop, plus the upstream `grill-me`, `imagegen-frontend-web`, and `impeccable` skills for brief intake, image generation, and taste/build handoff. Install those separately; `art-director` documents the dependency rather than copying their internals.
+`art-director` composes several external skills instead of vendoring them; install the ones your run needs (it degrades gracefully when an optional one is absent):
+
+- **Required:** `herdr-pair` (and thus the `herdr` CLI) for the live generator loop, `grill-me` for brief intake, and `imagegen-frontend-web` for website generation.
+- **Conditional:** `imagegen-frontend-mobile` (app-screen surfaces), `impeccable` (taste/quality bar and the build handoff), `brandkit` (identity/system-proof boards), and `image-to-code` / `web-design-guidelines` (build handoff + audit).
+
+None are bundled in this repo — `art-director` documents the dependency rather than copying their internals.
 
 ### Engineering
 

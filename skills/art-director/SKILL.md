@@ -100,7 +100,7 @@ batch. It holds only what stays constant:
 - **Quality bar** — acceptable vs. dead-on-arrival, leaning on `impeccable`'s anti-slop bans.
 - **Anti-goals** — tropes to avoid, brand violations, forbidden content.
 - **Output contract** — folder, filename scheme (`NN-short-name.png`, numbers only in
-  filenames), count per batch, prompt log (`prompts.md`).
+  filenames), count per batch, prompt log (`<folder>/prompts.md`, kept beside the images).
 
 Phase 1 is done when `BRIEF.md` is written and the user has confirmed it; don't start the
 loop before that.
@@ -168,10 +168,10 @@ The <N> outputs MUST differ from each other in composition, hierarchy, motif, an
 Do NOT repeat: <banned motifs from prior curation>.
 Hold to the visual contract in BRIEF.md (palette, type, format, anti-goals).
 Save each as <folder>/<NN>-<short-name>.png (numbers only in filenames), append the exact
-prompt for each to prompts.md, never overwrite earlier images, and NEVER render a batch or
-number label as page content.
-Stop as soon as files + prompts.md are saved; your final message = the filenames saved and
-any slots that failed. Do not re-verify in a loop.
+prompt for each to <folder>/prompts.md, never overwrite earlier images, and NEVER render a
+batch or number label as page content.
+Stop as soon as files + <folder>/prompts.md are saved; your final message = the filenames
+saved and any slots that failed. Do not re-verify in a loop.
 ```
 
 ## `CURATION.md` schema (the stateful memory)
