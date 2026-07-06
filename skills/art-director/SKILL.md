@@ -13,10 +13,12 @@ never generate; you direct, curate, and decide. Over many hours the pair harvest
 durable gallery of mockups for one surface and converges on a winning direction.
 
 The roles are asymmetric — the director curates with visual judgment, the generator runs
-the image tool — but only the *generator* is host-bound. Pair with a **Codex** generator
-via `herdr-pair`: when you're Claude, the default opposite-agent peer is already Codex; when
-you're Codex, spawn a *second* Codex pane as the generator (the default peer would be
-Claude, which can't be the generator here).
+the image tool — and only the generator is host-bound: it must be **Codex** (the strongest
+image model). The turnkey transport is **Claude directs → Codex generates**, which
+`herdr-pair` bootstraps natively (it pairs opposite agents). The director role itself isn't
+Claude-specific — any model that can curate can direct — but because `herdr-pair` only
+bootstraps *opposite*-agent pairs, a non-Claude director can't auto-spawn its Codex
+generator; the user must open that Codex pane manually.
 
 ## The central invariant
 
@@ -55,8 +57,9 @@ The loop, once set up: **direct → generate → curate → wipe → redirect**,
 Fix what's missing; don't start Phase 1 until all five pass.
 
 1. **Transport.** `command -v herdr`, `HERDR_ENV=1`, `HERDR_PANE_ID` set, and a **Codex
-   pane as the generator** in this tab (find/spawn it via `herdr-pair`; if you're Codex,
-   that's a *second* Codex pane). Else stop and tell the user to run inside herdr.
+   generator pane** in this tab. The Claude-director path gets one from `herdr-pair`
+   automatically; a non-Claude director needs the Codex pane opened manually (`herdr-pair`
+   only bootstraps the opposite agent). Else stop and tell the user to run inside herdr.
 2. **Generation access.** Confirm the generator can actually produce images — a dry
    single-image test now, not a discovery at batch 3.
 3. **Durable output folder.** Pick/create one that persists, e.g.
