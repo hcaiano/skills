@@ -1,0 +1,114 @@
+---
+name: cyber-audit
+description: Read-only exposure audit of THIS MACHINE against a specific external advisory — a named CVE, breach, malicious package, or supply-chain advisory — then write a report. Use when the user brings an advisory and asks "am I affected by X", "is this package/CVE on my system", "scan my machine for Y". Not for code/repo security review.
+user-invocable: true
+argument-hint: "<CVE / advisory / package>"
+---
+
+# cyber-audit
+
+Determine whether this machine is exposed to a specific advisory, and leave a written audit trail. **Read-only** is the whole contract: you diagnose, you never remediate.
+
+**Scope boundary.** This is host exposure against a *named external advisory*, not a general security tool. For source/appsec review of a repo use a code-security review skill; for chasing a live misbehaving bug use `debug-mode`. If the user has no specific advisory in hand, this skill is the wrong one.
+
+## Hard rules
+
+- **Read-only.** No installs, removes, upgrades, restarts, network calls, or file writes outside the report directory.
+- **No `sudo`.** Never.
+- **One report per invocation.** Always end by writing the `.md` report — even a "Not affected" verdict matters as an audit trail.
+- If a check needs a state-changing command, **skip it and record "not checked (would require state change)"** in the table. Do not run it.
+
+## Workflow
+
+1. **Scope.** From the advisory, extract: package/binary name, affected versions, platform, attack vector (supply chain / RCE / local / network).
+2. **Run checks in parallel** (multiple Bash calls in one message). Pick the checks relevant to the advisory type — do not run all of them.
+3. **Build the table** as you go: one row per check + concrete result (version, path, "None", "N/A").
+4. **Write the report** to `~/security-audits/YYYY-MM-DD-<short-kebab-slug>.md` (create the directory if absent). Use today's date from the environment.
+5. **Report the verdict** to the user in one line + the report path.
+
+## Check menu (pick what's relevant)
+
+```bash
+# --- Node / npm ecosystem (supply-chain advisories) ---
+which npm pnpm yarn; npm root -g; pnpm root -g 2>/dev/null
+ls /opt/homebrew/lib/node_modules                                  # global npm
+find ~ -maxdepth 8 -type d -name "<pkg>" 2>/dev/null \
+  | grep -v -E "(Library/Caches|\.Trash)"                          # installed copies
+find ~/code ~/Desktop ~/Downloads -maxdepth 8 -type f \
+  \( -name "package.json" -o -name "package-lock.json" \
+     -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) 2>/dev/null \
+  | xargs grep -l "<pkg>" 2>/dev/null                              # direct + transitive
+
+# --- Python ecosystem ---
+which python3 pip pipx uv
+pip list 2>/dev/null | grep -i "<pkg>"
+find ~/code -maxdepth 6 -name "requirements*.txt" -o -name "pyproject.toml" \
+  -o -name "poetry.lock" -o -name "uv.lock" 2>/dev/null | xargs grep -l "<pkg>" 2>/dev/null
+
+# --- Homebrew / system binaries ---
+brew list --versions <formula> 2>/dev/null
+which <binary>; <binary> --version 2>/dev/null
+
+# --- Running processes / listeners (RCE / network CVEs) ---
+pgrep -lf "<binary>"
+lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | grep "<port>"
+
+# --- LaunchAgents / LaunchDaemons (persistence / autostart) ---
+ls ~/Library/LaunchAgents /Library/LaunchAgents /Library/LaunchDaemons 2>/dev/null \
+  | grep -i "<vendor>"
+
+# --- Env vars that change exposure (e.g. listening addr) ---
+launchctl getenv <VAR>; grep -r "<VAR>" ~/.zshrc ~/.zprofile ~/.config 2>/dev/null
+
+# --- VS Code / browser extensions (IDE-targeted advisories) ---
+ls ~/.vscode/extensions 2>/dev/null | grep -i "<ext>"
+```
+
+For an ecosystem not listed (Rust cargo, Go modules, Ruby gems, Docker images, …), apply the same pattern: global install path + manifest grep + running processes.
+
+## Report template
+
+File: `~/security-audits/YYYY-MM-DD-<short-kebab-slug>.md`
+
+```markdown
+# <Subject> — Audit
+
+**Date:** YYYY-MM-DD
+**Host:** <this machine>
+
+## <CVEs | Advisory> in scope
+
+- **<ID or source> "<Name>"** — <one-line description>. <Affected versions or scope>.
+
+## Audit results
+
+| Check | Result |
+|---|---|
+| <Check 1> | <Result> |
+| <Check 2> | <Result> |
+
+## Verdict
+
+**<Not affected. | Affected. | Partially affected.>**
+
+- <Rationale bullet 1>
+- <Rationale bullet 2>
+
+## Action taken
+
+None — diagnostic only, no files modified outside the report directory.
+
+## Follow-ups
+
+- <Actionable item, or "None">
+```
+
+## Verdict wording
+
+- **Not affected.** — package/binary absent, or installed but patched, or not running and not exposed.
+- **Affected.** — vulnerable version present *and* reachable by the attack vector.
+- **Partially affected.** — present but mitigated (installed but service not running, or listener bound to loopback only). Spell out the mitigation.
+
+## When to break the read-only rule
+
+Never on your own. If the verdict is "Affected", list the remediation command under **Follow-ups** and stop. The user runs it.
