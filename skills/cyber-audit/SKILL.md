@@ -112,7 +112,7 @@ The attack vector decides which check proves exposure — apply it before pickin
 
 - **Not affected.** — package/binary absent, or installed but patched; or (network/service advisories only) installed but not running and not exposed.
 - **Affected.** — vulnerable version present *and* reachable by the attack vector — where for supply-chain/malicious-package advisories a present vulnerable version is reachable by definition.
-- **Partially affected.** — present but mitigated; valid only for service-style advisories (installed but service not running, or listener bound to loopback only). Not a valid downgrade for a supply-chain payload that already ran. Spell out the mitigation.
+- **Partially affected.** — installed and *running* but only partially reachable, e.g. the listener is bound to loopback only or exposed solely behind auth/a firewall. A fully stopped service with no exposure is **Not affected**, not partial. Never a valid downgrade for a supply-chain payload that already ran. Spell out the mitigation.
 
 ## When to break the read-only rule
 
