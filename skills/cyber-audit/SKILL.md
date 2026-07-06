@@ -28,7 +28,7 @@ Determine whether this machine is exposed to a specific advisory, and leave a wr
 
 ## Check menu (pick what's relevant)
 
-Starting points, not a script — adapt to the advisory. **Prefer each tool's own "list installed" command** (`npm/pnpm ls -g`, `pipx list`, `uv tool list`, `brew list`, `pip list`) over guessing install paths; a filesystem `find` is the fallback for when no lister or manifest covers a location. When you do search paths, make the match path-aware so scoped names (`@vendor/pkg`) are found.
+Starting points, not a script — adapt to the advisory. **Prefer each tool's own "list installed" command** (`npm/pnpm ls -g`, `pipx list`, `uv tool list`, `brew list`, `pip list`) over guessing install paths; a filesystem `find` is the fallback for when no lister or manifest covers a location. When you do search paths, make the match path-aware so scoped names (`@vendor/pkg`) are found. **Search scope:** the `~`/`~/code` roots below assume a home checkout — the audit may instead run from a working tree outside `$HOME` (e.g. a `/workspace` checkout), so also search the current working tree and any target path the user named, not only these home directories.
 
 ```bash
 # --- Node / npm ecosystem (supply-chain advisories) ---
@@ -41,9 +41,9 @@ for root in "$(npm root -g 2>/dev/null)" "$(pnpm root -g 2>/dev/null)" \
             /opt/homebrew/lib/node_modules /usr/local/lib/node_modules; do
   [ -d "$root" ] && find "$root" -type d -path "*/<pkg>" 2>/dev/null   # any depth: direct, scoped @vendor/pkg, or transitive under */node_modules/
 done
-find ~ -maxdepth 10 -type d -path "*/node_modules/<pkg>" 2>/dev/null \
-  | grep -v -E "(Library/Caches|\.Trash)"      # local copies; -path matches scoped @vendor/pkg too
-find ~/code ~/Desktop ~/Downloads -maxdepth 8 -type f \
+find ~ . -maxdepth 10 -type d -path "*/node_modules/<pkg>" 2>/dev/null \
+  | grep -v -E "(Library/Caches|\.Trash)"      # local copies (incl. current tree); -path matches scoped @vendor/pkg too
+find ~/code ~/Desktop ~/Downloads . -maxdepth 8 -type f \
   \( -name "package.json" -o -name "package-lock.json" \
      -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) -print0 2>/dev/null \
   | xargs -0 grep -l "<pkg>" 2>/dev/null                           # direct + transitive; -print0/-0 survives spaces in paths
