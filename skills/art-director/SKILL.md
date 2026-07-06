@@ -1,6 +1,6 @@
 ---
 name: art-director
-description: "Art-direct a long design-exploration loop: you direct, a peer generator (Codex) produces the mockups. Direct a batch on one axis, curate it, wipe the generator, redirect on a fresh axis, converge on a winning direction. Use when the user invokes /art-director, wants to explore many design directions or generate mockups for a surface over a long session, or wants to brainstorm or choose a visual identity or brand language. Handles blank-slate (new project / rebrand) and established-brand (creative within brand guardrails) modes. Hand the chosen direction to impeccable or image-to-code to build it."
+description: "Art-direct a long design-exploration loop: you direct a batch on one axis, a peer generator (Codex) produces the mockups, you curate and wipe the generator, then redirect on a fresh axis until the gallery converges on a winning direction. Use when the user invokes /art-director, wants to explore many design directions or generate mockups for a surface over a long session, or wants to brainstorm or choose a visual identity or brand language. Handles blank-slate (new project / rebrand) and established-brand (creative within brand guardrails) modes. Hand the chosen direction to impeccable or image-to-code to build it."
 user-invocable: true
 argument-hint: "<surface to explore> [free-form intent / constraints]"
 ---
@@ -12,16 +12,14 @@ makes the pictures, and the generator is **always Codex** (the strongest image m
 never generate; you direct, curate, and decide. Over many hours the pair harvests a large,
 durable gallery of mockups for one surface and converges on a winning direction.
 
-The roles are asymmetric — the director curates with visual judgment, the generator runs
-the image tool — and only the generator is host-bound: it must be **Codex** (the strongest
-image model). The turnkey transport is **Claude directs → Codex generates**, which
-`herdr-pair` bootstraps natively (it pairs opposite agents). The director role itself isn't
-Claude-specific — any model that can curate can direct — but because `herdr-pair` only
-bootstraps *opposite*-agent pairs, a non-Claude director can't auto-spawn its Codex
-generator; the user opens that Codex pane manually. Either way the loop then drives the
-Codex generator *pane* directly with `herdr pane` primitives (send `/goal`, poll, `/new`);
-`herdr-pair` is how a Claude director obtains and coordinates that pane, not a requirement
-for reaching a manually-opened one.
+The roles are asymmetric: the director curates with visual judgment; the generator runs the
+image tool. Only the generator is host-bound — it must be Codex — so the turnkey transport is
+**Claude directs → Codex generates**, which `herdr-pair` bootstraps natively (it pairs
+opposite agents). A non-Claude director can't auto-spawn a Codex generator that way, so it
+opens the generator pane by hand. Either transport lands in the same place: a live Codex
+generator pane the loop drives directly with `herdr pane` primitives — send `/goal`, poll,
+`/new` to **wipe**. `herdr-pair` is just the Claude-director bootstrap, not a requirement for
+reaching a manually-opened pane.
 
 ## The central invariant
 
@@ -36,8 +34,8 @@ The loop, once set up: **direct → generate → curate → wipe → redirect**,
 
 ## Required reading (before acting — compose, don't rewrite)
 
-- **`herdr-pair`** — the live Claude/Codex pane transport: send a `/goal`, `/new` to wipe,
-  double-ESC to interrupt a spin, poll status. Don't re-implement pane mechanics.
+- **`herdr-pair`** — the live-pane transport: `/goal`, poll status, `/new` to wipe,
+  double-ESC to interrupt a spin. Don't re-implement pane mechanics.
 - **`grill-me`** — the relentless intake interrogation that builds the brief (Phase 1).
 - **`imagegen-frontend-web`** / **`imagegen-frontend-mobile`** — how the generator
   produces premium mockups (one image per section/screen, composition variety, one
@@ -59,10 +57,10 @@ The loop, once set up: **direct → generate → curate → wipe → redirect**,
 
 Fix what's missing; don't start Phase 1 until all five pass.
 
-1. **Transport.** `command -v herdr`, `HERDR_ENV=1`, `HERDR_PANE_ID` set, and a **Codex
-   generator pane** in this tab. The Claude-director path gets one from `herdr-pair`
-   automatically; a non-Claude director needs the Codex pane opened manually (`herdr-pair`
-   only bootstraps the opposite agent). Else stop and tell the user to run inside herdr.
+1. **Transport.** `command -v herdr`, `HERDR_ENV=1` and `HERDR_PANE_ID` set, and a live
+   **Codex generator pane** in this tab — obtained per the transport note above
+   (`herdr-pair` for a Claude director, opened by hand otherwise). Else stop and tell the
+   user to run inside herdr.
 2. **Generation access.** Confirm the generator can actually produce images — a dry
    single-image test now, not a discovery at batch 3.
 3. **Durable output folder.** Pick/create one that persists, e.g.
@@ -87,8 +85,8 @@ Adapt the questioning to the mode:
 - **Established brand:** the brand **is** the guardrail. Derive the existing visual
   contract (tokens, type, voice, motifs, radius, imagery rules) from the site / design
   system first. Creativity goes into **concept, layout, composition, information
-  hierarchy** — never into violating the brand. Per `impeccable`'s "identity-preservation
-  wins": a gorgeous mockup that breaks the brand's tokens or voice is a **reject**.
+  hierarchy** — never into violating the brand. This is `impeccable`'s
+  **identity-preservation wins**.
 
 Write **`BRIEF.md`** in the output folder — the anchor the generator re-reads **every**
 batch. It holds only what stays constant:
