@@ -32,8 +32,8 @@ Determine whether this machine is exposed to a specific advisory, and leave a wr
 # --- Node / npm ecosystem (supply-chain advisories) ---
 which npm pnpm yarn; npm root -g; pnpm root -g 2>/dev/null
 ls /opt/homebrew/lib/node_modules                                  # global npm
-find ~ -maxdepth 8 -type d -name "<pkg>" 2>/dev/null \
-  | grep -v -E "(Library/Caches|\.Trash)"                          # installed copies
+find ~ -maxdepth 10 -type d -path "*/node_modules/<pkg>" 2>/dev/null \
+  | grep -v -E "(Library/Caches|\.Trash)"      # installed copies; -path matches scoped @vendor/pkg too
 find ~/code ~/Desktop ~/Downloads -maxdepth 8 -type f \
   \( -name "package.json" -o -name "package-lock.json" \
      -o -name "pnpm-lock.yaml" -o -name "yarn.lock" \) 2>/dev/null \
