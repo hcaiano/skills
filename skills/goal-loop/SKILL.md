@@ -109,9 +109,12 @@ mutates product decisions. Phase 0 pins it down. Write a **Scope Contract** into
   overrides this default.
 - **Quality gates** — what "PASS" / "better" means for this goal; for UI goals the
   impeccable rubric is the bar.
-- **Validation command** — the exact shell command(s) that prove a story PASS
-  (`pytest -q`, `pnpm test`, a named route/API check). Every story names one;
-  "looks right" is not validation.
+- **Validation** — a concrete, repeatable check that proves a story PASS: an exact
+  shell command (`pytest -q`, `pnpm test`, a named API check), OR — for UI / visual /
+  exploratory goals with no such command — a defined browser/computer-use/manual
+  procedure (steps + expected observable result). Every story names one; "looks
+  right" is not validation, but a written repeatable procedure is. Never invent or
+  weaken a test just to manufacture a shell command.
 - **PR-split policy** — see Phase 4.
 - **Record-only categories** — what the loop must NOT auto-fix (see Guards).
 - **Expected-behavior sources** — code **+ runtime behavior (live UX when the goal
@@ -142,9 +145,10 @@ Invariant: only current-epoch evidence closes a story; only a named measurable
 delta opens a fix iteration. Test for real with your browser + computer-use on
 your own session. Improve the dimensions the Scope Contract names (e.g. correctness,
 behavior, perf, UX, polish; UI via impeccable).
-Validate every change with the Scope Contract's exact validation command. Never
-delete, skip, weaken, narrow, or reclassify a test/eval/check to make a story pass
-— that fails the goal, it does not meet it.
+Validate every change with the story's named validation — a shell command, or a
+defined browser/computer-use procedure for UI/exploratory work. Never delete, skip,
+weaken, narrow, or reclassify a test/eval/check to make a story pass — that fails
+the goal, it does not meet it.
 Ship via autonomous PRs (never auto-merge). Work until exit criteria are met.
 Coordinate with Claude using [agent codex -> claude kind=... sid=<SID>] messages.
 ```
