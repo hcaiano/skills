@@ -65,6 +65,12 @@ Everything below serves this. It is what lets "no iteration cap" coexist with
 
 ## Preflight (coordinator, once)
 
+**Fit gate (before anything).** goal-loop is for a target with a *verifiable stop
+condition*. If the target has no definition of done — vague "just make it better",
+pure product/taste calls without an owner, destructive shared-infra work, or
+anything needing prod credentials you were not granted — stop and say so; this is
+the wrong loop. A real stop condition is the entry ticket.
+
 1. `command -v herdr` and `HERDR_ENV=1` and `HERDR_PANE_ID` set — else stop, tell the
    human to run inside herdr.
 2. `git status --short --branch`. The worktree must be clean OR only contain changes
@@ -103,6 +109,12 @@ mutates product decisions. Phase 0 pins it down. Write a **Scope Contract** into
   overrides this default.
 - **Quality gates** — what "PASS" / "better" means for this goal; for UI goals the
   impeccable rubric is the bar.
+- **Validation** — a concrete, repeatable check that proves a story PASS: an exact
+  shell command (`pytest -q`, `pnpm test`, a named API check), OR — for UI / visual /
+  exploratory goals with no such command — a defined browser/computer-use/manual
+  procedure (steps + expected observable result). Every story names one; "looks
+  right" is not validation, but a written repeatable procedure is. Never invent or
+  weaken a test just to manufacture a shell command.
 - **PR-split policy** — see Phase 4.
 - **Record-only categories** — what the loop must NOT auto-fix (see Guards).
 - **Expected-behavior sources** — code **+ runtime behavior (live UX when the goal
@@ -133,6 +145,10 @@ Invariant: only current-epoch evidence closes a story; only a named measurable
 delta opens a fix iteration. Test for real with your browser + computer-use on
 your own session. Improve the dimensions the Scope Contract names (e.g. correctness,
 behavior, perf, UX, polish; UI via impeccable).
+Validate every change with the story's named validation — a shell command, or a
+defined browser/computer-use procedure for UI/exploratory work. Never delete, skip,
+weaken, narrow, or reclassify a test/eval/check to make a story pass — that fails
+the goal, it does not meet it.
 Ship via autonomous PRs (never auto-merge). Work until exit criteria are met.
 Coordinate with Claude using [agent codex -> claude kind=... sid=<SID>] messages.
 ```
@@ -301,6 +317,10 @@ browser/session id, tester, status.
 - **Record-only** (never auto-fix; log for the human): product/business/legal/content
   strategy, paid-service changes, auth/permissions policy, data migrations, external
   partner behavior, anything needing credentials the human did not grant.
+- **No reward-hacking** — never delete, skip, weaken, narrow, disable, or reclassify
+  a test/eval/check to make a story pass. Gaming the gate fails the goal. A test
+  that is genuinely wrong is fixed as its own story with evidence, never silently
+  to go green.
 - **Stale testing** — evidence from a prior epoch cannot close a story; re-test.
 - **Branch safety** — fresh branch from `origin/main`; never absorb unrelated dirty
   files; never auto-merge; never `--no-verify`; never force-push.
