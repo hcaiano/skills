@@ -13,14 +13,14 @@ Determine whether this machine is exposed to a specific advisory, and leave a wr
 
 ## Hard rules
 
-- **Read-only.** No installs, removes, upgrades, restarts, network calls, or file writes outside the report directory.
+- **Read-only on the machine.** No installs, removes, upgrades, restarts, config changes, or file writes outside the report directory. Reading the *advisory* is allowed and expected — fetch the CVE/advisory details from authoritative sources, or use the full text the user provided. The ban is on changing the machine, not on research.
 - **No `sudo`.** Never.
 - **One report per invocation.** Always end by writing the `.md` report — even a "Not affected" verdict matters as an audit trail.
 - If a check needs a state-changing command, **skip it and record "not checked (would require state change)"** in the table. Do not run it.
 
 ## Workflow
 
-1. **Scope.** From the advisory, extract: package/binary name, affected versions, platform, attack vector (supply chain / RCE / local / network).
+1. **Scope — grounded, never from memory.** Establish the affected package/binary name, affected versions, platform, and attack vector (supply chain / RCE / local / network) from the advisory itself. If the input is only a CVE ID or package name, look the advisory up (read-only) or ask for the full text *before* auditing — never infer affected versions from model memory. An ungrounded verdict is worse than none.
 2. **Run checks in parallel** (multiple Bash calls in one message). Pick the checks relevant to the advisory type — do not run all of them.
 3. **Build the table** as you go: one row per check + concrete result (version, path, "None", "N/A").
 4. **Write the report** to `~/security-audits/YYYY-MM-DD-<short-kebab-slug>.md` (create the directory if absent). Use today's date from the environment.
