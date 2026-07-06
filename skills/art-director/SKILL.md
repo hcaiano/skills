@@ -18,7 +18,10 @@ image model). The turnkey transport is **Claude directs → Codex generates**, w
 `herdr-pair` bootstraps natively (it pairs opposite agents). The director role itself isn't
 Claude-specific — any model that can curate can direct — but because `herdr-pair` only
 bootstraps *opposite*-agent pairs, a non-Claude director can't auto-spawn its Codex
-generator; the user must open that Codex pane manually.
+generator; the user opens that Codex pane manually. Either way the loop then drives the
+Codex generator *pane* directly with `herdr pane` primitives (send `/goal`, poll, `/new`);
+`herdr-pair` is how a Claude director obtains and coordinates that pane, not a requirement
+for reaching a manually-opened one.
 
 ## The central invariant
 
@@ -109,13 +112,13 @@ loop before that.
 Each **batch** is ~8–12 mockups on **one exploration axis**. The diversity comes from
 changing the *underlying rule*, not from stacking adjectives.
 
-1. **Direct.** Send the generator a `/goal` (via `herdr-pair`; first token literally
+1. **Direct.** Send the Codex generator pane a `/goal` (first token literally
    `/goal `), using the template below. The **axis** must be a concrete *new premise*
    ("the page behaves like a lab report / transit board / filing system / field guide"),
    not "more options." Force internal diversity (each of the N differs in composition,
    hierarchy, motif, density) and ban the motifs prior curation already ruled out.
-2. **Generate.** Generation takes minutes; poll status via `herdr-pair`, don't block the
-   turn. For unattended multi-hour runs, drive the polling/redirect cadence with a
+2. **Generate.** Generation takes minutes; poll the generator pane's status, don't block
+   the turn. For unattended multi-hour runs, drive the polling/redirect cadence with a
    scheduled loop (e.g. `goal-loop`'s machinery).
 3. **Curate.** View **every** image. Judge against the brief with **ID-first critique**:
    "203 works because its compression…", "204 rejected: decorative frame" — never "the
