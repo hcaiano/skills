@@ -12,6 +12,11 @@ pictures — you never generate, you direct, curate, and decide. Over many hours
 harvests a large, durable gallery of mockups for one surface and converges on a winning
 direction.
 
+Invoke this from the **art-director (Claude) pane** — the roles are asymmetric (director
+curates with visual judgment; generator runs the image tool), so this is not a host-neutral
+pairing. Codex is the generator *peer*, never the invoker; the skill ships in the Claude
+plugin only.
+
 ## The central invariant
 
 > **Stateless generator, stateful art director.** The generator carries no gallery
