@@ -21,12 +21,17 @@ P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX)
 cat >"$P" <<'EOF'
 <the brief, verbatim>
 EOF
-codex exec --full-auto -C <repo> -o "$F" - <"$P" 2>/dev/null
+codex exec -s workspace-write -C <repo> -o "$F" - <"$P" 2>/dev/null
 ```
 
-- `--full-auto` = sandboxed workspace-write with no approval stops. `--yolo`
-  lifts the sandbox entirely — only in a repo you'd let Codex own.
+- `-s workspace-write` = sandboxed writes scoped to the repo, no approval
+  stops. `--dangerously-bypass-approvals-and-sandbox` lifts the sandbox
+  entirely — only in a repo you'd let Codex own. Flag names shift across CLI
+  versions (`--full-auto` and `--yolo` don't exist on current `exec`) —
+  `codex exec --help` is the source of truth.
 - Read-only work (exploration, investigation, analysis): `-s read-only` instead.
+- Raise reasoning for a genuinely hard slice with
+  `-c model_reasoning_effort=high`; leave the model unset.
 - Read the `-o` file for the result. Don't parse the JSONL stream, and leave
   stderr suppressed — thinking noise bloats the wrapper's context too; drop
   `2>/dev/null` only to debug a failing run.
@@ -38,9 +43,8 @@ codex exec --full-auto -C <repo> -o "$F" - <"$P" 2>/dev/null
 ## Follow-ups
 
 Resuming is cheaper than a fresh run and keeps Codex's context, but `resume`
-drops `-C` and the shorthand flags (`--full-auto`, `-s`) — run it from the repo
-dir and set the sandbox via config override, keeping the same policy as the
-initial run:
+drops `-C` and `-s` — run it from the repo dir and set the sandbox via config
+override, keeping the same policy as the initial run:
 
 ```bash
 (cd <repo> && codex exec resume --last \
@@ -51,8 +55,9 @@ initial run:
 Follow-ups go through a wrapper too — same reason. `resume --last` picks the
 most recent session recorded for that directory, so run it from the same repo.
 
-(`--dangerously-bypass-approvals-and-sandbox` exists on `resume` but lifts the
-sandbox entirely — same rule as `--yolo`: only in a repo you'd let Codex own.)
+(`--dangerously-bypass-approvals-and-sandbox` exists on `resume` too and lifts
+the sandbox entirely — same rule as on exec: only in a repo you'd let Codex
+own.)
 
 ## Reviews and job tracking (plugin companion)
 

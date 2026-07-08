@@ -47,17 +47,19 @@ Never leaves Claude's hands, whatever the budget:
 
 Transport:
 
-- Codex, two ways in: the plugin (`Agent` with
-  `subagent_type: "codex:codex-rescue"`, `run_in_background: true` for long
-  jobs) for delegated tasks and reviews — it keeps session state, so follow-ups
-  resume instead of restarting; raw `codex exec` for one-shot self-contained
-  prompts. Embed routing flags in the rescue prompt: `--resume` to continue its
-  last thread (this is how you answer an objection or iterate a failure),
-  `--effort high|xhigh` only for a genuinely hard slice — model and effort
-  otherwise stay unset. Background jobs are trackable via the companion's
-  `status`/`result`/`cancel`. Mechanics for exec, reviews, and job tracking:
-  `references/codex-exec.md`. No Codex at all → `fast-worker` builds, and say
-  so. For a real back-and-forth collaboration, escalate to `agents-pair`.
+- Codex: spawn a cheap wrapper (`Agent`, `model: "sonnet"`, low effort) whose
+  prompt embeds the brief plus the exec mechanics from
+  `references/codex-exec.md`; the wrapper runs `codex exec`, re-runs
+  Validation, and returns the labeled report — `run_in_background: true` on
+  the wrapper for long jobs. Follow-ups (answering an objection, iterating a
+  failure) resume Codex's thread: `codex exec resume --last`, same repo,
+  through a wrapper again. Reviews and job tracking go through the plugin's
+  companion script (same reference). Do NOT call `codex:codex-rescue` as an
+  `Agent` subagent type — it isn't registered outside the `/codex:rescue`
+  command and the call fails as invalid parameters; the `/codex:*` commands
+  are the user's surface, not yours. No `codex` CLI at all → `fast-worker`
+  builds, and say so. For a real back-and-forth collaboration, escalate to
+  `agents-pair`.
 - `deep-reasoner` / `fast-worker` / `skeptic`: call them as `Agent` subagent
   types when they exist. When they don't, the same routing works with zero
   setup — a general-purpose agent with `model: "opus"`, `"sonnet"`, or
