@@ -1,8 +1,9 @@
 # Codex mechanics — exec, reviews, job tracking
 
-Raw `codex exec` for a single self-contained prompt: no session to manage, one
-result file out. For multi-round delegation, use the plugin's rescue subagent
-instead — it owns Codex session state.
+Raw `codex exec` mechanics for the Codex lane: one-shot builds and resumable
+follow-ups. Everything here is written to sit inside a wrapper's prompt — the
+wrapper runs these commands and returns the labeled report; it never delegates
+onward or hands off to another agent.
 
 ## Invoke
 
@@ -43,6 +44,10 @@ drops `-C` and `-s` — run it from the repo dir and set the sandbox via config
 override, keeping the same policy as the initial run:
 
 ```bash
+P2=$(mktemp -t codex-spec.XXXXXX); F2=$(mktemp -t codex-out.XXXXXX)
+cat >"$P2" <<'EOF'
+<the follow-up — just the delta instruction>
+EOF
 (cd <repo> && codex exec resume --last \
   -c sandbox_mode="workspace-write" \
   -o "$F2" - <"$P2" 2>/dev/null)
