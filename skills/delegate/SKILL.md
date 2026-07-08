@@ -106,6 +106,13 @@ or risky slice, also make the work order's first step a spec check (verify the
 brief's assumptions against the repo, object before writing): an objection
 costs a read; a wrong build costs the slice.
 
+A build slice's proof is its tests — they're how you sign the work without
+re-deriving it. New behavior ships with tests you can run; a bug fix starts
+from a failing repro test and returns it green — red → green is the receipt.
+Point Claude-side builders at the `tdd` skill; Codex briefs spell the
+discipline out in Validation. Where tests don't apply (renames, docs, config),
+Validation names the proof instead — a grep, a build, a type check.
+
 ## The panel — high-stakes decisions
 
 When a decision is expensive to reverse — architecture, data model, migration
@@ -116,6 +123,23 @@ different lineages fail differently; synthesize the best of both and report
 genuine splits to the user as open questions, not averages. No Codex available →
 fill the second seat with a different model than the first (two runs of the same
 delegate share failure modes), and name the substitution in your report.
+
+## Shared plan (long goals)
+
+For a goal that spans checkpoints or sessions, track it with
+`planning-with-files` — that skill owns the `task_plan.md` / `findings.md` /
+`progress.md` contract. delegate adds only the orchestration delta:
+
+- You are the single writer of `task_plan.md` and `progress.md`; delegates
+  never touch them. Record a slice's checkpoint when you've verified it, not
+  when the delegate claims it.
+- A slice that discovers things writes its own findings file, named in its
+  brief and inside its write lease (`findings/<slice>.md`) — parallel delegates
+  never share one. Later briefs point at those files instead of restating
+  them.
+- Skip the files for a one-sitting run — the plan text in your dispatch message
+  is the record. On long runs they double as live visibility: the user watches
+  `task_plan.md` tick instead of watching panes.
 
 ## Stay lean
 
