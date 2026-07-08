@@ -101,12 +101,15 @@ notifier is the one failure verify can't catch.
    slices overlap. Done when every slice is out with its brief complete.
 4. **Verify.** A delegate's report is not ground truth; claims are advisory
    until you've seen proof.
-   - Write work: verification depth follows slice risk. A deterministic slice
-     with green machine receipts (tests, grep, build) is verified by those
-     receipts plus `git diff --stat` — pulling its full diff into your window
-     is ceremony at premium prices. A judgment-bearing slice gets the
-     contributor-PR treatment: read the diff, re-run the receipts. Interactive
-     QA stays a delegated slice: observations come up, judgment stays here.
+   - Write work: verification depth follows slice risk, and `git diff --stat`
+     is a gate, not a rubber stamp. Receipts + stat close a deterministic
+     slice only when the stat matches the brief: every touched file expected,
+     line counts proportionate to the transform, and no edits to the tests or
+     checks that produced the receipts. Anything off-script — and any test the
+     delegate wrote or changed — gets read in full; a judgment-bearing slice
+     always gets the contributor-PR treatment. Re-run the brief's Validation
+     commands, never the report's. Interactive QA stays a delegated slice:
+     observations come up, judgment stays here.
    - Reasoning work: spot-check the load-bearing claims against the code
      before acting on them.
    - An objection is a result, not a failure: judge it on evidence — fix the
