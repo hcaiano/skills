@@ -6,15 +6,53 @@ Agent skills maintained locally and shared across Claude, Codex, and other agent
 
 This repo keeps metadata at the root, distributable skills under `skills/`, and small local maintenance scripts under `scripts/`.
 
-## Install (recommended)
+## Install
 
-Use the [skills.sh](https://skills.sh) CLI from any directory:
+Two paths — pick by your runtime. Claude Code users should take the plugin.
+
+### Option A — Claude Code plugin (recommended)
+
+One install gets every active skill **plus** `delegate`'s named subagent
+roster (`hcaiano:codex-worker`, `hcaiano:deep-reasoner`, `hcaiano:fast-worker`,
+`hcaiano:skeptic`) loaded automatically — no extra setup:
+
+```text
+/plugin marketplace add hcaiano/skills
+/plugin install hcaiano@hcaiano
+```
+
+Restart (or `/agents`) and verify the roster shows up as agent types.
+
+### Option B — skills.sh CLI (any agent runtime)
 
 ```bash
 npx skills@latest add hcaiano/skills
 ```
 
-The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Codex, etc.) to install into, and copies them into the right local skill directories. No marketplace, no global config — just an `npx` away.
+The CLI scans this repo, prompts which skills + which agent runtimes (Claude,
+Codex, etc.) to install into, and copies them into the right local skill
+directories. This path installs **skills only** — for `delegate`'s named
+roster, run the bundled script once afterwards:
+
+```bash
+bash ~/.claude/skills/delegate/scripts/setup-roster.sh
+```
+
+### delegate externals (once per machine)
+
+`delegate` routes building and analysis to Codex, so it needs the Codex side
+installed and authenticated:
+
+```text
+npm i -g @openai/codex          # in your shell
+/plugin marketplace add openai/codex-plugin-cc
+/plugin install codex@openai-codex
+/codex:setup
+```
+
+Run your session on the top model at max effort (`/model`). Optional
+companion skills (`tdd`, `planning-with-files`) and the full details live in
+`skills/delegate/references/setup.md`.
 
 ## Skills
 
@@ -82,7 +120,7 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 
 ## Publishing
 
-The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `_deprecated/*` is kept for history and recovery, not normal installs. Either install path — `npx skills@latest add hcaiano/skills` or a Claude Code plugin install from the GitHub remote — picks up the same active set.
+The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `_deprecated/*` is kept for history and recovery, not normal installs. `.claude-plugin/marketplace.json` registers the repo as the single-plugin `hcaiano` marketplace, and the plugin manifest's `agents` field ships `delegate`'s roster from `skills/delegate/agents/`. Either install path — `npx skills@latest add hcaiano/skills` or the Claude Code plugin — picks up the same active set.
 Claude Code always scans the root `skills/` directory for plugin skills, so any skill kept directly under `skills/` must be active and listed in both manifests. Move non-shipping skills under `_deprecated/` or out of the plugin root.
 
 ## License

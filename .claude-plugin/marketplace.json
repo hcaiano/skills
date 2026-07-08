@@ -1,0 +1,16 @@
+{
+  "name": "hcaiano",
+  "owner": {
+    "name": "Henrique Caiano"
+  },
+  "metadata": {
+    "description": "Agent workflow skills by Henrique Caiano — model-tier delegation, agent pairing, debugging, PR shipping."
+  },
+  "plugins": [
+    {
+      "name": "hcaiano",
+      "source": "./",
+      "description": "Agent workflow skills: delegate (Fable-as-tech-lead orchestration with a named subagent roster: codex-worker, deep-reasoner, fast-worker, skeptic), agents-pair, herdr-pair, goal-loop, debug-mode, ship-it, review-pr-comments, check-logs."
+    }
+  ]
+}
