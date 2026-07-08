@@ -109,9 +109,10 @@ costs a read; a wrong build costs the slice.
 A build slice's proof is its tests — they're how you sign the work without
 re-deriving it. New behavior ships with tests you can run; a bug fix starts
 from a failing repro test and returns it green — red → green is the receipt.
-Point Claude-side builders at the `tdd` skill; Codex briefs spell the
-discipline out in Validation. Where tests don't apply (renames, docs, config),
-Validation names the proof instead — a grep, a build, a type check.
+Spell that discipline out in Validation — every builder understands it without
+any skill installed; where the `tdd` skill exists, point Claude-side builders
+at it too. Where tests don't apply (renames, docs, config), Validation names
+the proof instead — a grep, a build, a type check.
 
 ## The panel — high-stakes decisions
 
@@ -127,8 +128,11 @@ delegate share failure modes), and name the substitution in your report.
 ## Shared plan (long goals)
 
 For a goal that spans checkpoints or sessions, track it with
-`planning-with-files` — that skill owns the `task_plan.md` / `findings.md` /
-`progress.md` contract. delegate adds only the orchestration delta:
+`planning-with-files` when installed — that skill owns the `task_plan.md` /
+`findings.md` / `progress.md` contract and its recovery behavior. Without it,
+run the same three files bare (goal and slice status in `task_plan.md`,
+discoveries in findings files, verified checkpoints in `progress.md`) — the
+delta below is what matters either way:
 
 - You are the single writer of `task_plan.md` and `progress.md`; delegates
   never touch them. Record a slice's checkpoint when you've verified it, not
