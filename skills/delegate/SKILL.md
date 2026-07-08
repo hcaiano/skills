@@ -109,10 +109,10 @@ costs a read; a wrong build costs the slice.
 A build slice's proof is its tests — they're how you sign the work without
 re-deriving it. New behavior ships with tests you can run; a bug fix starts
 from a failing repro test and returns it green — red → green is the receipt.
-Spell that discipline out in Validation — every builder understands it without
-any skill installed; where the `tdd` skill exists, point Claude-side builders
-at it too. Where tests don't apply (renames, docs, config), Validation names
-the proof instead — a grep, a build, a type check.
+Point Claude-side builders at the `tdd` skill; Codex briefs carry red → green
+in Validation, since raw exec can't read skills. Where tests don't apply
+(renames, docs, config), Validation names the proof instead — a grep, a
+build, a type check.
 
 ## The panel — high-stakes decisions
 
@@ -128,11 +128,9 @@ delegate share failure modes), and name the substitution in your report.
 ## Shared plan (long goals)
 
 For a goal that spans checkpoints or sessions, track it with
-`planning-with-files` when installed — that skill owns the `task_plan.md` /
-`findings.md` / `progress.md` contract and its recovery behavior. Without it,
-run the same three files bare (goal and slice status in `task_plan.md`,
-discoveries in findings files, verified checkpoints in `progress.md`) — the
-delta below is what matters either way:
+`planning-with-files` — that skill owns the `task_plan.md` / `findings.md` /
+`progress.md` contract and its recovery behavior. delegate adds only the
+orchestration delta:
 
 - You are the single writer of `task_plan.md` and `progress.md`; delegates
   never touch them. Record a slice's checkpoint when you've verified it, not
@@ -159,6 +157,7 @@ The failure mode of a lead is drifting back into IC work.
 ## Setup
 
 Everything above degrades gracefully with no setup. To pin the roster —
-`deep-reasoner`, `fast-worker`, the codex plugin, orchestrator model and effort —
-read `references/setup.md` when the user asks for setup, or mention it once at
-the end of a run where you had to fall back.
+`deep-reasoner`, `fast-worker`, the codex plugin, the companion skills (`tdd`,
+`planning-with-files`), orchestrator model and effort — read
+`references/setup.md` when the user asks for setup, or mention it once at the
+end of a run where you had to fall back.
