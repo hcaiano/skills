@@ -6,8 +6,11 @@ You're Claude Code; your peer is Codex, via the OpenAI **codex** plugin. The hub
 ## Two ways in
 
 - **Delegation** → the `codex:codex-rescue` subagent (`Agent` tool,
-  `subagent_type: "codex:codex-rescue"`). Write-capable by default. Your
-  Claude-driven path for implementation, diagnosis, research, or a second pass.
+  `subagent_type: "codex:codex-rescue"`) — but only when it appears in your
+  available agent types: its registration is unreliable, and calling it
+  unlisted fails as invalid tool parameters; don't retry it, fall through to
+  the companion (below). Write-capable by default. Your Claude-driven path for
+  implementation, diagnosis, research, or a second pass.
 - **Reviews & jobs** → run `codex-companion.mjs` via `Bash`: `review`,
   `adversarial-review`, `status`, `result`, `cancel`, `transfer`, `setup`. The
   review/job slash commands are `disable-model-invocation`, so you can't fire them
@@ -63,6 +66,17 @@ Agent(subagent_type: "codex:codex-rescue",
 
 For a **background job**, run the Agent with `run_in_background: true`, then keep
 working on a disjoint write lease. The job also shows up in `status`/`result`.
+
+No rescue agent in your list? Same request, same resumable thread, through the
+companion — the flags become real argv instead of prompt text:
+
+```bash
+node "$COMPANION" task --write --background "<shaped task>"
+```
+
+`--resume-last`/`--fresh`, `--model`, and `--effort` follow the same guidance
+as above; `--background` detaches, and the job lands in `status`/`result` like
+any other. Omit `--write` for read-only diagnosis or research.
 
 When it returns, **verify before integrating**: read `git diff` and the touched
 files, run the tests. If Codex failed or never ran, say so and stop — don't
