@@ -53,7 +53,10 @@ Transport:
   prompt embeds the brief plus the exec mechanics from
   `references/codex-exec.md`; the wrapper runs `codex exec`, re-runs
   Validation, and returns the labeled report — `run_in_background: true` on
-  the wrapper for long jobs. Follow-ups (answering an objection, iterating a
+  the wrapper for long jobs. Set the builder's reasoning effort per slice
+  when you write the brief — difficulty is yours to grade (ladder in the
+  reference: speed on easy work orders, depth on hard ones, never below
+  high). Follow-ups (answering an objection, iterating a
   failure) resume Codex's thread by the session id from the run's report —
   `--last` can grab another lane's session when builders run in parallel —
   same repo, through a wrapper again. Reviews and job tracking go through the plugin's

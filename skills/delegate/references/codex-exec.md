@@ -28,14 +28,14 @@ SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')   # report it — follow-
   versions (`--full-auto` and `--yolo` don't exist on current `exec`) —
   `codex exec --help` is the source of truth.
 - Read-only work (exploration, investigation, analysis): `-s read-only` instead.
-- Model and reasoning effort come from `~/.codex/config.toml` — leave both
-  unset. A per-run override (`-c model_reasoning_effort=...`) moves relative
-  to that config in either direction: check it before you "raise" (against a
-  pinned `xhigh`, `high` is a downgrade). The builder never runs below `high`;
-  drop to `high` only for an easy, fully-specified work order where speed
-  matters — the spec carries the intelligence and verify catches misses.
-  `xhigh` is the current API ceiling (`max` is rejected); probe supported
-  values when a new model lands, don't assume.
+- Model stays unset — `~/.codex/config.toml` owns it. Reasoning effort is the
+  lead's per-slice call (`-c model_reasoning_effort=...`): the same judgment
+  that routes a slice grades its difficulty. `high` for an easy,
+  fully-specified work order where speed matters — the spec carries the
+  intelligence and verify catches misses; `xhigh`, set explicitly, for real
+  builds, hard debugging, and stalls. Never below `high`. `xhigh` is the
+  current API ceiling (`max` returns 400 invalid_value) — probe when a new
+  model lands, don't assume.
 - Read the `-o` file for the result. Don't parse the JSONL stream, and keep
   stderr in its file — thinking noise bloats the wrapper's context too; the
   only line worth extracting is the session id. Read the file directly only to
