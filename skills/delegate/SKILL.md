@@ -70,9 +70,10 @@ Transport:
   CLI at all → `fast-worker` builds, and say so. For a real back-and-forth
   collaboration, escalate to `agents-pair`.
 - `deep-reasoner` / `fast-worker` / `skeptic`: call them as `Agent` subagent
-  types when they exist. When they don't, the same routing works with zero
-  setup — a general-purpose agent with `model: "opus"`, `"sonnet"`, or
-  `"fable"` — and the run keeps moving.
+  types when they exist — plugin installs namespace the whole roster (e.g.
+  `hcaiano:codex-worker`); either form counts. When they don't exist,
+  the same routing works with zero setup — a general-purpose agent with
+  `model: "opus"`, `"sonnet"`, or `"fable"` — and the run keeps moving.
 
 Waiting discipline — wait only on channels that can wake you. Background
 agents and Bash commands are harness-tracked: their exit notifies you.
@@ -242,8 +243,9 @@ The failure mode of a lead is drifting back into IC work.
 
 ## Setup
 
-Everything above degrades gracefully with no setup. To pin the roster —
-`codex-worker`, `deep-reasoner`, `fast-worker`, `skeptic`, the codex plugin,
-the companion skills (`tdd`, `planning-with-files`), orchestrator model and
-effort — read `references/setup.md` when the user asks for setup, or mention
-it once at the end of a run where you had to fall back.
+Everything above degrades gracefully with no setup, but don't let the
+fallback stay silent: if you ran without the named roster, offer once, at the
+end of the run, to install it — the skill ships it in `agents/`, and
+`scripts/setup-roster.sh` places it in one command. For the rest — the codex
+plugin, the companion skills (`tdd`, `planning-with-files`), orchestrator
+model and effort — read `references/setup.md` when the user asks for setup.
