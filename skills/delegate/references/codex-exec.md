@@ -29,14 +29,18 @@ codex exec --full-auto -C <repo> -o /tmp/codex-last.md - <"$P" 2>/dev/null
 ## Follow-ups
 
 Resuming is cheaper than a fresh run and keeps Codex's context, but `resume`
-drops `-C` and the shorthand flags — run it from the repo dir with the long flag
-spelled out:
+drops `-C` and the shorthand flags (`--full-auto`, `-s`) — run it from the repo
+dir and set the sandbox via config override, keeping the same policy as the
+initial run:
 
 ```bash
 (cd <repo> && codex exec resume --last \
-  --dangerously-bypass-approvals-and-sandbox \
+  -c sandbox_mode="workspace-write" \
   -o /tmp/codex-last.md - <"$P2" 2>/dev/null)
 ```
+
+(`--dangerously-bypass-approvals-and-sandbox` exists on `resume` but lifts the
+sandbox entirely — same rule as `--yolo`: only in a repo you'd let Codex own.)
 
 ---
 
