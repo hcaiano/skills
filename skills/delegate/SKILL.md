@@ -55,8 +55,8 @@ Transport:
   Validation, and returns the labeled report — `run_in_background: true` on
   the wrapper for long jobs. Set the builder's reasoning effort per slice
   when you write the brief — difficulty is yours to grade (ladder in the
-  reference: speed on easy work orders, depth on hard ones, never below
-  high). Follow-ups (answering an objection, iterating a
+  reference: depth scales with judgment residue, `xhigh` down to `low`;
+  misses below `high` escalate on retry). Follow-ups (answering an objection, iterating a
   failure) resume Codex's thread by the session id from the run's report —
   `--last` can grab another lane's session when builders run in parallel —
   same repo, through a wrapper again. Reviews and job tracking go through the plugin's
@@ -70,6 +70,16 @@ Transport:
   types when they exist. When they don't, the same routing works with zero
   setup — a general-purpose agent with `model: "opus"`, `"sonnet"`, or
   `"fable"` — and the run keeps moving.
+
+Waiting discipline — wait only on channels that can wake you. Background
+agents and Bash commands are harness-tracked: their exit notifies you.
+Anything detached beyond the harness — a companion `--background` job, a
+stray process — never will: pair it immediately with a tracked waiter
+(`status <id> --wait` in background Bash) or give it a deadline you enforce.
+When a delegate feels overdue, check its artifacts before waiting longer —
+the result file, the diff, `status` — because finished-but-hung is common:
+collect the evidence, kill the remains, carry on. Idling on a channel with no
+notifier is the one failure verify can't catch.
 
 ## The loop
 

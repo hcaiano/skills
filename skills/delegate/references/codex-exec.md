@@ -18,9 +18,21 @@ P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX); E=$(mktemp -t
 cat >"$P" <<'EOF'
 <the brief, verbatim>
 EOF
-codex exec -s workspace-write -C <repo> -o "$F" - <"$P" 2>"$E"
+T=$(command -v gtimeout || command -v timeout || true)   # macOS: brew install coreutils
+${T:+"$T" 900} codex exec -s workspace-write -C <repo> -o "$F" - <"$P" >/dev/null 2>"$E"
+X=$?
 SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')   # report it — follow-ups resume this exact thread
 ```
+
+Hang-proofing, non-negotiable: the prompt always arrives via `- <file` — an
+attached-but-silent stdin makes codex wait forever — and stdout goes to
+`/dev/null` (the result is the `-o` file). The timeout is what guarantees the
+wrapper regains control (size 900s to the slice; also set the Bash tool's own
+`timeout` when running through it). On timeout (`X` = 124), triage by the
+`-o` file: present → finished-but-hung, collect it and report normally,
+noting the kill; absent → report STATUS timeout with what `"$E"` shows. No
+`timeout` binary on the box → warn in the report and rely on the Bash tool's
+timeout instead.
 
 - `-s workspace-write` = sandboxed writes scoped to the repo, no approval
   stops. `--dangerously-bypass-approvals-and-sandbox` lifts the sandbox
@@ -29,13 +41,16 @@ SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')   # report it — follow-
   `codex exec --help` is the source of truth.
 - Read-only work (exploration, investigation, analysis): `-s read-only` instead.
 - Model stays unset — `~/.codex/config.toml` owns it. Reasoning effort is the
-  lead's per-slice call (`-c model_reasoning_effort=...`): the same judgment
-  that routes a slice grades its difficulty. `high` for an easy,
-  fully-specified work order where speed matters — the spec carries the
-  intelligence and verify catches misses; `xhigh`, set explicitly, for real
-  builds, hard debugging, and stalls. Never below `high`. `xhigh` is the
-  current API ceiling (`max` returns 400 invalid_value) — probe when a new
-  model lands, don't assume.
+  lead's per-slice call (`-c model_reasoning_effort=...`): depth scales with
+  judgment residue. `xhigh`, set explicitly, for real builds, hard debugging,
+  and stalls; `high` for standard work orders; `medium` for easy fully
+  deterministic ones; `low` for rote batches — the fast lane. Below `high`
+  requires two checkable things: a fully deterministic work order (zero
+  judgment left in it) and a machine-checkable receipt (grep, build, tests).
+  A miss below `high` escalates effort on the retry — never the same rung
+  twice. Skip `minimal`/`none` for code: the seconds saved don't cover one
+  failed round trip. `xhigh` is the current API ceiling (`max` returns 400
+  invalid_value) — probe when a new model lands, don't assume.
 - Read the `-o` file for the result. Don't parse the JSONL stream, and keep
   stderr in its file — thinking noise bloats the wrapper's context too; the
   only line worth extracting is the session id. Read the file directly only to
