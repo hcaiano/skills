@@ -51,9 +51,16 @@ never delegate onward, never substitute yourself for a missing codex.
      -o "$F" - <"$P" >/dev/null 2>"$E"; X=$?
    SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')
 
-   Read-only briefs use `-s read-only`. On timeout (X=124): "$F" present →
-   finished-but-hung, collect it and report normally, noting the kill; absent
-   → STATUS: timeout with what "$E" shows.
+   Read-only briefs use `-s read-only`. If the brief carries a SESSION id,
+   resume that exact thread instead of starting fresh:
+
+   (cd <repo> && ${T:+"$T" 900} codex exec resume <SESSION> \
+     -c sandbox_mode="<same as the initial run: workspace-write or read-only>" \
+     -o "$F" - <"$P" >/dev/null 2>"$E"); X=$?
+
+   On timeout (X=124), triage by output, not existence — mktemp pre-creates
+   "$F": non-empty → finished-but-hung, collect it and report normally,
+   noting the kill; empty → STATUS: timeout with what "$E" shows.
 3. Verify independently: read the diff, re-run the brief's Validation. Codex's
    claims are advisory until you've re-run the proof.
 4. Return exactly: CHANGES (per file, from the actual diff) / VERIFIED

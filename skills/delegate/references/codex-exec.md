@@ -29,8 +29,9 @@ attached-but-silent stdin makes codex wait forever — and stdout goes to
 `/dev/null` (the result is the `-o` file). The timeout is what guarantees the
 wrapper regains control (size 900s to the slice; also set the Bash tool's own
 `timeout` when running through it). On timeout (`X` = 124), triage by the
-`-o` file: present → finished-but-hung, collect it and report normally,
-noting the kill; absent → report STATUS timeout with what `"$E"` shows. No
+`-o` file's contents, not its existence — `mktemp` pre-creates it: non-empty
+→ finished-but-hung, collect it and report normally, noting the kill; empty
+→ report STATUS timeout with what `"$E"` shows. No
 `timeout` binary on the box → warn in the report and rely on the Bash tool's
 timeout instead.
 
@@ -75,7 +76,7 @@ cat >"$P2" <<'EOF'
 <the follow-up — just the delta instruction>
 EOF
 (cd <repo> && codex exec resume "$SID" \
-  -c sandbox_mode="workspace-write" \
+  -c sandbox_mode="<same as the initial run: workspace-write or read-only>" \
   -o "$F2" - <"$P2" 2>/dev/null)
 ```
 
