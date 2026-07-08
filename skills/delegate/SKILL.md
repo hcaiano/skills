@@ -8,11 +8,14 @@ description: "Delegate work across models like a tech lead: plan and freeze spec
 Claude Code sessions only. In Codex or another harness, skip this skill — never
 self-delegate.
 
-You are the strongest model in the room and your tokens are the scarcest — and
-the builder's are the cheapest. Two budgets, one direction: move generation and
-exploration tokens to the flat-rate pool (Codex); spend metered Claude tokens
-only on judgment — planning, specs, routing, verification, synthesis. A lead who
-writes every line is wasting the team. The user hears one voice — yours.
+You are the strongest model in the room and your tokens are the scarcest — the
+top-model budget is the one that runs out. Every delegate is cheap by
+comparison — Codex is flat-rate, Opus and Sonnet draw far lighter on the
+subscription — and nothing a delegate reads lands in your context window. One
+direction, then: push generation, exploration, and evidence-gathering down;
+spend yourself only on judgment — planning, specs, routing, verification,
+synthesis. A lead who writes every line is wasting the team. The user hears one
+voice — yours.
 
 A task with one real slice doesn't need the team: do it, or send it to one
 delegate. The loop below earns its overhead when there are slices to route. Tiny
@@ -74,21 +77,24 @@ Transport:
    parallel — one message, several calls; parallel write work only on disjoint
    files, or give each writer its own worktree (`isolation: "worktree"`) when
    slices overlap. Done when every slice is out with its brief complete.
-4. **Verify.** A delegate's report is not ground truth. Write work: read the
-   diff like a contributor PR and re-run the receipts — tests and scripts are
-   cheap, textual proof, and a builder's claims are advisory until you've seen
-   it. Interactive QA (browser, GUI) is not lead work: brief a delegate to
-   gather the observations, then judge the evidence. Reasoning work: spot-check the load-bearing
-   claims against the code before acting on them. An objection from a builder
-   is a result, not a failure: judge it on evidence — fix the plan and
-   re-dispatch if it's right, answer it once via resume if it's not; a
-   disagreement that survives a round isn't the builder's to settle — take it
-   to the panel or `agents-pair`. Iterate failures back to the same delegate
-   (resume beats a fresh run); after two failed rounds, stop paying the relay
-   tax — take the slice over or re-route it. After you've signed a substantial
-   diff, a Codex `review` — or `adversarial-review` to challenge the approach
-   itself — is a cheap extra lens from the flat-rate pool; weigh its findings,
-   the signature stays yours. Done when you would sign each result yourself.
+4. **Verify.** A delegate's report is not ground truth; claims are advisory
+   until you've seen proof.
+   - Write work: read the diff like a contributor PR and re-run the receipts —
+     tests and scripts are cheap, textual proof. Interactive QA stays a
+     delegated slice: observations come up, judgment stays here.
+   - Reasoning work: spot-check the load-bearing claims against the code
+     before acting on them.
+   - An objection is a result, not a failure: judge it on evidence — fix the
+     plan and re-dispatch if it's right, answer it once via resume if not. A
+     disagreement that survives a round isn't the builder's to settle: panel
+     or `agents-pair`.
+   - Iterate failures back to the same delegate (resume beats a fresh run);
+     after two failed rounds, stop paying the relay tax — take the slice over
+     or re-route it.
+   - Signed a substantial diff? A Codex `review` — or `adversarial-review` to
+     challenge the approach itself — is a cheap extra lens; weigh its
+     findings, the signature stays yours.
+   Done when you would sign each result yourself.
 5. **Synthesize.** Collect or cancel every outstanding delegate first — never
    end the turn waiting on one, and an extra you added yourself (a second read,
    a review) never blocks the report. Merge in your own words; settle conflicts
@@ -169,7 +175,8 @@ The failure mode of a lead is drifting back into IC work.
 - Caught yourself writing boilerplate or grinding a mechanical edit → stop,
   route it to the builder.
 - Caught yourself clicking through a browser or reading screenshots → that's
-  evidence-gathering; brief a delegate.
+  evidence-gathering; brief a delegate. A flow is a slice — one glance, or a
+  taste call on the final UI, is judgment: keep it.
 - Hard tripwire, because "caught yourself" fails silently: three consecutive
   hands-on tool calls that aren't verifying a delegate's returned result mean
   you are diagnosing, and diagnosis is a slice — stop and brief it out with
