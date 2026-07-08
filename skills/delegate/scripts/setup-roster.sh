@@ -8,7 +8,7 @@
 #   setup-roster.sh --force            # overwrite existing files
 #
 # Plugin installs don't need this — the plugin manifest loads the same files
-# automatically (namespaced, e.g. agent-workflows:codex-worker).
+# automatically (namespaced, e.g. hcaiano:codex-worker).
 set -euo pipefail
 
 SRC="$(cd "$(dirname "$0")/../agents" && pwd)"

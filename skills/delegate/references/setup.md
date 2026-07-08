@@ -19,7 +19,7 @@ The roster's canonical definitions ship with the skill in `agents/` —
 install one of two ways:
 
 - **Claude Code plugin install**: nothing to do — the plugin manifest loads
-  them automatically, namespaced (`agent-workflows:codex-worker`).
+  them automatically, namespaced (`hcaiano:codex-worker`).
 - **skills.sh or manual install**: run the bundled script once —
 
   ```bash

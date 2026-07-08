@@ -71,7 +71,7 @@ Transport:
   collaboration, escalate to `agents-pair`.
 - `deep-reasoner` / `fast-worker` / `skeptic`: call them as `Agent` subagent
   types when they exist — plugin installs namespace the whole roster (e.g.
-  `agent-workflows:codex-worker`); either form counts. When they don't exist,
+  `hcaiano:codex-worker`); either form counts. When they don't exist,
   the same routing works with zero setup — a general-purpose agent with
   `model: "opus"`, `"sonnet"`, or `"fable"` — and the run keeps moving.
 

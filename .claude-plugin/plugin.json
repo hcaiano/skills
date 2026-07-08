@@ -1,5 +1,5 @@
 {
-  "name": "agent-workflows",
+  "name": "hcaiano",
   "version": "0.1.0",
   "description": "Custom agent skills for debugging, QA loops, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
   "author": {
