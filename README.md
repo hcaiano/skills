@@ -22,10 +22,10 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 
 - `agents-pair` — pair the agent you're in with a peer agent as equal engineers. A host-neutral hub that routes by direction: Claude Code ↔ Codex via the codex plugin, Codex ↔ Claude via the headless `claude -p` CLI. New peers (Gemini, Grok, ...) are added as bridge files without touching the hub.
 - `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
-- `delegate` — run the session's top model (Fable/Opus) as tech lead: plan and decompose, route deep reasoning to an Opus subagent, mechanical work to a Sonnet subagent, and fresh-perspective slices to Codex as a peer, then verify and synthesize. Conserves top-model usage. Claude Code–hosted.
+- `delegate` — run the session's top model (Fable/Opus) as tech lead: plan and freeze specs, route building to Codex (the flat-rate pool), deep reasoning to an Opus subagent, and taste-sensitive light work to Sonnet, then verify and synthesize. Conserves metered top-model usage. Claude Code–hosted.
 
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
-`agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`). `delegate`'s Codex lane has the same plugin dependency but degrades to Claude-only routing without it.
+`agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`). `delegate`'s Codex lane uses the plugin for session-stateful delegation and raw `codex exec` for one-shots; with neither available it degrades to Claude-only routing.
 
 `art-director` composes several external skills instead of vendoring them; install the ones your run needs (it degrades gracefully when an optional one is absent):
 
