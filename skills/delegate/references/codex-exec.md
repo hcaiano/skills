@@ -18,15 +18,21 @@ P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX); E=$(mktemp -t
 cat >"$P" <<'EOF'
 <the brief, verbatim>
 EOF
-codex exec -s workspace-write -C <repo> -o "$F" - <"$P" >/dev/null 2>"$E"
+T=$(command -v gtimeout || command -v timeout || true)   # macOS: brew install coreutils
+${T:+"$T" 900} codex exec -s workspace-write -C <repo> -o "$F" - <"$P" >/dev/null 2>"$E"
+X=$?
 SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')   # report it — follow-ups resume this exact thread
 ```
 
 Hang-proofing, non-negotiable: the prompt always arrives via `- <file` — an
 attached-but-silent stdin makes codex wait forever — and stdout goes to
-`/dev/null` (the result is the `-o` file). Give the exec call a timeout. A
-process that has written its `-o` file but not exited is finished-but-hung:
-collect the file, kill the remains, report normally.
+`/dev/null` (the result is the `-o` file). The timeout is what guarantees the
+wrapper regains control (size 900s to the slice; also set the Bash tool's own
+`timeout` when running through it). On timeout (`X` = 124), triage by the
+`-o` file: present → finished-but-hung, collect it and report normally,
+noting the kill; absent → report STATUS timeout with what `"$E"` shows. No
+`timeout` binary on the box → warn in the report and rely on the Bash tool's
+timeout instead.
 
 - `-s workspace-write` = sandboxed writes scoped to the repo, no approval
   stops. `--dangerously-bypass-approvals-and-sandbox` lifts the sandbox
