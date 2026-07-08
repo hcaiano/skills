@@ -36,7 +36,7 @@ filler — if something is genuinely uncertain, say so once and say why.
 ```markdown
 ---
 name: fast-worker
-description: Use for mechanical tasks — boilerplate, tests, formatting, renames, simple scoped edits. Use proactively for well-specified grunt work.
+description: Use for light tasks that need Claude taste (user-facing copy, UI tweaks) or session tools, and as the builder for well-specified grunt work when Codex is unavailable.
 model: sonnet
 ---
 
@@ -54,8 +54,9 @@ Install the Codex CLI first (`npm i -g @openai/codex`), then in Claude Code:
 /codex:setup
 ```
 
-`/codex:setup` confirms auth and readiness. Without the plugin, the skill routes
-Codex-bound slices to `deep-reasoner` — you lose the second lineage, not the run.
+`/codex:setup` confirms auth and readiness. Without the plugin, one-shot slices
+can still go through raw `codex exec` (`references/codex-exec.md`); with no
+Codex at all, `fast-worker` builds — you lose the flat-rate pool, not the run.
 
 ## 4. Make it the default (optional)
 
