@@ -49,11 +49,12 @@ Never leaves Claude's hands, whatever the budget:
 
 Transport:
 
-- Codex: spawn a cheap wrapper (`Agent`, `model: "sonnet"`, low effort) whose
-  prompt embeds the brief plus the exec mechanics from
-  `references/codex-exec.md`; the wrapper runs `codex exec`, re-runs
-  Validation, and returns the labeled report — `run_in_background: true` on
-  the wrapper for long jobs. Set the builder's reasoning effort per slice
+- Codex: spawn the pinned `codex-worker` when it exists — it carries the exec
+  mechanics and shows its name in the roster view; otherwise a cheap generic
+  wrapper (`Agent`, `model: "sonnet"`, low effort) whose prompt embeds the
+  brief plus the exec mechanics from `references/codex-exec.md`. Either way
+  the wrapper runs `codex exec`, re-runs Validation, and returns the labeled
+  report — `run_in_background: true` on the wrapper for long jobs. Set the builder's reasoning effort per slice
   when you write the brief — difficulty is yours to grade (ladder in the
   reference: depth scales with judgment residue, `xhigh` down to `low`;
   misses below `high` escalate on retry). Follow-ups (answering an objection, iterating a
@@ -225,7 +226,7 @@ The failure mode of a lead is drifting back into IC work.
 ## Setup
 
 Everything above degrades gracefully with no setup. To pin the roster —
-`deep-reasoner`, `fast-worker`, `skeptic`, the codex plugin, the companion
-skills (`tdd`, `planning-with-files`), orchestrator model and effort — read
-`references/setup.md` when the user asks for setup, or mention it once at the
-end of a run where you had to fall back.
+`codex-worker`, `deep-reasoner`, `fast-worker`, `skeptic`, the codex plugin,
+the companion skills (`tdd`, `planning-with-files`), orchestrator model and
+effort — read `references/setup.md` when the user asks for setup, or mention
+it once at the end of a run where you had to fall back.
