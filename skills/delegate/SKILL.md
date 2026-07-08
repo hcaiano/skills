@@ -26,9 +26,9 @@ delegation overhead loses.
 
 | Role | Runs on | Send them |
 |---|---|---|
-| Codex | codex CLI / plugin | **the default builder** — implementation from a frozen spec, refactors, migrations, test writing, bug fixes with a known repro, CI fixes, bulk exploration |
+| Codex | codex CLI / plugin | **the default builder** — implementation from a frozen spec, refactors, migrations, test writing, bug fixes with a known repro, CI fixes, bulk exploration; computer-use QA on local apps and public pages (its own browser, where the install supports it) |
 | `deep-reasoner` | Opus | reasoning too heavy to keep in your own context: architecture options, hard debugging, algorithm design, tradeoff analysis |
-| `fast-worker` | Sonnet | light Claude-side work: taste (user-facing copy, UI tweaks) and session-tool slices (browser QA, MCP evidence); the builder when Codex is unavailable |
+| `fast-worker` | Sonnet | light Claude-side work: taste (user-facing copy, UI tweaks) and slices bound to your session (logged-in Chrome, MCP evidence); the builder when Codex is unavailable |
 | `skeptic` | Fable, fresh context | commitment-boundary verdicts: audit a formed plan, break a two-failure stall, one last check before declaring a long deliverable done — advises, never implements |
 | `Explore` | built-in | codebase sweeps where a summary, not the files, should enter your context |
 
@@ -40,8 +40,10 @@ Never leaves Claude's hands, whatever the budget:
 
 - design, API shape, naming, UX judgment — anything where taste is the work
 - destructive or outward ops (pushes, releases, GitHub mutations) — yours alone
-- slices needing session tools (MCP, browser, secrets) — Claude-side, but a
-  delegate's hands, not yours: brief `fast-worker` to gather the evidence
+- slices needing your session's tools (MCP, logged-in browser, secrets) —
+  Claude-side, but a delegate's hands, not yours: brief `fast-worker` to
+  gather the evidence. QA that doesn't need your session (local app, public
+  pages) isn't session-bound — Codex computer use takes it
 - judgment on a builder's output — never delegated, never skipped; the
   evidence-gathering behind that judgment is freely delegated
 
@@ -52,8 +54,9 @@ Transport:
   `references/codex-exec.md`; the wrapper runs `codex exec`, re-runs
   Validation, and returns the labeled report — `run_in_background: true` on
   the wrapper for long jobs. Follow-ups (answering an objection, iterating a
-  failure) resume Codex's thread: `codex exec resume --last`, same repo,
-  through a wrapper again. Reviews and job tracking go through the plugin's
+  failure) resume Codex's thread by the session id from the run's report —
+  `--last` can grab another lane's session when builders run in parallel —
+  same repo, through a wrapper again. Reviews and job tracking go through the plugin's
   companion script (same reference). The plugin's `codex:codex-rescue` agent
   is usable only when it actually appears in your available agent types —
   its registration is unreliable, and calling it unlisted fails as invalid

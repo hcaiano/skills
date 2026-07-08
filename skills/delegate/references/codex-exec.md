@@ -14,11 +14,12 @@ runs codex, re-runs the brief's Validation itself, and returns the labeled
 report:
 
 ```bash
-P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX)
+P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX); E=$(mktemp -t codex-err.XXXXXX)
 cat >"$P" <<'EOF'
 <the brief, verbatim>
 EOF
-codex exec -s workspace-write -C <repo> -o "$F" - <"$P" 2>/dev/null
+codex exec -s workspace-write -C <repo> -o "$F" - <"$P" 2>"$E"
+SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')   # report it — follow-ups resume this exact thread
 ```
 
 - `-s workspace-write` = sandboxed writes scoped to the repo, no approval
@@ -27,11 +28,18 @@ codex exec -s workspace-write -C <repo> -o "$F" - <"$P" 2>/dev/null
   versions (`--full-auto` and `--yolo` don't exist on current `exec`) —
   `codex exec --help` is the source of truth.
 - Read-only work (exploration, investigation, analysis): `-s read-only` instead.
-- Raise reasoning for a genuinely hard slice with
-  `-c model_reasoning_effort=high`; leave the model unset.
-- Read the `-o` file for the result. Don't parse the JSONL stream, and leave
-  stderr suppressed — thinking noise bloats the wrapper's context too; drop
-  `2>/dev/null` only to debug a failing run.
+- Model and reasoning effort come from `~/.codex/config.toml` — leave both
+  unset. A per-run override (`-c model_reasoning_effort=...`) moves relative
+  to that config in either direction: check it before you "raise" (against a
+  pinned `xhigh`, `high` is a downgrade). The builder never runs below `high`;
+  drop to `high` only for an easy, fully-specified work order where speed
+  matters — the spec carries the intelligence and verify catches misses.
+  `xhigh` is the current API ceiling (`max` is rejected); probe supported
+  values when a new model lands, don't assume.
+- Read the `-o` file for the result. Don't parse the JSONL stream, and keep
+  stderr in its file — thinking noise bloats the wrapper's context too; the
+  only line worth extracting is the session id. Read the file directly only to
+  debug a failing run.
 - Long runs: run the wrapper agent itself with `run_in_background: true`.
 - Parallel one-shots are fine: one wrapper each, disjoint files or separate
   repos.
@@ -39,22 +47,25 @@ codex exec -s workspace-write -C <repo> -o "$F" - <"$P" 2>/dev/null
 
 ## Follow-ups
 
-Resuming is cheaper than a fresh run and keeps Codex's context, but `resume`
-drops `-C` and `-s` — run it from the repo dir and set the sandbox via config
-override, keeping the same policy as the initial run:
+Resuming is cheaper than a fresh run and keeps Codex's context. Resume by the
+session id the initial run reported — `--last` grabs the most recent session
+in the directory, which with parallel lanes or a builder race is not
+necessarily yours; use it only when your lane is the only one that has run in
+that repo. `resume` drops `-C` and `-s` — run it from the repo dir and set the
+sandbox via config override, keeping the same policy as the initial run:
 
 ```bash
 P2=$(mktemp -t codex-spec.XXXXXX); F2=$(mktemp -t codex-out.XXXXXX)
 cat >"$P2" <<'EOF'
 <the follow-up — just the delta instruction>
 EOF
-(cd <repo> && codex exec resume --last \
+(cd <repo> && codex exec resume "$SID" \
   -c sandbox_mode="workspace-write" \
   -o "$F2" - <"$P2" 2>/dev/null)
 ```
 
-Follow-ups go through a wrapper too — same reason. `resume --last` picks the
-most recent session recorded for that directory, so run it from the same repo.
+Follow-ups go through a wrapper too — same reason. A fresh wrapper won't have
+`$SID` in its shell: pass the id in its prompt, from the previous report.
 
 (`--dangerously-bypass-approvals-and-sandbox` exists on `resume` too and lifts
 the sandbox entirely — same rule as on exec: only in a repo you'd let Codex

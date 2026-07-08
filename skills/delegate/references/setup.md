@@ -82,6 +82,12 @@ Install the Codex CLI first (`npm i -g @openai/codex`), then in Claude Code:
 can still go through raw `codex exec` (`references/codex-exec.md`); with no
 Codex at all, `fast-worker` builds — you lose the flat-rate pool, not the run.
 
+The builder's model and reasoning effort live in `~/.codex/config.toml`
+(`model`, `model_reasoning_effort`) — the skill never overrides them. A pinned
+model does not auto-upgrade when a newer one launches: update the pin (or
+remove it and keep the codex CLI updated so its built-in default tracks the
+latest).
+
 ## 4. Companion skills
 
 `delegate` references two skills it doesn't bundle: `tdd` (the red → green
