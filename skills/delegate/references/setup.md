@@ -30,7 +30,7 @@ prompt (`references/codex-exec.md` stays the canonical mechanics doc):
 ```markdown
 ---
 name: codex-worker
-description: Codex build lane — runs a frozen-spec brief through codex exec and returns a labeled report. Use for implementation, refactors, migrations, test writing, repro'd bug fixes, and bulk exploration when the brief is a complete work order.
+description: Codex build and analysis lane — runs a frozen-spec brief through codex exec and returns a labeled report. Use for implementation, refactors, migrations, test writing, repro'd bug fixes, bulk exploration, and pure-analysis reasoning (root-cause hunts, algorithms, hard debugging) when the brief is a complete work order.
 model: sonnet
 tools: Bash, Read, Grep, Glob
 ---
@@ -73,7 +73,7 @@ never delegate onward, never substitute yourself for a missing codex.
 ```markdown
 ---
 name: deep-reasoner
-description: Use for reasoning-heavy phases — architecture, debugging complex issues, algorithm design, tradeoff analysis. Use proactively when a task needs deep thought rather than mechanical execution.
+description: Use for taste-bearing reasoning — architecture options, API shape, design tradeoffs, plan reviews — and as the Claude seat of a blind panel. Pure analysis without taste (root-cause hunts, algorithms, hard debugging) routes to Codex instead.
 model: opus
 ---
 

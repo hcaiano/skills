@@ -28,8 +28,8 @@ delegation overhead loses.
 
 | Role | Runs on | Send them |
 |---|---|---|
-| Codex | codex CLI / plugin | **the default builder** — implementation from a frozen spec, refactors, migrations, test writing, bug fixes with a known repro, CI fixes, bulk exploration; computer-use QA on local apps and public pages (its own browser, where the install supports it) |
-| `deep-reasoner` | Opus | reasoning too heavy to keep in your own context: architecture options, hard debugging, algorithm design, tradeoff analysis |
+| Codex | codex CLI / plugin | **the default builder and analyst** — implementation from a frozen spec, refactors, migrations, test writing, bug fixes with a known repro, CI fixes, bulk exploration; pure-analysis reasoning (root-cause hunts, algorithm work, hard debugging) as read-only briefs at `xhigh`; computer-use QA on local apps and public pages (its own browser, where the install supports it) |
+| `deep-reasoner` | Opus | taste-bearing reasoning: architecture options, API shape, design tradeoffs, plan reviews — and the Claude seat of the panel. Analysis without taste goes to Codex |
 | `fast-worker` | Sonnet | light Claude-side work: taste (user-facing copy, UI tweaks) and slices bound to your session (logged-in Chrome, MCP evidence); the builder when Codex is unavailable |
 | `skeptic` | Fable, fresh context | commitment-boundary verdicts: audit a formed plan, break a two-failure stall, one last check before declaring a long deliverable done — advises, never implements |
 | `Explore` | built-in | codebase sweeps where a summary, not the files, should enter your context |
