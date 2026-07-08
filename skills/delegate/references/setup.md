@@ -55,7 +55,7 @@ never delegate onward, never substitute yourself for a missing codex.
    resume that exact thread instead of starting fresh:
 
    (cd <repo> && ${T:+"$T" 900} codex exec resume <SESSION> \
-     -c sandbox_mode="workspace-write" \
+     -c sandbox_mode="<same as the initial run: workspace-write or read-only>" \
      -o "$F" - <"$P" >/dev/null 2>"$E"); X=$?
 
    On timeout (X=124), triage by output, not existence — mktemp pre-creates

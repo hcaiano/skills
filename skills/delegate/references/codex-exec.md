@@ -76,7 +76,7 @@ cat >"$P2" <<'EOF'
 <the follow-up — just the delta instruction>
 EOF
 (cd <repo> && codex exec resume "$SID" \
-  -c sandbox_mode="workspace-write" \
+  -c sandbox_mode="<same as the initial run: workspace-write or read-only>" \
   -o "$F2" - <"$P2" 2>/dev/null)
 ```
 
