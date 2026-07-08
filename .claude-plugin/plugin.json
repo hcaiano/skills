@@ -17,5 +17,11 @@
     "./skills/delegate",
     "./skills/cyber-audit",
     "./skills/setup-help"
+  ],
+  "agents": [
+    "./skills/delegate/agents/codex-worker.md",
+    "./skills/delegate/agents/deep-reasoner.md",
+    "./skills/delegate/agents/fast-worker.md",
+    "./skills/delegate/agents/skeptic.md"
   ]
 }
