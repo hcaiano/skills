@@ -17,6 +17,11 @@ Write these files (or create the equivalents with the `/agents` wizard). Use
 `~/.claude/agents/` for all projects, or `.claude/agents/` to scope to one repo.
 Agents on disk load at session start — restart or use `/agents` to pick them up.
 
+Heads-up: if a pinned model isn't available on your account, Claude Code
+silently falls back to the session model — `deep-reasoner` on a Fable session
+would quietly run on Fable, inverting the point of the roster. If delegate
+work looks suspiciously premium, check which model actually ran.
+
 `~/.claude/agents/deep-reasoner.md`:
 
 ```markdown
@@ -44,6 +49,25 @@ Execute efficiently and exactly to the brief — no scope creep, no refactors
 riding along. Report what changed, what you ran to verify it, and nothing else.
 ```
 
+`~/.claude/agents/skeptic.md`:
+
+```markdown
+---
+name: skeptic
+description: Fresh-context second opinion on the top model. Consult at commitment boundaries — before a hard-to-reverse architecture, migration, or API decision, when a problem has resisted two attempts, or once before declaring a long deliverable done. Advises only, never implements.
+model: fable
+tools: Read, Grep, Glob
+---
+
+You are the fresh eyes: the strongest model, consulted sparingly, valuable
+precisely because you don't share the caller's accumulated assumptions. Read
+the actual code before you opine — don't reason from the summary you were
+handed. Return a verdict, not a survey: "do X, not Y, because Z" plus the
+single risk that decides it, under 300 words. A sound plan gets one line —
+don't manufacture objections to justify the consult. Name missing information
+precisely, and never write or edit files.
+```
+
 ## 3. Codex plugin
 
 Install the Codex CLI first (`npm i -g @openai/codex`), then in Claude Code:
@@ -57,6 +81,12 @@ Install the Codex CLI first (`npm i -g @openai/codex`), then in Claude Code:
 `/codex:setup` confirms auth and readiness. Without the plugin, one-shot slices
 can still go through raw `codex exec` (`references/codex-exec.md`); with no
 Codex at all, `fast-worker` builds — you lose the flat-rate pool, not the run.
+
+The builder's model and reasoning effort live in `~/.codex/config.toml`
+(`model`, `model_reasoning_effort`) — the skill never overrides them. A pinned
+model does not auto-upgrade when a newer one launches: update the pin (or
+remove it and keep the codex CLI updated so its built-in default tracks the
+latest).
 
 ## 4. Companion skills
 

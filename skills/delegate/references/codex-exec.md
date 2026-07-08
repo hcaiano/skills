@@ -1,46 +1,75 @@
 # Codex mechanics — exec, reviews, job tracking
 
-Raw `codex exec` for a single self-contained prompt: no session to manage, one
-result file out. For multi-round delegation, use the plugin's rescue subagent
-instead — it owns Codex session state.
+Raw `codex exec` mechanics for the Codex lane: one-shot builds and resumable
+follow-ups. Everything here is written to sit inside a wrapper's prompt — the
+wrapper runs these commands and returns the labeled report; it never delegates
+onward or hands off to another agent.
 
 ## Invoke
 
-Prompt via temp file — never inline shell quoting:
+These mechanics go inside the wrapper's prompt (SKILL.md transport owns the
+wrapper rule): prompt via temp files, never inline shell quoting, never a
+fixed output path (parallel lanes on one path corrupt each other). The wrapper
+runs codex, re-runs the brief's Validation itself, and returns the labeled
+report:
 
 ```bash
-P=$(mktemp); cat >"$P" <<'EOF'
-<the brief: goal, repo + key paths, constraints, non-goals, proof expected, output shape>
+P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX); E=$(mktemp -t codex-err.XXXXXX)
+cat >"$P" <<'EOF'
+<the brief, verbatim>
 EOF
-codex exec --full-auto -C <repo> -o /tmp/codex-last.md - <"$P" 2>/dev/null
+codex exec -s workspace-write -C <repo> -o "$F" - <"$P" 2>"$E"
+SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')   # report it — follow-ups resume this exact thread
 ```
 
-- `--full-auto` = sandboxed workspace-write with no approval stops. `--yolo`
-  lifts the sandbox entirely — only in a repo you'd let Codex own.
+- `-s workspace-write` = sandboxed writes scoped to the repo, no approval
+  stops. `--dangerously-bypass-approvals-and-sandbox` lifts the sandbox
+  entirely — only in a repo you'd let Codex own. Flag names shift across CLI
+  versions (`--full-auto` and `--yolo` don't exist on current `exec`) —
+  `codex exec --help` is the source of truth.
 - Read-only work (exploration, investigation, analysis): `-s read-only` instead.
-- Read the `-o` file for the result. Don't parse the JSONL stream, and leave
-  stderr suppressed — thinking noise bloats your context; drop `2>/dev/null`
-  only to debug a failing run.
-- Long runs: Bash `run_in_background: true`, read the `-o` file when it exits.
-- Parallel one-shots are fine: disjoint files or separate repos, separate `-o`
-  files.
+- Model stays unset — `~/.codex/config.toml` owns it. Reasoning effort is the
+  lead's per-slice call (`-c model_reasoning_effort=...`): the same judgment
+  that routes a slice grades its difficulty. `high` for an easy,
+  fully-specified work order where speed matters — the spec carries the
+  intelligence and verify catches misses; `xhigh`, set explicitly, for real
+  builds, hard debugging, and stalls. Never below `high`. `xhigh` is the
+  current API ceiling (`max` returns 400 invalid_value) — probe when a new
+  model lands, don't assume.
+- Read the `-o` file for the result. Don't parse the JSONL stream, and keep
+  stderr in its file — thinking noise bloats the wrapper's context too; the
+  only line worth extracting is the session id. Read the file directly only to
+  debug a failing run.
+- Long runs: run the wrapper agent itself with `run_in_background: true`.
+- Parallel one-shots are fine: one wrapper each, disjoint files or separate
+  repos.
 - Outside a git repo, add `--skip-git-repo-check`.
 
 ## Follow-ups
 
-Resuming is cheaper than a fresh run and keeps Codex's context, but `resume`
-drops `-C` and the shorthand flags (`--full-auto`, `-s`) — run it from the repo
-dir and set the sandbox via config override, keeping the same policy as the
-initial run:
+Resuming is cheaper than a fresh run and keeps Codex's context. Resume by the
+session id the initial run reported — `--last` grabs the most recent session
+in the directory, which with parallel lanes or a builder race is not
+necessarily yours; use it only when your lane is the only one that has run in
+that repo. `resume` drops `-C` and `-s` — run it from the repo dir and set the
+sandbox via config override, keeping the same policy as the initial run:
 
 ```bash
-(cd <repo> && codex exec resume --last \
+P2=$(mktemp -t codex-spec.XXXXXX); F2=$(mktemp -t codex-out.XXXXXX)
+cat >"$P2" <<'EOF'
+<the follow-up — just the delta instruction>
+EOF
+(cd <repo> && codex exec resume "$SID" \
   -c sandbox_mode="workspace-write" \
-  -o /tmp/codex-last.md - <"$P2" 2>/dev/null)
+  -o "$F2" - <"$P2" 2>/dev/null)
 ```
 
-(`--dangerously-bypass-approvals-and-sandbox` exists on `resume` but lifts the
-sandbox entirely — same rule as `--yolo`: only in a repo you'd let Codex own.)
+Follow-ups go through a wrapper too — same reason. A fresh wrapper won't have
+`$SID` in its shell: pass the id in its prompt, from the previous report.
+
+(`--dangerously-bypass-approvals-and-sandbox` exists on `resume` too and lifts
+the sandbox entirely — same rule as on exec: only in a repo you'd let Codex
+own.)
 
 ## Reviews and job tracking (plugin companion)
 
