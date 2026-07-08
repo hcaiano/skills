@@ -54,8 +54,13 @@ shopt -s nullglob
 cands=("$HOME"/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs)
 COMPANION="$(printf '%s\n' "${cands[@]}" | sort -V | tail -1)"
 [ -z "$COMPANION" ] && COMPANION="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
-[ -f "$COMPANION" ] || COMPANION=""   # nothing installed — point the user at /codex:setup
+```
 
+If `$COMPANION` doesn't resolve to an existing file (`[ -f "$COMPANION" ]`),
+stop here — none of the commands below can run; tell the user to install the
+plugin with `/codex:setup`. Otherwise:
+
+```bash
 node "$COMPANION" review --background                                # review the diff
 node "$COMPANION" adversarial-review --background "focus: <risk>"    # challenge the approach
 node "$COMPANION" status            # active + recent jobs (add <id> for one, --wait to block)
