@@ -25,7 +25,7 @@ The CLI scans this repo, prompts which skills + which agent runtimes (Claude, Co
 - `delegate` — run the session's top model (Fable/Opus) as tech lead: plan and freeze specs, route building to Codex (the flat-rate pool), deep reasoning to an Opus subagent, and taste-sensitive light work to Sonnet, then verify and synthesize. Conserves metered top-model usage. Claude Code–hosted.
 
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
-`agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`). `delegate`'s Codex lane uses the plugin for session-stateful delegation and raw `codex exec` for one-shots; with neither available it degrades to Claude-only routing.
+`agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`). `delegate`'s Codex lane uses the plugin for session-stateful delegation and raw `codex exec` for one-shots; with neither available it degrades to Claude-only routing. It also references two companion skills it doesn't bundle — `tdd` (build-slice test discipline) and `planning-with-files` (long-goal plan files); its `references/setup.md` covers installing them.
 
 `art-director` composes several external skills instead of vendoring them; install the ones your run needs (it degrades gracefully when an optional one is absent):
 

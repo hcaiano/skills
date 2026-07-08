@@ -58,7 +58,17 @@ Install the Codex CLI first (`npm i -g @openai/codex`), then in Claude Code:
 can still go through raw `codex exec` (`references/codex-exec.md`); with no
 Codex at all, `fast-worker` builds — you lose the flat-rate pool, not the run.
 
-## 4. Make it the default (optional)
+## 4. Companion skills
+
+`delegate` references two skills it doesn't bundle: `tdd` (the red → green
+loop and what makes tests worth keeping) and `planning-with-files` (the
+`task_plan.md` / `findings.md` / `progress.md` contract with session
+recovery). Install implementations with those contracts into your skills
+directory (`~/.claude/skills`, or `~/.agents/skills` shared across agents).
+Missing them costs the reference, not the run — briefs still carry red → green
+inline, and one-sitting runs never need the plan files.
+
+## 5. Make it the default (optional)
 
 One line in the project's `CLAUDE.md` keeps the stance on without invoking the
 skill each time:

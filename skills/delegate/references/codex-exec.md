@@ -1,8 +1,8 @@
-# Codex exec — one-shot transport
+# Codex mechanics — exec, reviews, job tracking
 
 Raw `codex exec` for a single self-contained prompt: no session to manage, one
-result file out. For multi-round delegation and reviews, use the plugin instead —
-it owns Codex session state.
+result file out. For multi-round delegation, use the plugin's rescue subagent
+instead — it owns Codex session state.
 
 ## Invoke
 
@@ -41,6 +41,39 @@ initial run:
 
 (`--dangerously-bypass-approvals-and-sandbox` exists on `resume` but lifts the
 sandbox entirely — same rule as `--yolo`: only in a repo you'd let Codex own.)
+
+## Reviews and job tracking (plugin companion)
+
+`/codex:review`, `/codex:adversarial-review`, `/codex:status`, `/codex:result`,
+and `/codex:cancel` are user-only slash commands — drive the same engine
+through the plugin's companion script, and echo the matching `/codex:` command
+so the user can re-run it:
+
+```bash
+shopt -s nullglob
+cands=("$HOME"/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs)
+COMPANION="$(printf '%s\n' "${cands[@]}" | sort -V | tail -1)"
+[ -z "$COMPANION" ] && COMPANION="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
+```
+
+If `$COMPANION` doesn't resolve to an existing file (`[ -f "$COMPANION" ]`),
+stop here — none of the commands below can run; tell the user to install the
+plugin with `/codex:setup`. Otherwise:
+
+```bash
+node "$COMPANION" review                              # review the diff
+node "$COMPANION" adversarial-review "focus: <risk>"  # challenge the approach
+node "$COMPANION" status            # active + recent jobs (add <id> for one, --wait to block)
+node "$COMPANION" result <id>       # final output of a finished job — read it in full
+node "$COMPANION" cancel <id>       # stop a running job
+```
+
+Review commands run in the foreground — the companion parses `--background`
+for reviews but doesn't detach them. For a long review, background the Bash
+call itself (`run_in_background: true`); the job still appears in `status`.
+
+`review`/`adversarial-review` take `--base <ref>` or
+`--scope auto|working-tree|branch` to retarget.
 
 ---
 
