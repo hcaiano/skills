@@ -45,9 +45,13 @@ Transport:
   `subagent_type: "codex:codex-rescue"`, `run_in_background: true` for long
   jobs) for delegated tasks and reviews — it keeps session state, so follow-ups
   resume instead of restarting; raw `codex exec` for one-shot self-contained
-  prompts — mechanics in `references/codex-exec.md`. No Codex at all →
-  `fast-worker` builds, and say so. For a real back-and-forth collaboration,
-  escalate to `agents-pair`.
+  prompts. Embed routing flags in the rescue prompt: `--resume` to continue its
+  last thread (this is how you answer an objection or iterate a failure),
+  `--effort high|xhigh` only for a genuinely hard slice — model and effort
+  otherwise stay unset. Background jobs are trackable via the companion's
+  `status`/`result`/`cancel`. Mechanics for exec, reviews, and job tracking:
+  `references/codex-exec.md`. No Codex at all → `fast-worker` builds, and say
+  so. For a real back-and-forth collaboration, escalate to `agents-pair`.
 - `deep-reasoner` / `fast-worker`: call them as `Agent` subagent types when they
   exist. When they don't, the same routing works with zero setup — a
   general-purpose agent with `model: "opus"` or `model: "sonnet"` — and the run
@@ -66,7 +70,8 @@ Transport:
    delegation in the transcript.
 3. **Delegate.** One brief per slice (below). Dispatch independent slices in
    parallel — one message, several calls; parallel write work only on disjoint
-   files. Done when every slice is out with its brief complete.
+   files, or give each writer its own worktree (`isolation: "worktree"`) when
+   slices overlap. Done when every slice is out with its brief complete.
 4. **Verify.** A delegate's report is not ground truth. Write work: read the
    diff like a contributor PR, run the tests yourself — a builder's claims are
    advisory until you've seen proof. Reasoning work: spot-check the load-bearing
@@ -76,8 +81,10 @@ Transport:
    disagreement that survives a round isn't the builder's to settle — take it
    to the panel or `agents-pair`. Iterate failures back to the same delegate
    (resume beats a fresh run); after two failed rounds, stop paying the relay
-   tax — take the slice over or re-route it. Done when you would sign each
-   result yourself.
+   tax — take the slice over or re-route it. After you've signed a substantial
+   diff, a Codex `review` — or `adversarial-review` to challenge the approach
+   itself — is a cheap extra lens from the flat-rate pool; weigh its findings,
+   the signature stays yours. Done when you would sign each result yourself.
 5. **Synthesize.** Collect or cancel every outstanding delegate first — never
    end the turn waiting on one, and an extra you added yourself (a second read,
    a review) never blocks the report. Merge in your own words; settle conflicts
