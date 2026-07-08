@@ -54,12 +54,12 @@ Transport:
   the wrapper for long jobs. Follow-ups (answering an objection, iterating a
   failure) resume Codex's thread: `codex exec resume --last`, same repo,
   through a wrapper again. Reviews and job tracking go through the plugin's
-  companion script (same reference). Do NOT call `codex:codex-rescue` as an
-  `Agent` subagent type — it isn't registered outside the `/codex:rescue`
-  command and the call fails as invalid parameters; the `/codex:*` commands
-  are the user's surface, not yours. No `codex` CLI at all → `fast-worker`
-  builds, and say so. For a real back-and-forth collaboration, escalate to
-  `agents-pair`.
+  companion script (same reference). The plugin's `codex:codex-rescue` agent
+  is usable only when it actually appears in your available agent types —
+  its registration is unreliable, and calling it unlisted fails as invalid
+  parameters; when it's absent, don't retry it, use the wrapper. No `codex`
+  CLI at all → `fast-worker` builds, and say so. For a real back-and-forth
+  collaboration, escalate to `agents-pair`.
 - `deep-reasoner` / `fast-worker` / `skeptic`: call them as `Agent` subagent
   types when they exist. When they don't, the same routing works with zero
   setup — a general-purpose agent with `model: "opus"`, `"sonnet"`, or

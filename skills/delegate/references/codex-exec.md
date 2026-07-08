@@ -4,17 +4,13 @@ Raw `codex exec` for a single self-contained prompt: no session to manage, one
 result file out. For multi-round delegation, use the plugin's rescue subagent
 instead — it owns Codex session state.
 
-## Invoke — through a wrapper, not your own shell
+## Invoke
 
-Codex run from your own shell puts its output in your context at lead prices.
-Spawn a cheap wrapper instead — `Agent`, `model: "sonnet"`, low effort — whose
-prompt embeds the slice's brief plus the mechanics below verbatim. The wrapper
+These mechanics go inside the wrapper's prompt (SKILL.md transport owns the
+wrapper rule): prompt via temp files, never inline shell quoting, never a
+fixed output path (parallel lanes on one path corrupt each other). The wrapper
 runs codex, re-runs the brief's Validation itself, and returns the labeled
-report; only that report reaches you. (The plugin's rescue subagent is this
-wrapper prebuilt — prefer it when the plugin is installed.)
-
-Mechanics for the wrapper — prompt via temp files, never inline shell quoting,
-never a fixed output path (parallel lanes on one path corrupt each other):
+report:
 
 ```bash
 P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX)
