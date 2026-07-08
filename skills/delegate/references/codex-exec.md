@@ -61,12 +61,16 @@ stop here — none of the commands below can run; tell the user to install the
 plugin with `/codex:setup`. Otherwise:
 
 ```bash
-node "$COMPANION" review --background                                # review the diff
-node "$COMPANION" adversarial-review --background "focus: <risk>"    # challenge the approach
+node "$COMPANION" review                              # review the diff
+node "$COMPANION" adversarial-review "focus: <risk>"  # challenge the approach
 node "$COMPANION" status            # active + recent jobs (add <id> for one, --wait to block)
 node "$COMPANION" result <id>       # final output of a finished job — read it in full
 node "$COMPANION" cancel <id>       # stop a running job
 ```
+
+Review commands run in the foreground — the companion parses `--background`
+for reviews but doesn't detach them. For a long review, background the Bash
+call itself (`run_in_background: true`); the job still appears in `status`.
 
 `review`/`adversarial-review` take `--base <ref>` or
 `--scope auto|working-tree|branch` to retarget.
