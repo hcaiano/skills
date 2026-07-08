@@ -21,7 +21,19 @@ roster (`hcaiano:codex-worker`, `hcaiano:deep-reasoner`, `hcaiano:fast-worker`,
 /plugin install hcaiano@hcaiano
 ```
 
-Restart (or `/agents`) and verify the roster shows up as agent types.
+Restart, then verify — note that plugin agents do **not** appear in the
+`/agents` screen or `claude plugin details` (both under-report); the ground
+truth is the session's agent registry:
+
+```bash
+echo "Reply OK" | claude -p --output-format stream-json --verbose 2>/dev/null \
+  | grep -o '"hcaiano:[a-z-]*"' | sort -u
+```
+
+Four roster names back (`hcaiano:codex-worker`, `hcaiano:deep-reasoner`,
+`hcaiano:fast-worker`, `hcaiano:skeptic`) means the install worked. Empty →
+check `claude plugin list` shows `hcaiano` at the current version
+(`claude plugin update hcaiano` if not) and that you restarted the session.
 
 ### Option B — skills.sh CLI (any agent runtime)
 
