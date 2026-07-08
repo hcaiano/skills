@@ -25,7 +25,7 @@ delegation overhead loses.
 |---|---|---|
 | Codex | codex CLI / plugin | **the default builder** — implementation from a frozen spec, refactors, migrations, test writing, bug fixes with a known repro, CI fixes, bulk exploration |
 | `deep-reasoner` | Opus | reasoning too heavy to keep in your own context: architecture options, hard debugging, algorithm design, tradeoff analysis |
-| `fast-worker` | Sonnet | light work that needs Claude taste (user-facing copy, UI tweaks) or session tools; the builder when Codex is unavailable |
+| `fast-worker` | Sonnet | light Claude-side work: taste (user-facing copy, UI tweaks) and session-tool slices (browser QA, MCP evidence); the builder when Codex is unavailable |
 | `Explore` | built-in | codebase sweeps where a summary, not the files, should enter your context |
 
 The routing test: a slice you can write as a work order → Codex builds it. A
@@ -35,9 +35,11 @@ are yours (or `deep-reasoner`'s), and only the frozen spec gets delegated.
 Never leaves Claude's hands, whatever the budget:
 
 - design, API shape, naming, UX judgment — anything where taste is the work
-- slices needing session tools (MCP, browser, secrets) or doing destructive or
-  outward ops (pushes, releases, GitHub mutations)
-- review of a builder's output — never delegated, never skipped
+- destructive or outward ops (pushes, releases, GitHub mutations) — yours alone
+- slices needing session tools (MCP, browser, secrets) — Claude-side, but a
+  delegate's hands, not yours: brief `fast-worker` to gather the evidence
+- judgment on a builder's output — never delegated, never skipped; the
+  evidence-gathering behind that judgment is freely delegated
 
 Transport:
 
@@ -73,8 +75,10 @@ Transport:
    files, or give each writer its own worktree (`isolation: "worktree"`) when
    slices overlap. Done when every slice is out with its brief complete.
 4. **Verify.** A delegate's report is not ground truth. Write work: read the
-   diff like a contributor PR, run the tests yourself — a builder's claims are
-   advisory until you've seen proof. Reasoning work: spot-check the load-bearing
+   diff like a contributor PR and re-run the receipts — tests and scripts are
+   cheap, textual proof, and a builder's claims are advisory until you've seen
+   it. Interactive QA (browser, GUI) is not lead work: brief a delegate to
+   gather the observations, then judge the evidence. Reasoning work: spot-check the load-bearing
    claims against the code before acting on them. An objection from a builder
    is a result, not a failure: judge it on evidence — fix the plan and
    re-dispatch if it's right, answer it once via resume if it's not; a
@@ -119,7 +123,9 @@ from a failing repro test and returns it green — red → green is the receipt.
 Point Claude-side builders at the `tdd` skill; Codex briefs carry red → green
 in Validation, since raw exec can't read skills. Where tests don't apply
 (renames, docs, config), Validation names the proof instead — a grep, a
-build, a type check.
+build, a type check. Prefer scripted proof — a test, a Playwright flow, a curl
+check — over manual QA: a script is a receipt anyone re-runs cheaply;
+screenshots through your own context are the expensive way to know.
 
 ## The panel — high-stakes decisions
 
@@ -144,8 +150,11 @@ orchestration delta:
   when the delegate claims it.
 - A slice that discovers things writes its own findings file, named in its
   brief and inside its write lease (`findings/<slice>.md`) — parallel delegates
-  never share one. Later briefs point at those files instead of restating
-  them.
+  never contend on `findings.md`. You own `findings.md` like the other two: at
+  each verified checkpoint, roll the slice's key findings (or a pointer to its
+  file) into it, so the contract's three files stay the complete record a
+  resumed session reads. Later briefs point at findings files instead of
+  restating them.
 - Skip the files for a one-sitting run — the plan text in your dispatch message
   is the record. On long runs they double as live visibility: the user watches
   `task_plan.md` tick instead of watching panes.
@@ -159,6 +168,8 @@ The failure mode of a lead is drifting back into IC work.
   spot-checks) instead. And don't re-read what a delegate already summarized.
 - Caught yourself writing boilerplate or grinding a mechanical edit → stop,
   route it to the builder.
+- Caught yourself clicking through a browser or reading screenshots → that's
+  evidence-gathering; brief a delegate.
 - Keep conclusions; drop transcripts.
 
 ## Setup

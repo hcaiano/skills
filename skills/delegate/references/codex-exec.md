@@ -53,6 +53,8 @@ so the user can re-run it:
 shopt -s nullglob
 cands=("$HOME"/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs)
 COMPANION="$(printf '%s\n' "${cands[@]}" | sort -V | tail -1)"
+[ -z "$COMPANION" ] && COMPANION="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
+[ -f "$COMPANION" ] || COMPANION=""   # nothing installed — point the user at /codex:setup
 
 node "$COMPANION" review --background                                # review the diff
 node "$COMPANION" adversarial-review --background "focus: <risk>"    # challenge the approach
