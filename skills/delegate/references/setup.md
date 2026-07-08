@@ -73,7 +73,7 @@ never delegate onward, never substitute yourself for a missing codex.
 ```markdown
 ---
 name: deep-reasoner
-description: Use for reasoning-heavy phases — architecture, debugging complex issues, algorithm design, tradeoff analysis. Use proactively when a task needs deep thought rather than mechanical execution.
+description: Use for taste-bearing reasoning — architecture options, API shape, design tradeoffs, plan reviews — and as the Claude seat of a blind panel. Pure analysis without taste (root-cause hunts, algorithms, hard debugging) routes to Codex instead.
 model: opus
 ---
 
