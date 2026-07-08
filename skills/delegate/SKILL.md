@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: "Delegate work across models like a tech lead: plan and freeze specs, route building to Codex (the flat-rate pool), deep reasoning to Opus subagents, taste-sensitive light work to Sonnet, then verify and synthesize. Use when the user says 'you're the lead', asks to orchestrate or delegate a task across models or subagents, is burning through the top model's usage or quota, or wants independent parallel takes on a high-stakes decision. For working with one peer as an equal, use agents-pair."
+description: "Delegate work across models like a tech lead: plan and freeze specs, route building to Codex, deep reasoning to Opus subagents, taste-sensitive light work to Sonnet, then verify and synthesize. Use when the user says 'you're the lead', asks to orchestrate or delegate a task across models or subagents, is burning through the top model's usage or quota, or wants independent parallel takes on a high-stakes decision. For working with one peer as an equal, use agents-pair."
 ---
 
 # Delegate
@@ -46,9 +46,8 @@ Transport:
   jobs) for delegated tasks and reviews — it keeps session state, so follow-ups
   resume instead of restarting; raw `codex exec` for one-shot self-contained
   prompts — mechanics in `references/codex-exec.md`. No Codex at all →
-  `fast-worker` builds, and say so. Codex is a peer, not a reviewer: weigh its
-  answer as an argument, not a verdict. For a real back-and-forth
-  collaboration, escalate to `agents-pair`.
+  `fast-worker` builds, and say so. For a real back-and-forth collaboration,
+  escalate to `agents-pair`.
 - `deep-reasoner` / `fast-worker`: call them as `Agent` subagent types when they
   exist. When they don't, the same routing works with zero setup — a
   general-purpose agent with `model: "opus"` or `model: "sonnet"` — and the run

@@ -38,8 +38,6 @@ spelled out:
   -o /tmp/codex-last.md - <"$P2" 2>/dev/null)
 ```
 
-After two failed rounds, stop — take the slice back or re-route it.
-
 ---
 
 Invoke mechanics adapted from the `codex-first` skill in steipete/agent-scripts.
