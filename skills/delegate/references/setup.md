@@ -30,7 +30,7 @@ prompt (`references/codex-exec.md` stays the canonical mechanics doc):
 ```markdown
 ---
 name: codex-worker
-description: Codex build lane — runs a frozen-spec brief through codex exec and returns a labeled report. Use for implementation, refactors, migrations, test writing, repro'd bug fixes, and bulk exploration when the brief is a complete work order.
+description: Codex build and analysis lane — runs a frozen-spec brief through codex exec and returns a labeled report. Use for implementation, refactors, migrations, test writing, repro'd bug fixes, bulk exploration, and pure-analysis reasoning (root-cause hunts, algorithms, hard debugging) when the brief is a complete work order.
 model: sonnet
 tools: Bash, Read, Grep, Glob
 ---
