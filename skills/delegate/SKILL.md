@@ -170,6 +170,10 @@ The failure mode of a lead is drifting back into IC work.
   route it to the builder.
 - Caught yourself clicking through a browser or reading screenshots → that's
   evidence-gathering; brief a delegate.
+- Hard tripwire, because "caught yourself" fails silently: three consecutive
+  hands-on tool calls that aren't verifying a delegate's returned result mean
+  you are diagnosing, and diagnosis is a slice — stop and brief it out with
+  everything the probes established so far.
 - Keep conclusions; drop transcripts.
 
 ## Setup
