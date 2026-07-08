@@ -70,10 +70,14 @@ Transport:
 4. **Verify.** A delegate's report is not ground truth. Write work: read the
    diff like a contributor PR, run the tests yourself — a builder's claims are
    advisory until you've seen proof. Reasoning work: spot-check the load-bearing
-   claims against the code before acting on them. Iterate failures back to the
-   same delegate (resume beats a fresh run); after two failed rounds, stop
-   paying the relay tax — take the slice over or re-route it. Done when you
-   would sign each result yourself.
+   claims against the code before acting on them. An objection from a builder
+   is a result, not a failure: judge it on evidence — fix the plan and
+   re-dispatch if it's right, answer it once via resume if it's not; a
+   disagreement that survives a round isn't the builder's to settle — take it
+   to the panel or `agents-pair`. Iterate failures back to the same delegate
+   (resume beats a fresh run); after two failed rounds, stop paying the relay
+   tax — take the slice over or re-route it. Done when you would sign each
+   result yourself.
 5. **Synthesize.** Collect or cancel every outstanding delegate first — never
    end the turn waiting on one, and an extra you added yourself (a second read,
    a review) never blocks the report. Merge in your own words; settle conflicts
@@ -91,8 +95,16 @@ Context: <facts they can't discover: repo paths, constraints, conventions, prior
 Non-goals: <what not to touch or solve>
 Done: <checkable criterion>
 Validation: <exact commands to run; proof to return, not claims>
+If the spec conflicts with what you find, stop and object with evidence —
+don't build around it, don't silently comply.
 Return a concise conclusion I can act on — decisions and evidence, not a transcript.
 ```
+
+Builders don't get a vote on the design, but any builder can stop the line —
+the objection clause is load-bearing, keep it in every build brief. For a large
+or risky slice, also make the work order's first step a spec check (verify the
+brief's assumptions against the repo, object before writing): an objection
+costs a read; a wrong build costs the slice.
 
 ## The panel — high-stakes decisions
 
