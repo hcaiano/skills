@@ -29,6 +29,7 @@ delegation overhead loses.
 | Codex | codex CLI / plugin | **the default builder** — implementation from a frozen spec, refactors, migrations, test writing, bug fixes with a known repro, CI fixes, bulk exploration |
 | `deep-reasoner` | Opus | reasoning too heavy to keep in your own context: architecture options, hard debugging, algorithm design, tradeoff analysis |
 | `fast-worker` | Sonnet | light Claude-side work: taste (user-facing copy, UI tweaks) and session-tool slices (browser QA, MCP evidence); the builder when Codex is unavailable |
+| `skeptic` | Fable, fresh context | commitment-boundary verdicts: audit a formed plan, break a two-failure stall, one last check before declaring a long deliverable done — advises, never implements |
 | `Explore` | built-in | codebase sweeps where a summary, not the files, should enter your context |
 
 The routing test: a slice you can write as a work order → Codex builds it. A
@@ -57,10 +58,10 @@ Transport:
   `status`/`result`/`cancel`. Mechanics for exec, reviews, and job tracking:
   `references/codex-exec.md`. No Codex at all → `fast-worker` builds, and say
   so. For a real back-and-forth collaboration, escalate to `agents-pair`.
-- `deep-reasoner` / `fast-worker`: call them as `Agent` subagent types when they
-  exist. When they don't, the same routing works with zero setup — a
-  general-purpose agent with `model: "opus"` or `model: "sonnet"` — and the run
-  keeps moving.
+- `deep-reasoner` / `fast-worker` / `skeptic`: call them as `Agent` subagent
+  types when they exist. When they don't, the same routing works with zero
+  setup — a general-purpose agent with `model: "opus"`, `"sonnet"`, or
+  `"fable"` — and the run keeps moving.
 
 ## The loop
 
@@ -89,8 +90,9 @@ Transport:
      disagreement that survives a round isn't the builder's to settle: panel
      or `agents-pair`.
    - Iterate failures back to the same delegate (resume beats a fresh run);
-     after two failed rounds, stop paying the relay tax — take the slice over
-     or re-route it.
+     after two failed rounds, stop paying the relay tax — take the slice over,
+     re-route it, or put the stall to the `skeptic`: two failures usually mean
+     an assumption needs fresh eyes, not a third attempt.
    - Signed a substantial diff? A Codex `review` — or `adversarial-review` to
      challenge the approach itself — is a cheap extra lens; weigh its
      findings, the signature stays yours.
@@ -114,8 +116,14 @@ Done: <checkable criterion>
 Validation: <exact commands to run; proof to return, not claims>
 If the spec conflicts with what you find, stop and object with evidence —
 don't build around it, don't silently comply.
-Return a concise conclusion I can act on — decisions and evidence, not a transcript.
+Report exactly: CHANGES (per file) / VERIFIED (command + actual output) /
+GAPS (ambiguities you resolved, or "none") / OBJECTIONS (or "none").
+Data, not a transcript.
 ```
+
+The labeled report is what verify runs on: GAPS and OBJECTIONS force "none"
+to be a claim the builder makes, not a silence you assume. A report missing
+them goes back unaccepted.
 
 Builders don't get a vote on the design, but any builder can stop the line —
 the objection clause is load-bearing, keep it in every build brief. For a large
@@ -142,7 +150,20 @@ other's take buys you an echo, not a second opinion. Two strong models from
 different lineages fail differently; synthesize the best of both and report
 genuine splits to the user as open questions, not averages. No Codex available →
 fill the second seat with a different model than the first (two runs of the same
-delegate share failure modes), and name the substitution in your report.
+delegate share failure modes), and name the substitution in your report. The
+same blindness works for builds: on a high-stakes slice, race two builders on
+one frozen spec and take the stronger diff — cross-vendor confidence for one
+extra lane's cost.
+
+Not every boundary needs a panel. When the plan is already formed and what you
+need is a verdict, consult the `skeptic` — the top model in a fresh context. It
+escapes the one bias no delegate can check for you: your own conversation's
+accumulated assumptions. Brief it with the decision, the constraints, and the
+options you considered; it reads the code itself and returns a verdict under
+~300 words — act on it or surface the disagreement, never silently ignore it.
+The panel generates independent takes for an open decision; the skeptic audits
+a committed one. It spends your scarcest budget, so fire it at the moments
+that decide whether the next hour is wasted — never as ceremony.
 
 ## Shared plan (long goals)
 
@@ -186,7 +207,7 @@ The failure mode of a lead is drifting back into IC work.
 ## Setup
 
 Everything above degrades gracefully with no setup. To pin the roster —
-`deep-reasoner`, `fast-worker`, the codex plugin, the companion skills (`tdd`,
-`planning-with-files`), orchestrator model and effort — read
+`deep-reasoner`, `fast-worker`, `skeptic`, the codex plugin, the companion
+skills (`tdd`, `planning-with-files`), orchestrator model and effort — read
 `references/setup.md` when the user asks for setup, or mention it once at the
 end of a run where you had to fall back.

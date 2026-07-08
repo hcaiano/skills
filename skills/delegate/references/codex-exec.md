@@ -4,26 +4,35 @@ Raw `codex exec` for a single self-contained prompt: no session to manage, one
 result file out. For multi-round delegation, use the plugin's rescue subagent
 instead — it owns Codex session state.
 
-## Invoke
+## Invoke — through a wrapper, not your own shell
 
-Prompt via temp file — never inline shell quoting:
+Codex run from your own shell puts its output in your context at lead prices.
+Spawn a cheap wrapper instead — `Agent`, `model: "sonnet"`, low effort — whose
+prompt embeds the slice's brief plus the mechanics below verbatim. The wrapper
+runs codex, re-runs the brief's Validation itself, and returns the labeled
+report; only that report reaches you. (The plugin's rescue subagent is this
+wrapper prebuilt — prefer it when the plugin is installed.)
+
+Mechanics for the wrapper — prompt via temp files, never inline shell quoting,
+never a fixed output path (parallel lanes on one path corrupt each other):
 
 ```bash
-P=$(mktemp); cat >"$P" <<'EOF'
-<the brief: goal, repo + key paths, constraints, non-goals, proof expected, output shape>
+P=$(mktemp -t codex-spec.XXXXXX); F=$(mktemp -t codex-out.XXXXXX)
+cat >"$P" <<'EOF'
+<the brief, verbatim>
 EOF
-codex exec --full-auto -C <repo> -o /tmp/codex-last.md - <"$P" 2>/dev/null
+codex exec --full-auto -C <repo> -o "$F" - <"$P" 2>/dev/null
 ```
 
 - `--full-auto` = sandboxed workspace-write with no approval stops. `--yolo`
   lifts the sandbox entirely — only in a repo you'd let Codex own.
 - Read-only work (exploration, investigation, analysis): `-s read-only` instead.
 - Read the `-o` file for the result. Don't parse the JSONL stream, and leave
-  stderr suppressed — thinking noise bloats your context; drop `2>/dev/null`
-  only to debug a failing run.
-- Long runs: Bash `run_in_background: true`, read the `-o` file when it exits.
-- Parallel one-shots are fine: disjoint files or separate repos, separate `-o`
-  files.
+  stderr suppressed — thinking noise bloats the wrapper's context too; drop
+  `2>/dev/null` only to debug a failing run.
+- Long runs: run the wrapper agent itself with `run_in_background: true`.
+- Parallel one-shots are fine: one wrapper each, disjoint files or separate
+  repos.
 - Outside a git repo, add `--skip-git-repo-check`.
 
 ## Follow-ups
@@ -36,8 +45,11 @@ initial run:
 ```bash
 (cd <repo> && codex exec resume --last \
   -c sandbox_mode="workspace-write" \
-  -o /tmp/codex-last.md - <"$P2" 2>/dev/null)
+  -o "$F2" - <"$P2" 2>/dev/null)
 ```
+
+Follow-ups go through a wrapper too — same reason. `resume --last` picks the
+most recent session recorded for that directory, so run it from the same repo.
 
 (`--dangerously-bypass-approvals-and-sandbox` exists on `resume` but lifts the
 sandbox entirely — same rule as `--yolo`: only in a repo you'd let Codex own.)
