@@ -1,6 +1,6 @@
 ---
 name: debug-mode
-description: "Evidence debugging for unresolved bugs. Use when behavior is broken, flaky, environment-specific, or unexplained and the root cause is not proven. Build hypotheses, collect runtime evidence, and fix only after evidence identifies the cause."
+description: "Evidence debugging for unresolved bugs. Use when the user says 'diagnose' or 'debug this', or when behavior is broken, flaky, environment-specific, or unexplained and the root cause is not proven. Build a feedback loop, collect runtime evidence, and fix only after evidence identifies the cause."
 user-invocable: true
 argument-hint: "[description of the bug]"
 ---
@@ -14,15 +14,28 @@ that only pass once.
 
 1. **Understand.** Done when symptoms, affected surface, expected behavior,
    actual behavior, and smallest reproduction path are known.
-2. **Hypothesize.** Done when 2-3 ranked hypotheses each name the observation
+2. **Feedback command.** Done when, where practical, one command — a failing
+   test, a curl script, a CLI run on a fixture, a headless-browser script, a
+   replayed trace — has been run once and shown red on this bug's exact
+   symptom: red-capable (asserts the symptom, not "didn't crash"),
+   deterministic, fast, runnable unattended. Tighten it before moving on —
+   sharper assert, narrower scope, pinned time/seed; for flaky bugs raise the
+   reproduction rate (loop the trigger, add stress) until it's debuggable.
+   When no such command is practical (auth-walled, user-specific,
+   production-only), say so explicitly and rely on the instrumentation branch
+   below — don't skip silently to code-reading.
+3. **Hypothesize.** Done when 2-3 ranked hypotheses each name the observation
    that would confirm or reject it.
-3. **Instrument.** Done when temporary structured logs distinguish the
+4. **Instrument.** Done when temporary structured logs distinguish the
    hypotheses without leaking secrets.
-4. **Reproduce.** Done when the bug has been triggered and logs collected. If the
-   flow is auth-walled or user-specific, ask the user to reproduce and wait.
-5. **Analyze.** Done when evidence confirms one hypothesis or rejects all current
+5. **Reproduce.** Done when the bug has been triggered and logs collected — via
+   the feedback command when one exists. If the flow is auth-walled or
+   user-specific, ask the user to reproduce and wait.
+6. **Analyze.** Done when evidence confirms one hypothesis or rejects all current
    hypotheses explicitly.
-6. **Fix.** Done when the smallest evidence-backed fix is applied and all
+7. **Fix.** Done when the smallest evidence-backed fix is applied, the feedback
+   command (when one exists) has gone red → green — turned into a regression
+   test first when a seam that exercises the real bug pattern exists — and all
    temporary instrumentation is removed.
 
 ## Instrumentation Contract
@@ -51,6 +64,9 @@ listening before adding app-side logging. Stop it after analysis, remove all
 instrumentation, and keep only the evidence summary in the final report.
 
 If localhost is unreachable, log to the app's normal logger or a local file with the same fields.
+
+Tag any plain-text fallback logs with one unique prefix (e.g. `[DEBUG-a4f2]`) so
+removal is a single grep — untagged logs survive cleanup.
 
 ## Failure Modes
 

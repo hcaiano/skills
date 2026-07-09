@@ -1,6 +1,6 @@
 ---
 name: ship-it
-description: "Ship a PR end to end. Use when the user asks to ship, commit, push, open or update a PR, handle CI, handle reviewer comments, or get a branch ready for review. Splits changes into conventional commits, runs the quality gate, opens/updates the PR, and loops until CI and review are clean."
+description: "Ship a branch through the full PR lifecycle: intentional commits, local quality gate, push, PR creation/update, CI, target-branch sync, and the shared review-clean loop. Use when the user asks to ship end to end or get a branch fully review-ready. For review feedback on an existing PR without the commit/PR lifecycle, use review-pr-comments."
 user-invocable: true
 argument-hint: "[branch name or PR number]"
 ---

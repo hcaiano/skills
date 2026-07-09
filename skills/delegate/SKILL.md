@@ -1,6 +1,6 @@
 ---
 name: delegate
-description: "Delegate work across models like a tech lead: plan and freeze specs, route building to Codex, deep reasoning to Opus subagents, taste-sensitive light work to Sonnet, then verify and synthesize. Use when the user says 'you're the lead', asks to orchestrate or delegate a task across models or subagents, is burning through the top model's usage or quota, or wants independent parallel takes on a high-stakes decision. For working with one peer as an equal, use agents-pair."
+description: "Fable-led multi-slice orchestration across Codex and Claude subagents: freeze specs, route work, verify, and synthesize. Use when the user explicitly asks Claude to lead, orchestrate, or delegate a non-trivial task across models or subagents. For one opposite-model request use ask-peer; for a live equal pairing use herdr-pair."
 ---
 
 # Delegate
@@ -62,13 +62,9 @@ Transport:
   misses below `high` escalate on retry). Follow-ups (answering an objection, iterating a
   failure) resume Codex's thread by the session id from the run's report —
   `--last` can grab another lane's session when builders run in parallel —
-  same repo, through a wrapper again. Reviews and job tracking go through the plugin's
-  companion script (same reference). The plugin's `codex:codex-rescue` agent
-  is usable only when it actually appears in your available agent types —
-  its registration is unreliable, and calling it unlisted fails as invalid
-  parameters; when it's absent, don't retry it, use the wrapper. No `codex`
-  CLI at all → `fast-worker` builds, and say so. For a real back-and-forth
-  collaboration, escalate to `agents-pair`.
+  same repo, through a wrapper again. No `codex` CLI at all → `fast-worker`
+  builds, and say so. For a real back-and-forth
+  collaboration, escalate to `herdr-pair`.
 - `deep-reasoner` / `fast-worker` / `skeptic`: call them as `Agent` subagent
   types when they exist — plugin installs namespace the whole roster (e.g.
   `hcaiano:codex-worker`); either form counts. When they don't exist,
@@ -77,9 +73,8 @@ Transport:
 
 Waiting discipline — wait only on channels that can wake you. Background
 agents and Bash commands are harness-tracked: their exit notifies you.
-Anything detached beyond the harness — a companion `--background` job, a
-stray process — never will: pair it immediately with a tracked waiter
-(`status <id> --wait` in background Bash) or give it a deadline you enforce.
+Anything detached beyond the harness — a stray process, for example — never
+will: pair it immediately with a tracked waiter or give it a deadline you enforce.
 When a delegate feels overdue, check its artifacts before waiting longer —
 the result file, the diff, `status` — because finished-but-hung is common:
 collect the evidence, kill the remains, carry on. Idling on a channel with no
@@ -116,14 +111,14 @@ notifier is the one failure verify can't catch.
    - An objection is a result, not a failure: judge it on evidence — fix the
      plan and re-dispatch if it's right, answer it once via resume if not. A
      disagreement that survives a round isn't the builder's to settle: panel
-     or `agents-pair`.
+     or `herdr-pair`.
    - Iterate failures back to the same delegate (resume beats a fresh run);
      after two failed rounds, stop paying the relay tax — take the slice over,
      re-route it, or put the stall to the `skeptic`: two failures usually mean
      an assumption needs fresh eyes, not a third attempt.
-   - Signed a substantial diff? A Codex `review` — or `adversarial-review` to
-     challenge the approach itself — is a cheap extra lens; weigh its
-     findings, the signature stays yours.
+   - Signed a substantial diff? Dispatch a fresh read-only Codex review slice
+     with the exact diff scope and risk focus; weigh its findings, the signature
+     stays yours.
    Done when you would sign each result yourself.
 5. **Synthesize.** Collect or cancel every outstanding delegate first — never
    end the turn waiting on one, and an extra you added yourself (a second read,
@@ -246,6 +241,6 @@ The failure mode of a lead is drifting back into IC work.
 Everything above degrades gracefully with no setup, but don't let the
 fallback stay silent: if you ran without the named roster, offer once, at the
 end of the run, to install it — the skill ships it in `agents/`, and
-`scripts/setup-roster.sh` places it in one command. For the rest — the codex
-plugin, the companion skills (`tdd`, `planning-with-files`), orchestrator
+`scripts/setup-roster.sh` places it in one command. For the rest — the Codex
+CLI, the companion skills (`tdd`, `planning-with-files`), orchestrator
 model and effort — read `references/setup.md` when the user asks for setup.

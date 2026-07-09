@@ -1,6 +1,6 @@
 {
   "name": "hcaiano",
-  "version": "0.2.0",
+  "version": "0.3.4+codex.20260709230416",
   "description": "Custom agent skills for debugging, QA loops, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
   "author": {
     "name": "Henrique Caiano"
@@ -12,19 +12,7 @@
     "claude",
     "workflow"
   ],
-  "skills": [
-    "./skills/agents-pair",
-    "./skills/art-director",
-    "./skills/check-logs",
-    "./skills/herdr-pair",
-    "./skills/debug-mode",
-    "./skills/goal-loop",
-    "./skills/review-pr-comments",
-    "./skills/ship-it",
-    "./skills/delegate",
-    "./skills/cyber-audit",
-    "./skills/setup-help"
-  ],
+  "skills": "./skills/",
   "interface": {
     "displayName": "Agent workflows",
     "shortDescription": "Custom local agent workflow skills",
@@ -38,13 +26,8 @@
     ],
     "defaultPrompt": [
       "Use debug-mode to investigate this bug",
-      "Use check-logs to inspect an existing herdr/turbo dev TUI",
-      "Use goal-loop to keep improving one thing end to end with Claude and Codex",
-      "Use review-pr-comments to handle this PR feedback",
-      "Use agents-pair to collaborate with Claude through the Claude Code CLI",
-      "Use art-director to run a design-exploration loop where you direct and a Codex pane generates mockups",
-      "Use herdr-pair to pair with the other agent",
-      "Use delegate to orchestrate work across Opus, Sonnet, and Codex"
+      "Use ask-peer for one focused request to Fable",
+      "Use review-pr-comments for a complete PR feedback sweep"
     ],
     "brandColor": "#111111",
     "screenshots": []

@@ -1,6 +1,6 @@
 ---
 name: art-director
-description: "Art-direct a long design-exploration loop: you direct a batch on one axis, a peer generator (Codex) produces the mockups, you curate and wipe the generator, then redirect on a fresh axis until the gallery converges on a winning direction. Use when the user invokes /art-director, wants to explore many design directions or generate mockups for a surface over a long session, or wants to brainstorm or choose a visual identity or brand language. Handles blank-slate (new project / rebrand) and established-brand (creative within brand guardrails) modes. Hand the chosen direction to impeccable or image-to-code to build it."
+description: "Manual-only long design-exploration loop. Use only when the user explicitly invokes art-director: direct Codex image batches, curate and wipe between axes, and converge on a winning direction before handing it to impeccable or image-to-code."
 user-invocable: true
 argument-hint: "<surface to explore> [free-form intent / constraints]"
 ---

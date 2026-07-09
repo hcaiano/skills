@@ -1,6 +1,6 @@
 ---
 name: review-pr-comments
-description: "Fetch PR review comments from bots and humans, triage as fix/false-positive/out-of-scope/needs-discussion/informational, apply valid same-PR fixes, reply to processed threads, push to the PR branch, and keep rechecking until the latest head is stably clean. Use when the user asks to review PR comments, check PR feedback, handle reviews, address comments, triage a PR, or fix PR comments."
+description: "Run the complete PR-feedback loop across every bot and human review surface: inventory, triage, apply valid same-PR fixes, reply, push, and recheck until the latest head is stably clean. Use for a full review sweep or review-clean result, not one selected comment. For the whole commit-to-PR lifecycle use ship-it."
 user-invocable: true
 argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 ---

@@ -1,0 +1,6 @@
+interface:
+  display_name: "Delegate"
+  short_description: "Fable-led multi-model orchestration"
+
+policy:
+  allow_implicit_invocation: false

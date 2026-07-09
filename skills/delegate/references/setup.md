@@ -7,7 +7,8 @@ to these agents from their descriptions even when the skill isn't invoked.
 
 ## 1. Orchestrator model
 
-`/model` → the top tier (Fable 5 today) → highest reasoning effort available.
+`/model` → Fable (or the current top-tier Claude model) → highest reasoning
+effort available.
 Plan quality is the whole game; effort spent by the orchestrator is repaid by
 every delegated slice.
 
@@ -38,25 +39,26 @@ silently falls back to the session model — `deep-reasoner` on a Fable session
 would quietly run on Fable, inverting the point of the roster. If delegate
 work looks suspiciously premium, check which model actually ran.
 
-## 3. Codex plugin
+## 3. Codex CLI
 
-Install the Codex CLI first (`npm i -g @openai/codex`), then in Claude Code:
+Install and authenticate the Codex CLI:
 
-```text
-/plugin marketplace add openai/codex-plugin-cc
-/plugin install codex@openai-codex
-/codex:setup
+```bash
+npm i -g @openai/codex
+codex login
 ```
 
-`/codex:setup` confirms auth and readiness. Without the plugin, one-shot slices
-can still go through raw `codex exec` (`references/codex-exec.md`); with no
-Codex at all, `fast-worker` builds — you lose the flat-rate pool, not the run.
+Confirm it with one read-only `codex exec` probe. `codex-worker` runs raw
+`codex exec` (`references/codex-exec.md`); with no Codex at all, `fast-worker`
+builds — you lose the Codex lane, not the run.
 
-The builder's model and reasoning effort live in `~/.codex/config.toml`
-(`model`, `model_reasoning_effort`) — the skill never overrides them. A pinned
-model does not auto-upgrade when a newer one launches: update the pin (or
-remove it and keep the codex CLI updated so its built-in default tracks the
-latest).
+The builder's model is Codex's own to resolve: a `model` pin in
+`~/.codex/config.toml` or, unpinned, the CLI's built-in default — the skill
+never overrides it. Default reasoning effort lives in the same file
+(`model_reasoning_effort`); per-slice briefs may override only the effort. A
+pinned model does not auto-upgrade when a newer one launches: update the pin
+(or remove it and keep the codex CLI updated so its built-in default tracks
+the latest).
 
 ## 4. Companion skills
 

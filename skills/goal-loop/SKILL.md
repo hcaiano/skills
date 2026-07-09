@@ -1,6 +1,6 @@
 ---
 name: goal-loop
-description: "Goal-driven improvement loop run by Claude + Codex as a pair: the human names one target and what 'better' means, and the agents iteratively test it for real (browser/computer-use, dev logs, runtime debugging), improve it — correctness, behavior, performance, UX, polish, whatever the goal is — and ship autonomous PRs, looping until the goal's quality bar and the peer both pass. Use when the user invokes /goal-loop, or asks to 'keep improving <thing> until it's right', 'QA and fix this app', 'test the whole app and fix what's broken', 'make <X> better and don't stop until it's solid', or wants a paired self-improving loop on something specific. The human supplies a target + intent; the agents plan and set the goal themselves."
+description: "Manual-only long improvement campaign run by Claude + Codex as a pair. Use only when the user explicitly invokes goal-loop and supplies one target plus what 'better' means; the agents repeatedly test, improve, ship PRs, and require current evidence plus peer acceptance to stop."
 user-invocable: true
 argument-hint: "<app/scope> [free-form intent for this run]"
 ---
@@ -41,7 +41,8 @@ Read and obey these before touching anything:
 - `planning-with-files` — the tracker is files, not a spreadsheet.
 - `herdr-pair` — peer coordination protocol, leases, session file.
 - `debug-mode` — hypothesis-driven runtime debugging for any non-obvious bug.
-- `check-logs` — read the running `bun dev` / turbo TUI logs per app (read-only).
+- `check-logs` — only when the project has a running turbo dev TUI; read it
+  without starting, stopping, or restarting servers.
   Use current herdr CLI verbs (`herdr pane read <id> --source recent --lines N`,
   `herdr pane send-text`/`send-keys`); run `herdr pane --help` rather than trusting
   remembered examples. *(dogfood SI-009)*
@@ -49,9 +50,8 @@ Read and obey these before touching anything:
   (its `critique` / `audit` / `polish` commands score and fix the interface). Skip
   it for non-UI goals.
 - `review-pr-comments` (and/or `ship-it`) — the PR review loop after opening.
-- Repo `CLAUDE.md` + nearest `AGENTS.md` — hard rules. For UI goals, also
-  `packages/ds/AGENTS.md` (DS rules: reusable UI only in `packages/ds`, semantic
-  tokens, no app-local primitives, no direct `@radix-ui`/`@base-ui` in apps).
+- Repo `CLAUDE.md` + nearest `AGENTS.md` — hard rules. For UI goals, also read
+  the project's design-system instructions when they exist.
 
 Record in `progress.md` that each lane read these before its first edit.
 
@@ -136,9 +136,10 @@ Goal Block template (fill from the contract):
 
 ```
 /goal Co-run the goal-loop with Claude as peers via herdr-pair (sid=<SID>).
-Read first and obey: planning-with-files, herdr-pair, debug-mode, check-logs,
-review-pr-comments, plus CLAUDE.md + nearest AGENTS.md (+ impeccable +
-packages/ds/AGENTS.md when the goal touches UI).
+Read first and obey: planning-with-files, herdr-pair, debug-mode,
+review-pr-comments, plus CLAUDE.md + nearest AGENTS.md (+ check-logs when a
+turbo dev TUI exists; + impeccable and the project's design-system instructions
+when the goal touches UI).
 Target + Scope Contract + tracker: .planning/<DIR>/ (read task_plan.md now).
 Your lane: <peer partition>. Honor leases + test epochs in progress.md.
 Invariant: only current-epoch evidence closes a story; only a named measurable
@@ -173,37 +174,33 @@ with: id, route/entrypoint, role/state, the **expected behavior** (sourced per t
 contract), and priority (P0/P1/P2). The discovered story list IS the backlog bound.
 A documented residual backlog is acceptable; an unbounded "every feature forever" is not.
 
-**Job enumeration recipe** (Trigger.dev/cron/queue work). Derive task dirs from the
-target (`<target>/trigger`, e.g. `apps/tools-api/trigger` — there is no repo-root
-`trigger/`) *(SI-007)*. List task ids from code, then cross-check **run history** via
-the Trigger MCP (`query` the `runs` table) AND the **schedule/cron wiring** AND
-**caller references** *(SI-005)*. Deadness rule: a task with 0 runs is **evidence, not
-proof** — observability retention is finite (the live project retained only ~7 days),
-so confirm against wiring before deleting; a paused-with-intent or on-demand task wired
-to a live caller is NOT dead *(SI-004)*. Dead candidates needing a human decision get
-status `NEEDS_CONFIRM`, not auto-deleted *(SI-006)*.
+For background jobs, list definitions from code and cross-check run history,
+schedule/queue wiring, and caller references. Zero observed runs is evidence, not
+proof: retention is finite, and an intentionally paused or on-demand job may still
+be live. Destructive cleanup candidates needing a product decision get status
+`NEEDS_CONFIRM`, not auto-deleted.
 
 ## Phase 1.5 — Bring the target up (live execution is mandatory)
 
 Phase 2 needs the target actually running; do not assume it is. *(dogfood SI-002/003)*
 
 1. **Detect** a running dev TUI / listening ports → use `check-logs` and reuse it.
-2. Else **start it the maintained way** (`bun dev`, which runs with turbo `--continue`
-   so unrelated failing apps do NOT tear down your target — ignore their `⨯`). Scope
-   narrowly only if you can keep the wiring (dev-routes, auth bridge, backend URL).
+2. Else **start it the maintained way** from repo instructions and package scripts.
+   Scope narrowly only if you can preserve its required wiring (routes, auth bridge,
+   backend URL, dependencies).
 3. **Never loop on `sudo`.** If bringing it up needs a privileged step (e.g. a proxy
    binding :443) or interactive auth, that is an auth wall — **ask the human to start
    it** (mirror `debug-mode`'s ask-the-human rule) rather than fighting it.
-4. **Backend targets are heavy** — DB + secrets + OAuth bridge. Record infra prereqs
-   in the Scope Contract; the live deploy via a logged-in profile is often the faster
-   verification surface than a local boot.
+4. **Backend targets may be heavy** — DB + secrets + auth bridges. Record infra
+   prerequisites in the Scope Contract; a live environment via an authenticated
+   profile may be the faster verification surface than a local boot.
 5. **Auth/env gotchas that cost real time** (budget for them, ask the human early):
    browser auth is **origin-bound** (cookies/OAuth/CORS pinned to the exact host+port —
-   a different port or branch-subdomain = no session); `NEXT_PUBLIC_*` is inlined at
-   build, so changes need a **full dev restart**, not hot-reload; an **empty** env value
-   may not override a committed `.env`; HTTP-from-HTTPS is mixed-content-blocked. When
-   the authed app won't come up locally after one fix+restart, switch to verifying on
-   the **deploy** rather than burning turns on the local environment.
+   a different port or branch-subdomain = no session); client-side environment values
+   may be inlined at build and need a **full dev restart**, not hot-reload; an **empty**
+   env value may not override a committed `.env`; HTTP-from-HTTPS is
+   mixed-content-blocked. When the authenticated app will not come up locally after one
+   fix+restart, use another authorized verification surface instead of burning turns.
 
 ## Phase 2 — Test (real execution, both lanes)
 
@@ -241,10 +238,11 @@ except `record-only` categories.
 - **Leases** — before editing a path, the writer records a lease in `progress.md`
   (path glob + story id + epoch). While a write lease is open on a partition, testers
   on that partition run discovery/smoke only and label any finding `STALE_UNTIL_RETEST`.
-- **DS gate (UI goals)** — any change to reusable UI first reads `impeccable` +
-  `packages/ds/AGENTS.md`, runs the relevant `impeccable` command (`critique` /
-  `audit` / `polish`), and records whether the change is app-specific or DS-owned.
-  Reusable UI lands in `packages/ds`, never as an app-local primitive.
+- **Design-system gate (UI goals)** — any change to reusable UI first reads
+  `impeccable` plus the project's design-system instructions, runs the relevant
+  `impeccable` command (`critique` / `audit` / `polish`), and records whether the
+  change is app-specific or design-system-owned. Reusable UI lands in the project's
+  shared system, never as an accidental app-local primitive.
 - **Improvement Ledger** (per story, in `findings.md`) — baseline evidence, rubric
   scores, changed files, before/after screenshots or CLI evidence, remaining deltas.
   A story may open another fix iteration **only if it first names a measurable delta**:
