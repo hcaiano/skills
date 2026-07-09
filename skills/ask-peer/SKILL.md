@@ -2,6 +2,7 @@
 name: ask-peer
 description: "Manual-only opposite-model request. Use only when the user explicitly invokes ask-peer: Codex asks Fable through `claude -p`; Claude asks Codex through `codex exec`. For one focused second opinion, review, or scoped work pass without a live Herdr pair."
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "<question, review, or scoped task for the other agent>"
 ---
 

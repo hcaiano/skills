@@ -1,6 +1,8 @@
 ---
 name: delegate
 description: "Fable-led multi-slice orchestration across Codex and Claude subagents: freeze specs, route work, verify, and synthesize. Use when the user explicitly asks Claude to lead, orchestrate, or delegate a non-trivial task across models or subagents. For one opposite-model request use ask-peer; for a live equal pairing use herdr-pair."
+user-invocable: true
+disable-model-invocation: true
 ---
 
 # Delegate

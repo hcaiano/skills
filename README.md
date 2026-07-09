@@ -35,15 +35,15 @@ Four roster names back (`hcaiano:codex-worker`, `hcaiano:deep-reasoner`,
 check `claude plugin list` shows `hcaiano` at the current version
 (`claude plugin update hcaiano` if not) and that you restarted the session.
 
-### Option B — Codex plugin
+### Option B — Codex via skills CLI
 
 ```bash
-codex plugin marketplace add hcaiano/skills
-codex plugin add hcaiano@hcaiano
+npx skills@latest add hcaiano/skills --global --agent codex --copy --yes
 ```
 
-The Codex plugin marks Claude-only `delegate` non-implicit; `ask-peer` is the
-headless path back to Fable.
+This installs a stable copied snapshot rather than linking the development
+checkout. Codex reads the manual-invocation policy from each skill's
+`agents/openai.yaml`; model selection remains in `~/.codex/config.toml`.
 
 ### Option C — skills.sh CLI (other agent runtimes)
 
@@ -140,8 +140,18 @@ To migrate an existing real directory to a symlink after confirming the repo cop
 
 ## Publishing
 
-The plugin manifests (`.claude-plugin/plugin.json`, `.codex-plugin/plugin.json`) intentionally list only active skills; `_deprecated/*` is kept for history and recovery, not normal installs. `.claude-plugin/marketplace.json` registers the repo as the single-plugin `hcaiano` marketplace, and the plugin manifest's `agents` field ships `delegate`'s roster from `skills/delegate/agents/`. Either install path — `npx skills@latest add hcaiano/skills` or the Claude Code plugin — picks up the same active set.
-Claude Code always scans the root `skills/` directory for plugin skills, so any skill kept directly under `skills/` must be active and listed in both manifests. Move non-shipping skills under `_deprecated/` or out of the plugin root.
+The Claude plugin manifest intentionally lists only active skills; `_deprecated/*`
+is kept for history and recovery, not normal installs.
+`.claude-plugin/marketplace.json` registers the repo as the single-plugin
+`hcaiano` marketplace, and the manifest's `agents` field ships `delegate`'s
+roster from `skills/delegate/agents/`. Both supported install paths — the Claude
+plugin and `npx skills@latest add hcaiano/skills` for Codex or other runtimes —
+pick up the same active set.
+
+Claude Code always scans the root `skills/` directory for plugin skills, so any
+skill kept directly under `skills/` must be active and listed in the Claude
+manifest. Move non-shipping skills under `_deprecated/` or out of the plugin
+root.
 
 ## License
 

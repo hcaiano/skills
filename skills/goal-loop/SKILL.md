@@ -2,6 +2,7 @@
 name: goal-loop
 description: "Manual-only long improvement campaign run by Claude + Codex as a pair. Use only when the user explicitly invokes goal-loop and supplies one target plus what 'better' means; the agents repeatedly test, improve, ship PRs, and require current evidence plus peer acceptance to stop."
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "<app/scope> [free-form intent for this run]"
 ---
 

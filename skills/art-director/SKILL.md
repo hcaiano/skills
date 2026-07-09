@@ -2,6 +2,7 @@
 name: art-director
 description: "Manual-only long design-exploration loop. Use only when the user explicitly invokes art-director: direct Codex image batches, curate and wipe between axes, and converge on a winning direction before handing it to impeccable or image-to-code."
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "<surface to explore> [free-form intent / constraints]"
 ---
 
