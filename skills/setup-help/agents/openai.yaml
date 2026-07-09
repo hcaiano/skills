@@ -1,6 +1,0 @@
-# Codex counterpart to the Claude `disable-model-invocation: true` frontmatter:
-# setup-help is hand-invoked only, so Codex must not auto-load it from the
-# description (which would hijack ordinary "help me set up X" tasks). Explicit
-# `$setup-help` invocation still works.
-policy:
-  allow_implicit_invocation: false

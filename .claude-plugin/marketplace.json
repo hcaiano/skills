@@ -10,8 +10,8 @@
     {
       "name": "hcaiano",
       "source": "./",
-      "description": "Agent workflow skills: delegate (Fable-as-tech-lead orchestration with a named subagent roster: codex-worker, deep-reasoner, fast-worker, skeptic), agents-pair, herdr-pair, goal-loop, debug-mode, ship-it, review-pr-comments, check-logs.",
-      "version": "0.2.0"
+      "description": "Agent workflow skills: delegate (Fable-led orchestration with a named subagent roster), ask-peer, herdr-pair, goal-loop, debug-mode, ship-it, review-pr-comments, check-logs.",
+      "version": "0.3.4"
     }
   ]
 }

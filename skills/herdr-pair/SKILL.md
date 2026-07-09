@@ -71,7 +71,7 @@ Triggered by `/herdr-pair <task>` in either pane. The receiving agent is the ini
    mkdir -p "$SESSION_DIR"
    TMP="$SESSION_DIR/session.json.tmp.$$"
    cat > "$TMP" <<JSON
-   {"sid":"$SID","workspace_id":"<ws>","tab_id":"<tab>","self":{"agent":"<self>","pane_id":"$HERDR_PANE_ID"},"partner":{"agent":"<partner>","pane_id":"<partner-pane>"},"round":0,"last_status":{"claude":null,"codex":null},"no_progress_count":0,"workbench":{"tab_id":null,"server_pane":null,"logs_pane":null},"created_at":"$(date -u +%FT%TZ)"}
+   {"sid":"$SID","workspace_id":"<ws>","tab_id":"<tab>","initiator":"<self>","participants":{"claude":{"pane_id":"<claude-pane>"},"codex":{"pane_id":"<codex-pane>"}},"round":0,"last_status":{"claude":null,"codex":null},"no_progress_count":0,"workbench":{"tab_id":null,"server_pane":null,"logs_pane":null},"created_at":"$(date -u +%FT%TZ)"}
    JSON
    mv "$TMP" "$SESSION_DIR/session.json"
    ```
@@ -162,12 +162,17 @@ unchanged with the failure visible.
 
 Input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]`:
 
-1. Re-resolve self: `herdr pane get $HERDR_PANE_ID`. Capture `workspace_id` AND `tab_id`.
+1. Re-resolve self: `herdr pane get $HERDR_PANE_ID`. Capture `workspace_id`,
+   `tab_id`, AND your own `agent` name.
 2. Load `~/.herdr-coworkers/<workspace_id>/<tab_slug>/session.json` where
    `tab_slug = ${TAB_ID//:/_}`. Missing means protocol violation; surface it, and
-   do not invent or borrow state.
+   do not invent or borrow state. A file without `participants` (old
+   `self`/`partner` shape) is stale — surface it the same way.
 3. **sid match.** Mismatch is a hard error.
-4. **Sender match.** Claimed `<from>` must equal `session.partner.agent`; `partner.pane_id` must still resolve and its `tab_id` must equal the session's `tab_id`.
+4. **Identity match.** Your own pane must equal `participants[<you>].pane_id`.
+   Claimed `<from>` must be the other `participants` key;
+   `participants[<from>].pane_id` must still resolve and its `tab_id` must equal
+   the session's `tab_id`.
 5. Process per `kind`, run pre-send checks, send the reply, update the session.
    Done when the reply is delivered and this tab's session file is updated.
 
@@ -187,8 +192,11 @@ Path: `~/.herdr-coworkers/<workspace_id>/<tab_slug>/session.json` where
   "sid": "1715000000-7a3f",
   "workspace_id": "w...",
   "tab_id": "w...:1",
-  "self": { "agent": "claude", "pane_id": "w...-1" },
-  "partner": { "agent": "codex", "pane_id": "w...-2" },
+  "initiator": "codex",
+  "participants": {
+    "claude": { "pane_id": "w...-1" },
+    "codex": { "pane_id": "w...-2" }
+  },
   "round": 0,
   "last_status": { "claude": null, "codex": null },
   "no_progress_count": 0,
@@ -196,6 +204,11 @@ Path: `~/.herdr-coworkers/<workspace_id>/<tab_slug>/session.json` where
   "created_at": "..."
 }
 ```
+
+`participants` is keyed by agent name, so the one shared file reads identically
+from both panes: your entry is the one matching your pane's `agent`; the partner
+is the other key. `initiator` records who bootstrapped the session and owns the
+close.
 
 All mutations write via temp file + `mv` for atomicity. Re-verify recorded pane
 IDs via `herdr pane get` before relying on them; public pane IDs can compact when
@@ -207,14 +220,17 @@ Lazy. See `references/workbench-tab.md` if you need a separate tab for long-runn
 
 ## Closing
 
-After both sides exchange `accepted`, the closing agent emits a final
-`kind=handoff` to the user in its own pane, then trashes only this tab's session
-dir:
+After both sides exchange `accepted`, exactly one agent closes: the
+**initiator** (from the session file) emits the final `kind=handoff` to the user
+in its own pane, then trashes only this tab's session dir. The non-initiator
+sends or acknowledges its `accepted` and stops — no handoff, no cleanup. Only if
+the initiator's pane no longer resolves does the surviving agent close instead.
 
 ```bash
 TAB_SLUG="${TAB_ID//:/_}"
 trash "$HOME/.herdr-coworkers/$WS/$TAB_SLUG"
 ```
 
-`blocked` and `stalemate` paths also end in `handoff` plus cleanup. Done when the
-handoff is visible and only this tab's session dir is gone.
+On `blocked` and `stalemate` paths the agent that declared the state owns the
+same handoff-plus-cleanup, whoever initiated. Done when the handoff is visible
+and only this tab's session dir is gone.

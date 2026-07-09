@@ -1,4 +1,4 @@
-# Codex mechanics — exec, reviews, job tracking
+# Codex mechanics — exec and resume
 
 Raw `codex exec` mechanics for the Codex lane: one-shot builds and resumable
 follow-ups. Everything here is written to sit inside a wrapper's prompt — the
@@ -41,7 +41,8 @@ timeout instead.
   versions (`--full-auto` and `--yolo` don't exist on current `exec`) —
   `codex exec --help` is the source of truth.
 - Read-only work (exploration, investigation, analysis): `-s read-only` instead.
-- Model stays unset — `~/.codex/config.toml` owns it. Reasoning effort is the
+- Model stays unset — Codex resolves it (a `~/.codex/config.toml` pin, else
+  the CLI's built-in default). Reasoning effort is the
   lead's per-slice call (`-c model_reasoning_effort=...`): depth scales with
   judgment residue. `xhigh`, set explicitly, for real builds, hard debugging,
   and stalls; `high` for standard work orders; `medium` for easy fully
@@ -50,8 +51,9 @@ timeout instead.
   judgment left in it) and a machine-checkable receipt (grep, build, tests).
   A miss below `high` escalates effort on the retry — never the same rung
   twice. Skip `minimal`/`none` for code: the seconds saved don't cover one
-  failed round trip. `xhigh` is the current API ceiling (`max` returns 400
-  invalid_value) — probe when a new model lands, don't assume.
+  failed round trip. `max` no longer returns `invalid_value` on the current
+  configured model; neither does an unknown `ultra` value, so acceptance does
+  not establish a supported ceiling. Probe when a new model lands, don't assume.
 - Read the `-o` file for the result. Don't parse the JSONL stream, and keep
   stderr in its file — thinking noise bloats the wrapper's context too; the
   only line worth extracting is the session id. Read the file directly only to
@@ -86,39 +88,6 @@ Follow-ups go through a wrapper too — same reason. A fresh wrapper won't have
 (`--dangerously-bypass-approvals-and-sandbox` exists on `resume` too and lifts
 the sandbox entirely — same rule as on exec: only in a repo you'd let Codex
 own.)
-
-## Reviews and job tracking (plugin companion)
-
-`/codex:review`, `/codex:adversarial-review`, `/codex:status`, `/codex:result`,
-and `/codex:cancel` are user-only slash commands — drive the same engine
-through the plugin's companion script, and echo the matching `/codex:` command
-so the user can re-run it:
-
-```bash
-shopt -s nullglob
-cands=("$HOME"/.claude/plugins/cache/openai-codex/codex/*/scripts/codex-companion.mjs)
-COMPANION="$(printf '%s\n' "${cands[@]}" | sort -V | tail -1)"
-[ -z "$COMPANION" ] && COMPANION="$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs"
-```
-
-If `$COMPANION` doesn't resolve to an existing file (`[ -f "$COMPANION" ]`),
-stop here — none of the commands below can run; tell the user to install the
-plugin with `/codex:setup`. Otherwise:
-
-```bash
-node "$COMPANION" review                              # review the diff
-node "$COMPANION" adversarial-review "focus: <risk>"  # challenge the approach
-node "$COMPANION" status            # active + recent jobs (add <id> for one, --wait to block)
-node "$COMPANION" result <id>       # final output of a finished job — read it in full
-node "$COMPANION" cancel <id>       # stop a running job
-```
-
-Review commands run in the foreground — the companion parses `--background`
-for reviews but doesn't detach them. For a long review, background the Bash
-call itself (`run_in_background: true`); the job still appears in `status`.
-
-`review`/`adversarial-review` take `--base <ref>` or
-`--scope auto|working-tree|branch` to retarget.
 
 ---
 

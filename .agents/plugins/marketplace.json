@@ -1,0 +1,20 @@
+{
+  "name": "hcaiano",
+  "interface": {
+    "displayName": "Henrique Caiano"
+  },
+  "plugins": [
+    {
+      "name": "hcaiano",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Engineering"
+    }
+  ]
+}

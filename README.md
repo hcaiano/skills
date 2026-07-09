@@ -8,7 +8,7 @@ This repo keeps metadata at the root, distributable skills under `skills/`, and 
 
 ## Install
 
-Two paths — pick by your runtime. Claude Code users should take the plugin.
+Three paths — pick by your runtime. Claude Code users should take the plugin.
 
 ### Option A — Claude Code plugin (recommended)
 
@@ -35,7 +35,17 @@ Four roster names back (`hcaiano:codex-worker`, `hcaiano:deep-reasoner`,
 check `claude plugin list` shows `hcaiano` at the current version
 (`claude plugin update hcaiano` if not) and that you restarted the session.
 
-### Option B — skills.sh CLI (any agent runtime)
+### Option B — Codex plugin
+
+```bash
+codex plugin marketplace add hcaiano/skills
+codex plugin add hcaiano@hcaiano
+```
+
+The Codex plugin marks Claude-only `delegate` non-implicit; `ask-peer` is the
+headless path back to Fable.
+
+### Option C — skills.sh CLI (other agent runtimes)
 
 ```bash
 npx skills@latest add hcaiano/skills
@@ -55,11 +65,9 @@ bash ~/.claude/skills/delegate/scripts/setup-roster.sh
 `delegate` routes building and analysis to Codex, so it needs the Codex side
 installed and authenticated:
 
-```text
-npm i -g @openai/codex          # in your shell
-/plugin marketplace add openai/codex-plugin-cc
-/plugin install codex@openai-codex
-/codex:setup
+```bash
+npm i -g @openai/codex
+codex login
 ```
 
 Run your session on the top model at max effort (`/model`). Optional
@@ -70,12 +78,12 @@ companion skills (`tdd`, `planning-with-files`) and the full details live in
 
 ### Collaboration
 
-- `agents-pair` — pair the agent you're in with a peer agent as equal engineers. A host-neutral hub that routes by direction: Claude Code ↔ Codex via the codex plugin, Codex ↔ Claude via the headless `claude -p` CLI. New peers (Gemini, Grok, ...) are added as bridge files without touching the hub.
+- `ask-peer` — manually ask the opposite primary model for one focused review, second opinion, or scoped work pass: Codex → Fable through `claude -p`, Claude → Codex through `codex exec`.
 - `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
-- `delegate` — run the session's top model (Fable/Opus) as tech lead: plan and freeze specs, route building to Codex (the flat-rate pool), deep reasoning to an Opus subagent, and taste-sensitive light work to Sonnet, then verify and synthesize — with a fresh-context top-model `skeptic` consulted at commitment boundaries. Conserves metered top-model usage. Claude Code–hosted.
+- `delegate` — run Fable as tech lead: plan and freeze specs, route building to Codex, deep reasoning to an Opus subagent, and taste-sensitive light work to Sonnet, then verify and synthesize — with a fresh-context Fable `skeptic` at commitment boundaries. Claude Code–hosted.
 
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
-`agents-pair`'s Codex→Claude bridge needs the local `claude` CLI installed and authenticated; its Claude→Codex bridge needs the `codex` plugin installed and Codex authenticated (`/codex:setup`). `delegate`'s Codex lane uses the plugin for session-stateful delegation and raw `codex exec` for one-shots; with neither available it degrades to Claude-only routing. It also references two companion skills it doesn't bundle — `tdd` (build-slice test discipline) and `planning-with-files` (long-goal plan files); its `references/setup.md` covers installing them. `delegate` ships its named subagent roster (`codex-worker`, `deep-reasoner`, `fast-worker`, `skeptic`) in `skills/delegate/agents/`: plugin installs load it automatically; skills.sh installs run `scripts/setup-roster.sh` once.
+`ask-peer` needs both local CLIs installed and authenticated. It explicitly selects Fable through `claude -p` but leaves the Codex model unset so Codex configuration owns it. `delegate` uses raw `codex exec` for its Codex lane; without Codex it degrades to Claude-only routing. It also references two companion skills it doesn't bundle — `tdd` (build-slice test discipline) and `planning-with-files` (long-goal plan files); its `references/setup.md` covers installing them. `delegate` ships its named subagent roster (`codex-worker`, `deep-reasoner`, `fast-worker`, `skeptic`) in `skills/delegate/agents/`: Claude plugin installs load it automatically; skills.sh installs run `scripts/setup-roster.sh` once.
 
 `art-director` composes several external skills instead of vendoring them; install the ones your run needs (it degrades gracefully when an optional one is absent):
 

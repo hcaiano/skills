@@ -1,0 +1,7 @@
+interface:
+  display_name: "Goal Loop"
+  short_description: "Run a paired long-form improvement campaign"
+  default_prompt: "Use $goal-loop to improve one target until its evidence-backed quality bar passes."
+
+policy:
+  allow_implicit_invocation: false

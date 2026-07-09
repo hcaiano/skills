@@ -1,0 +1,7 @@
+interface:
+  display_name: "Ask Peer"
+  short_description: "Ask Fable or Codex for one focused pass"
+  default_prompt: "Use $ask-peer to ask the opposite primary coding agent for one focused second opinion."
+
+policy:
+  allow_implicit_invocation: false
