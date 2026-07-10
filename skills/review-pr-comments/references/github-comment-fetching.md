@@ -67,7 +67,7 @@ record the exact target SHA used by the clean recheck:
 ```bash
 BASE_BRANCH="$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)"
 git fetch origin \
-  "+refs/heads/$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+  "+refs/heads/${BASE_BRANCH}:refs/remotes/origin/${BASE_BRANCH}"
 BASE_SHA="$(git rev-parse "origin/$BASE_BRANCH")"
 ```
 
