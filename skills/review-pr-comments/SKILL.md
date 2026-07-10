@@ -1,6 +1,6 @@
 ---
 name: review-pr-comments
-description: "Run the complete PR-feedback loop across every bot and human review surface: inventory, triage, apply valid same-PR fixes, reply, push, and recheck until the latest head is stably clean. Use for a full review sweep or review-clean result, not one selected comment. For the whole commit-to-PR lifecycle use ship-it."
+description: "Make an existing PR merge-ready through the complete feedback loop: inventory every bot and human review surface, apply valid same-PR fixes, reply, sync the live target branch, resolve conflicts, push, and recheck until the latest head is stably clean. Use for a full review sweep or merge-ready result, not one selected comment. For the whole commit-to-PR lifecycle use ship-it."
 user-invocable: true
 argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 ---
@@ -25,8 +25,8 @@ moments:
    and Socket post a few minutes after open, not at open.
 2. **After every push** to that PR branch — bots re-review new commits progressively.
 
-**Reporting gate:** never report a PR "green / ready / merge-ready / done" until a
-clean recheck per the loop reference's stop definition holds. CI-green is not
+**Reporting gate:** never report a PR "green / ready / merge-ready / done" until
+the loop reference's quiet-window stop condition holds. CI-green is not
 review-clean. The usual misfires: declaring ready at open-time before bots comment,
 and counting only non-outdated threads while unresolved outdated ones remain.
 
@@ -59,9 +59,8 @@ Fail early with a clear blocker, not after edits:
    For each Fix: read the file + surrounding code, apply the smallest change, batch
    related fixes into conventional commits, run the quality gate — then reply per
    the reference's policy.
-3. **Push**: rebase or merge the target branch per repo convention, resolve
-   conflicts, rerun the quality gate, push (never force-push without an explicit
-   ask).
+3. **Sync and push** with the PR's live target branch per the reference's
+   Target-Branch Sync policy. Resolve conflicts, rerun the quality gate, and push.
 4. **Recheck** per the reference's Recheck Loop until its clean-stop condition holds
    — reviewer surfaces before CI, reset on any new finding.
 
