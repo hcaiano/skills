@@ -59,6 +59,36 @@ Checks:
 gh pr checks "$PR_NUMBER"
 ```
 
+## Target Branch Sync
+
+Resolve the live PR target instead of assuming `main`, fetch its remote tip, and
+record the exact target SHA used by the clean recheck:
+
+```bash
+BASE_BRANCH="$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)"
+git fetch origin "$BASE_BRANCH"
+BASE_SHA="$(git rev-parse "origin/$BASE_BRANCH")"
+```
+
+From the checked-out PR branch, follow the repo's explicit integration convention.
+With no explicit convention, merge the fetched remote target:
+
+```bash
+git merge --no-edit "origin/$BASE_BRANCH"
+```
+
+After resolving any conflicts, verify the index and target ancestry before the
+quality gate and push:
+
+```bash
+test -z "$(git diff --name-only --diff-filter=U)"
+git merge-base --is-ancestor "$BASE_SHA" HEAD
+```
+
+Before each clean recheck, repeat the fetch and ancestry test. A changed
+`BASE_SHA` or failed ancestry test means the target advanced; integrate it, push,
+and restart the loop.
+
 ## Unresolved Review Threads
 
 Use GraphQL for review thread resolution state:

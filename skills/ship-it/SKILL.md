@@ -55,17 +55,9 @@ Ship-it adds only these deltas:
 1. Run the Phase 2 quality gate before every fix push.
 2. Commit loop fixes as logical conventional commits.
 3. Push every fix commit to the PR branch.
-4. Before claiming done, sync with the PR's target branch:
-   ```bash
-   BASE_BRANCH="$(gh pr view --json baseRefName -q .baseRefName)"
-   git fetch origin "$BASE_BRANCH"
-   git merge --no-edit "origin/$BASE_BRANCH"
-   ```
-   Resolve conflicts, re-run the quality gate, and push. If the sync creates a
-   new head, restart the shared loop.
 
-Done when the shared loop reaches its clean state on the latest head after the
-target-branch sync, or reports its precise blocker.
+Done when the shared loop reaches its clean state on the latest head and live
+target tip, or reports its precise blocker.
 
 ## Done condition
 

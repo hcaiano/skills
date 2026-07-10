@@ -103,8 +103,59 @@ Use this order after each push:
 3. If any inventory item exists, classify the whole current sweep and group compatible fixes. Fix all actionable items from that sweep before pushing unless they conflict or one fix is risky enough to isolate. Then run the local quality gate, commit, push, reply on each original thread, resolve threads when appropriate, minimize processed review bodies when allowed, and restart the loop. Do not wait for CI before doing this.
 4. Only when the reviewer surface is quiet, check CI status for the latest head.
 5. If a CI check has completed with a real failure, read the failed logs, fix, run the local quality gate, commit, push, and restart the loop.
-6. If CI is only queued or in progress and reviewer feedback is clean, it is acceptable to wait/poll CI, but every poll must re-check reviewer threads/comments before checking CI again.
+6. If CI is only queued or in progress and reviewer feedback is clean, poll every
+   90 seconds. Every poll must re-check reviewer threads/comments before checking
+   CI again.
 
 This avoids wasting a full CI cycle after every reviewer fix. Bots often post comments while CI is still running, and any fix push restarts CI anyway. The only signal that strictly requires green CI is the final done condition.
 
-Success requires two consecutive clean rechecks on the same latest head. A clean recheck means the inventory is empty: `0` unresolved review threads total, `0` unminimized actionable review bodies, `0` unreplied actionable issue comments, every Fix / False Positive / Out of Scope item has a reply on the original surface, every processed review thread is confirmed `isResolved=true`, every processed review-body finding is minimized when minimization is allowed, CI is green for the latest head, the branch is synced, and GitHub reports the PR mergeable. The second clean recheck must happen at least 3 minutes after the most recent push, review reply, thread resolution, or review-body minimization. If a bot posts late feedback, a thread remains unresolved, or a review body remains visually open during that window, handle it and restart the two-clean-recheck count. Stop with a precise blocker when auth/rate limits prevent inspection, CI remains pending without progress after repeated reviewer-clean polls, merge conflicts require broader judgment, or the next action needs expanded-mode confirmation.
+## Target-Branch Sync
+
+Target-branch sync is part of the loop, not optional PR maintenance. Resolve the
+PR's current `baseRefName` from GitHub on every sync; the target is often `main`
+but may be any branch. Use the commands in `github-comment-fetching.md` to fetch
+the remote target and integrate its latest tip into the PR branch. Follow an
+explicit repo merge/rebase convention; otherwise merge the remote target so the
+push remains fast-forward. A rebase that would require a force-push needs explicit
+user approval.
+
+Resolve conflicts that are safely determined by the PR intent, target-branch
+changes, tests, and repo instructions. Then require no unmerged paths, run the
+full local quality gate, commit the integration when needed, and push. The new
+head invalidates prior CI and clean rechecks, so restart the loop. If a conflict
+requires product or architectural judgment that the available evidence cannot
+settle, report the exact files and competing behaviours as a blocker.
+
+Before each clean recheck, fetch the live target again and require its fetched tip
+to be an ancestor of the PR head. If it advanced, integrate it and restart the
+loop. A clean recheck is tied to both the same PR head SHA and the same target tip
+SHA.
+
+Success requires a quiet window, not an instantaneous clean state.
+
+A **clean recheck** means the inventory is empty: `0` unresolved review threads
+including outdated threads, `0` unminimized actionable review bodies, `0`
+unreplied actionable issue comments, every Fix / False Positive / Out of Scope
+item has a reply on the original surface, every processed review thread is
+confirmed `isResolved=true`, every processed review-body finding is minimized
+when minimization is allowed, every check required by GitHub for the latest head
+is registered, completed, and green, the fetched target tip is an ancestor of
+that head, and GitHub reports the PR mergeable. If this PR normally runs checks,
+treat an empty check rollup shortly after a push as pending. Treat a transient
+`UNKNOWN` merge state as pending too; re-poll both rather than counting them as
+clean.
+
+The first clean recheck opens a **10-minute quiet window**. Poll every 90 seconds
+during that window, always inspecting reviewer surfaces before CI. Any new review
+surface event; check run appearing, restarting, or failing; target-tip advance;
+push; reply; thread resolution; or review-body minimization resets the window.
+Handle the event, obtain a fresh first clean recheck, and open a new window.
+
+The loop succeeds only when a second clean recheck observes the same PR head SHA
+and target tip SHA after the full quiet window elapses without a reset.
+
+Stop with a precise blocker instead of waiting indefinitely when CI remains
+queued or pending for 30 minutes without any state change, the quiet window resets
+five consecutive times solely because the target branch advances, auth or rate
+limits prevent inspection, a merge conflict requires judgment the available
+evidence cannot settle, or the next action needs expanded-mode confirmation.
