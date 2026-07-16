@@ -2,6 +2,7 @@
 name: debug-mode
 description: "Evidence debugging for unresolved bugs. Use when the user says 'diagnose' or 'debug this', or when behavior is broken, flaky, environment-specific, or unexplained and the root cause is not proven. Build a feedback loop, collect runtime evidence, and fix only after evidence identifies the cause."
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "[description of the bug]"
 ---
 

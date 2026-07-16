@@ -2,6 +2,7 @@
 name: herdr-pair
 description: "Live Claude/Codex pairing inside herdr. Use when the user invokes `/herdr-pair` or asks for live pairing in herdr. Use when input begins with `[agent <name> -> <name> kind=<kind> sid=<...>]`; that is partner-agent traffic, so validate pane/session state before responding."
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "[task description]"
 ---
 

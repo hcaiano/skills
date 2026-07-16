@@ -2,6 +2,7 @@
 name: check-logs
 description: "Check logs in an existing turborepo dev TUI inside herdr. Use when the user asks about an app's dev output, whether an app is running, or an error shown by a `bun dev` / `turbo run dev` pane. Read-only: navigate the existing TUI; never start, stop, or restart the server."
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "[app name, e.g. cms or frontend]"
 ---
 

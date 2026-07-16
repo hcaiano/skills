@@ -1,86 +1,29 @@
 ---
 name: review-pr-comments
-description: "Make an existing PR merge-ready through the complete feedback loop: inventory every bot and human review surface, apply valid same-PR fixes, reply, sync the live target branch, resolve conflicts, push, and recheck until the latest head is stably clean. Use for a full review sweep or merge-ready result, not one selected comment. For the whole commit-to-PR lifecycle use ship-it."
+description: "Manual-only review cleanup for an existing PR: evaluate feedback, apply valid in-scope fixes, respond where useful, validate, and leave the PR merge-ready. Use only when the user explicitly invokes review-pr-comments. For local work that still needs commits and a PR, use ship-it."
+disable-model-invocation: true
 user-invocable: true
 argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 ---
 
 # Review PR Comments
 
-Dedicated entrypoint for the PR comment loop. The shared policy — mode-split
-safety, categories, classification context, bot detection, reply format, the
-inventory + recheck loop, and the clean-stop definition — lives in
-`references/pr-comment-loop.md`; API endpoints live in
-`references/github-comment-fetching.md`. **Load both before acting and follow
-them; this skill adds only the entrypoint contract, preflight, and flow — it does
-not restate the policy.**
+Make the selected existing PR merge-ready. Use the available GitHub tools and
+repository conventions; choose the most efficient workflow for the live state.
 
-## When to run (proactive — don't wait to be asked)
+Required outcomes:
 
-You OWN the review threads on every PR YOU open. Run this loop **automatically**,
-scoped to PRs you created in this work (don't retroactively sweep others'), at two
-moments:
+- Inspect all relevant human and automated review feedback, including unresolved
+  or outdated threads that remain open.
+- Verify each finding against the code. Fix valid in-scope issues, explain false
+  positives, and surface genuinely ambiguous or out-of-scope decisions.
+- Keep changes scoped to the PR unless the user explicitly expands the task.
+- Validate fixes, commit and push them safely, and resolve or reply to review
+  threads when that improves the audit trail.
+- Recheck the latest PR head, required checks, target-branch compatibility,
+  unresolved feedback, and mergeability before declaring success.
 
-1. **~3–5 min after `gh pr create`** — CodeRabbit, the Codex/ChatGPT connector,
-   and Socket post a few minutes after open, not at open.
-2. **After every push** to that PR branch — bots re-review new commits progressively.
-
-**Reporting gate:** never report a PR "green / ready / merge-ready / done" until
-the loop reference's quiet-window stop condition holds. CI-green is not
-review-clean. The usual misfires: declaring ready at open-time before bots comment,
-and counting only non-outdated threads while unresolved outdated ones remain.
-
-## Inputs
-
-`$ARGUMENTS` is a PR number, URL, or `all`. With no argument, detect from the
-branch: `gh pr view --json number -q .number`. `all` is expanded mode — list
-candidates and confirm before processing (see Mode-Split Safety in the reference).
-
-## Preflight
-
-Fail early with a clear blocker, not after edits:
-
-1. `gh auth status` and `gh repo view` — CLI authed, repo resolves.
-2. `git status`, branch, remote, push permission. Refuse to work on `main` unless
-   the user asked.
-3. Resolve the target PR, or confirm expanded mode for `all`.
-4. Read repo instruction files (`AGENTS.md`, `CLAUDE.md`, or local equivalent).
-5. Identify the quality gate (instructions → lockfiles → package scripts → ask).
-6. Fetch the PR diff file list before classifying.
-
-## Flow
-
-1. **Discover** every review surface for the PR (commands in
-   `github-comment-fetching.md`): review comments, review bodies, issue comments,
-   unresolved threads (including `isOutdated=true`), latest-head checks, and
-   mergeability. Build the inventory per the reference's Inventory Rules.
-2. **Classify and reply** per the reference (it owns categories, required context,
-   bot detection, reply format, thread resolution, and review-body minimization).
-   For each Fix: read the file + surrounding code, apply the smallest change, batch
-   related fixes into conventional commits, run the quality gate — then reply per
-   the reference's policy.
-3. **Sync and push** with the PR's live target branch per the reference's
-   Target-Branch Sync policy. Resolve conflicts, rerun the quality gate, and push.
-4. **Recheck** per the reference's Recheck Loop until its clean-stop condition holds
-   — reviewer surfaces before CI, reset on any new finding.
-
-## Summary Report
-
-End with:
-
-```markdown
-PR #123 - Review Complete
-Fixed: <count> (each replied with commit SHA on the original thread)
-Dismissed: <count> (each replied as false positive on the original thread)
-Out-of-scope: <count> (each replied with deferral reason on the original thread)
-Needs attention: <thread URLs awaiting user input>
-Unreplied: <should be 0 — if not, list thread URLs and reason>
-CI:
-Merge-ready:
-Commits:
-Remaining:
-```
-
-`Unreplied` must be `0` for a clean run (it counts only Fix / False Positive /
-Out of Scope). Every Needs Discussion thread appears under `Needs attention` with
-its URL.
+Do not merge, force-push, modify `main`, create follow-up PRs, or make product and
+architecture decisions without authorization. Do not wait for an arbitrary quiet
+window: use judgment based on the repository's normal review automation and
+report any remaining uncertainty explicitly.
