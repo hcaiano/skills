@@ -1,0 +1,6 @@
+interface:
+  display_name: "Herdr Pair"
+  short_description: "Pair Claude and Codex inside Herdr"
+
+policy:
+  allow_implicit_invocation: false

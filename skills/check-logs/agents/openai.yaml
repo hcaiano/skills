@@ -1,0 +1,6 @@
+interface:
+  display_name: "Check Logs"
+  short_description: "Inspect an existing Herdr dev TUI"
+
+policy:
+  allow_implicit_invocation: false

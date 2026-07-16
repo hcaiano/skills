@@ -1,0 +1,6 @@
+interface:
+  display_name: "Debug Mode"
+  short_description: "Run evidence-first debugging on request"
+
+policy:
+  allow_implicit_invocation: false

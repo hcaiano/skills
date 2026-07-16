@@ -1,0 +1,6 @@
+interface:
+  display_name: "Ship It"
+  short_description: "Manually ship current work to a merge-ready PR"
+
+policy:
+  allow_implicit_invocation: false

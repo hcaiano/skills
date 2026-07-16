@@ -1,0 +1,6 @@
+interface:
+  display_name: "Review PR Comments"
+  short_description: "Manually finish review cleanup on an existing PR"
+
+policy:
+  allow_implicit_invocation: false
