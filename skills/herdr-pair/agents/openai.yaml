@@ -3,4 +3,4 @@ interface:
   short_description: "Pair Claude and Codex inside Herdr"
 
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
