@@ -1,104 +1,84 @@
 ---
 name: herdr-pair
-description: "Pair Claude and Codex live inside one Herdr tab. Use when the user asks for Herdr pairing, another skill needs a live Claude/Codex partner, or input begins with `[agent <name> -> <name> kind=<kind> sid=<...>]`."
-user-invocable: true
-argument-hint: "[task description]"
+description: "Persistent Claude and Codex coworking inside one Herdr tab. Use when the user asks for Herdr pairing, another workflow needs a live peer, or input begins with `[agent` or includes `[herdr-pair control`. For inbound traffic, including after context compaction, run receive and reply through the bundled sender instead of local output."
 ---
 
 # Herdr Pair
 
-Claude and Codex collaborate as peers inside herdr: one tab, two agent panes,
-plain-text messages with a structured header. The user reads along live and can
+Pair Claude and Codex in one Herdr tab. Keep the pair and its `sid` alive across
+tasks, accepted work cycles, and context compaction. The user can read and
 interject in either pane.
 
-If the current input begins with `[agent <from> -> <to> kind=<kind> sid=<sid>]`,
-treat it as inbound pair transport: validate the current-tab session and respond
-through the bundled sender. It is not an ordinary prompt to answer locally.
+Write partner messages and user handoffs in the user's current language. Keep
+code, commands, paths, identifiers, errors, and protocol headers literal.
 
-Requires the `herdr` CLI on PATH. The bundled helper owns the pane primitives;
-do not invoke the separate `herdr` skill just to transport pair messages. If
-`command -v herdr` fails or `HERDR_ENV != 1` or `HERDR_PANE_ID` is unset, stop
-and tell the user to install/start Herdr first.
+## Preconditions
 
-## Hard rules
+Set `SKILL_DIR` to this skill directory and
+`PAIR_SCRIPT="$SKILL_DIR/scripts/herdr-pair.mjs"`. Always use that absolute
+path; the project cwd is unrelated to the installed skill path.
 
-1. **Workspace isolation.** Every pane operation is scoped to the caller's
-   `workspace_id`. Cross-workspace activity is forbidden.
-2. **Per-tab session.** Exactly one pair per `tab_id`; session state lives under
-   `<workspace_id>/<tab_slug>/`. Never address a pane discovered only by
-   workspace, direction, focus, label, cwd, or pane number. Resolve and verify
-   the opposite agent in the caller's exact current tab before every send.
-3. **User-language continuity.** Use the language of the user's current
-   conversation for partner messages and the final user handoff. Keep code,
-   commands, paths, identifiers, quoted errors, and protocol headers literal
-   when needed. A user language switch changes the next message.
-4. **One partner transport.** Send every partner message through the bundled
-   `herdr-pair.mjs send` command. An agent-prefixed inbound message is transport
-   traffic, not a prompt to answer visibly in your own pane. `SendMessage`,
-   subagent messaging, normal assistant output, and direct `herdr pane
-   send-text` are not pair delivery. The final `handoff` is different: address
-   it to the user as normal output in your own pane and never send it through
-   the helper.
-5. **Write lease.** One agent holds the pen for a declared file scope: owner,
-   target files, forbidden changes, validation, and stop point. The partner stays
-   read/review-only on that scope until handoff.
-6. **User override.** A submitted user message beats partner traffic. Surface the
-   contradiction in the next reply.
-7. **No retries on spawn failure.** One failed partner spawn means handoff to the
-   user with recent pane output.
+Require `herdr` and `trash` on `PATH`, `HERDR_ENV=1`, and `HERDR_PANE_ID`. If any is
+missing, stop and tell the user to install or start Herdr.
 
-## Message format
+## Guardrails
 
-```
+1. Scope every pane operation to the caller's exact `workspace_id` and
+   `tab_id`. Never address a pane discovered only by workspace, focus, label,
+   cwd, direction, or pane number.
+2. Use `herdr-pair.mjs send` as the sole partner transport. Reserve normal
+   assistant output for a header-free user handoff. `SendMessage`, subagent
+   messaging, and direct pane writes are different channels.
+3. Give one agent the write lease for each file scope: owner, target files,
+   forbidden changes, validation, and stop point. The partner stays read-only
+   on that scope until handoff.
+4. A submitted user message overrides partner traffic. Surface any conflict in
+   the next reply. One failed partner spawn ends the attempt.
+
+## Protocol
+
+Messages start with:
+
+```text
 [agent <from> -> <to> kind=<kind> sid=<sid>]
+[herdr-pair control seq=<n>: ...]
 
 <body>
 ```
 
-- `<from>`, `<to>`: `claude` or `codex`.
-- `<kind>`: `task`, `review`, `question`, `ready`, `accepted`, `blocked`, `stalemate`, `handoff`.
-- `<sid>`: sortable session id, e.g. `1715000000-7a3f`.
+The helper injects the control line. It contains the exact executable
+`receive` command for this message and the rule to reply through the sender.
+This line is the recovery anchor when model context has been compacted.
 
-Header matches; body is plain prose — write to a teammate, not a parser.
+Use these kinds:
 
-### Kinds
+- `task`: assign or update work and the write lease. Begin a mid-flight stop
+  with `STOP — <reason>`.
+- `review`: request review with file paths and a short change summary.
+- `question`: ask for clarification before proceeding.
+- `ready`: report changed files, validation, and residual risk.
+- `accepted`: accept the partner's `ready` and advance the work cycle.
+- `blocked`: name the user decision required to continue.
+- `stalemate`: report the same disagreement repeated twice without movement.
+- `handoff`: return control to the user in normal local output.
 
-- `task` — assign or update work, including the write lease. Mid-flight stop:
-  body begins `STOP — <reason>`.
-- `review` — request review of described changes (file paths + short summary).
-- `question` — ask for clarification before proceeding.
-- `ready` — your side is complete. Summarize changed files, validation, and
-  residual risk.
-- `accepted` — partner's `ready` looks good. **Both sides sending `accepted` is the only completion signal.**
-- `blocked` — cannot proceed without user input. Name the missing decision.
-- `stalemate` — same disagreement restated twice without movement. Summarize for the user.
-- `handoff` — final message back to the user.
+## Start or resume
 
-## Bootstrap
+1. Run `node "$PAIR_SCRIPT" discover`. If no opposite agent exists, run
+   `node "$PAIR_SCRIPT" spawn` once. Stop on multiple candidates or spawn
+   failure.
+2. Run `node "$PAIR_SCRIPT" init`. It creates a new tab-scoped session or
+   idempotently resumes the exact live session. It also migrates supported
+   legacy session shapes.
+3. Send the first `task` through the helper. State the write lease and include
+   enough task context for the partner to work independently.
 
-When the skill starts from a pairing request or another active skill, the
-receiving agent is the initiator. Inbound partner traffic follows Receiving
-instead.
+Done when the exact tab has one verified session and the first task has a
+recorded receipt. Skill reload and compaction always resume that session.
 
-Set `SKILL_DIR` to the directory containing the loaded `herdr-pair/SKILL.md`,
-then set `PAIR_SCRIPT="$SKILL_DIR/scripts/herdr-pair.mjs"`. Use that absolute
-path; the user's project cwd is unrelated to the installed skill path.
+## Send
 
-1. Run `node "$PAIR_SCRIPT" discover`. It accepts exactly one
-   opposite-agent pane in the caller's current tab. If none exists, run
-   `node "$PAIR_SCRIPT" spawn`; it creates the opposite agent in a split
-   of this tab only. More than one candidate or a failed spawn stops the pair.
-2. Run `node "$PAIR_SCRIPT" init`. It creates the per-tab session
-   atomically and stops on existing state. Done when the exact current-tab
-   session exists or stale state has been surfaced to the user.
-3. Send the first message (see Sending below). Body should include a one-line
-   fallback hint so a partner whose skill didn't auto-load can still recover:
-   > `(Herdr pair protocol — if your skill didn't auto-load, run /herdr-pair, or follow the [agent X -> Y kind=... sid=...] header format.)`
-
-## Sending (with verify)
-
-Write only the body to a temp file, in the user's current conversation language,
-then use the bundled sender:
+Write only the body to a temp file, then invoke:
 
 ```bash
 BODY=$(mktemp); trap 'trash "$BODY"' EXIT
@@ -106,61 +86,83 @@ BODY=$(mktemp); trap 'trash "$BODY"' EXIT
 node "$PAIR_SCRIPT" send --kind "$KIND" --body-file "$BODY"
 ```
 
-The sender re-resolves the current-tab binding immediately before writing,
-presses Enter, and requires one positive signal: an available partner starts
-working, or a working Codex shows `Messages to be submitted after next tool
-call` with the exact protocol header. A working Claude is never queued.
-Composer text, scrollback text, and disappearance from the viewport are not
-delivery evidence. It retries Enter only when the exact header remains visibly
-in the composer; ambiguous timeouts fail without risking a duplicate submit.
-Session updates are serialized per tab.
+The sender waits for a working Claude before reserving the sequence and message
+kind, then injects the control line and records positive UI
+evidence. It waits for `receive` to acknowledge that sequence in
+`session.json`; an ACK can recover an interruption immediately after Enter.
 
-## Receiving
+- `receipt=acknowledged`: the partner ran `receive` for this message.
+- `receipt=pending-partner-may-be-busy-do-not-retry`: submission was observed,
+  but the partner has not acknowledged it yet. Do not resend. Later run
+  `node "$PAIR_SCRIPT" reconcile`; the status advances only after its ACK.
+- A nonzero exit after reservation is a transport failure. The pending
+  reservation remains so an ACK can reconcile it; never claim delivery or clear
+  it without inspection. A pre-reservation wait timeout leaves no pending state.
 
-Input begins with `[agent <X> -> <you> kind=<kind> sid=<sid>]`:
+A working Claude is never queued; wait for it to become available. A working
+Codex may be queued only when its exact queue marker contains this message's
+header.
 
-1. Run `node "$PAIR_SCRIPT" receive --sid "<sid>" --from "<X>"`. It fail-closes
-   unless the inbound header, self, partner, session, workspace, and current tab
-   all agree.
-2. Process per `kind` and compose the reply body in the user's current
-   conversation language.
-3. Put a partner-reply body in a temp file and run `node "$PAIR_SCRIPT" send
-   ...`. Do not print a partner reply in your own pane and do not use
-   `SendMessage`. For `kind=handoff`, write only to the user in your own pane.
-   Done only when the helper reports the partner header and this tab's session
-   file records the new round/status. If the helper fails, surface the transport
-   failure to the user without pretending the partner received anything.
+If inspection proves a pending message never reached the partner, clear only
+that delivery with explicit user approval:
 
-## Progress guards
+```bash
+node "$PAIR_SCRIPT" reconcile --sid "<sid>" --clear-pending true
+```
 
-- **No fixed round cap.** Continue while producing useful artifacts; exchange `accepted` when done.
-- **No-new-artifact heuristic.** If five consecutive turns produce nothing new (code, test results, decision, narrowed option), send `kind=handoff` instead. Track via `no_progress_count` (manually `+1` per "nothing new" turn, reset to 0 on real progress).
-- **Stalemate.** Same disagreement restated twice without movement → `kind=stalemate` with a summary.
+## Receive and recover after compaction
 
-## Session file
+For inbound `[agent ...]` traffic:
 
-The helper owns the full JSON shape at
-`~/.herdr-coworkers/<workspace_id>/<tab_slug>/session.json`. Agents rely only on
-`sid`, `participants`, `initiator`, and the helper's verified status updates;
-they do not mutate the file directly.
+1. Run the exact command in `[herdr-pair control ...]`. It calls `receive` with
+   `--sid`, `--from`, and `--seq`, validates the live tab binding, and persists
+   the receipt acknowledgement.
+2. For a legacy message without a control line, run:
+
+   ```bash
+   node "$PAIR_SCRIPT" receive --sid "<sid>" --from "<from>"
+   ```
+
+3. Process the message, write the reply body to a temp file, and run
+   `node "$PAIR_SCRIPT" send ...`.
+
+Done when `receive` records the sequence and the reply has a recorded receipt.
+On failure, give the user a header-free transport report. After compaction,
+reconstruct pane IDs, `sid`, task status, and close state from the control line
+and verified session.
+
+## Work cycles and persistence
+
+Continue while producing useful artifacts. Five consecutive turns with no new
+code, test result, decision, or narrowed option require a `handoff`. Reset the
+count on real progress. Send `stalemate` after the same disagreement repeats
+twice.
+
+Two `accepted` statuses complete one work cycle. The initiator gives the user a
+local handoff; both agents may idle; the next task resumes the same pair and
+`sid`. The session remains active.
+
+`blocked` and `stalemate` also hand off without deleting the session. Use
+`node "$PAIR_SCRIPT" reset` only to clear work-cycle counters/statuses in a
+verified live pair; it preserves identity and delivery history.
+
+End and trash the session only when the user explicitly asks to end the pair:
+
+```bash
+node "$PAIR_SCRIPT" end --sid "<sid>"
+```
+
+`end` verifies the exact sid, workspace, tab, and participants, then trashes
+only that tab's session and removes an empty workspace directory. Closing the
+Herdr tab ends the panes naturally; stale state must never be borrowed by
+another tab. If old pane IDs or a missing partner prevent resume, explain the
+mismatch and use `end --sid "<sid>" --stale true` only with explicit user
+approval. Normal `end` refuses while delivery is pending; wait for its ACK or
+use the explicit inspected clear path. An explicitly approved stale end may
+discard pending state only when the partner pane is gone or its recorded
+participant binding is stale.
 
 ## Workbench tab
 
-Lazy. See `references/workbench-tab.md` if you need a separate tab for long-running shared processes.
-
-## Closing
-
-After both sides exchange `accepted`, exactly one agent closes: the
-**initiator** (from the session file) emits the final `kind=handoff` to the user
-in its own pane, then trashes only this tab's session dir. The non-initiator
-sends or acknowledges its `accepted` and stops — no handoff, no cleanup. Only if
-the initiator's pane no longer resolves does the surviving agent close instead.
-
-```bash
-TAB_SLUG="${TAB_ID//:/_}"
-trash "$HOME/.herdr-coworkers/$WS/$TAB_SLUG"
-```
-
-On `blocked` and `stalemate` paths the agent that declared the state owns the
-same handoff-plus-cleanup, whoever initiated. Done when the handoff is visible
-and only this tab's session dir is gone.
+Read `references/workbench-tab.md` only when a separate tab is needed for a
+long-running shared process.
