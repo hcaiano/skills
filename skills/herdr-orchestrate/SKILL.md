@@ -135,12 +135,8 @@ at that tab instead of creating a second unit for it.
    `git worktree list --porcelain`. If the pipeline fails (deps, env), the
    unit fails here — hand the agent a fully set-up worktree or none.
 3. **Tab and pair.** Create a tab in the recorded workspace with
-   cwd = the worktree, without stealing focus. Label it so the user can tell
-   the tabs apart at a glance while monitoring: the issue number plus a
-   two-to-three-word gist of the work, e.g. `#142 login redirect` or
-   `#88 rate limiter` (multi-issue: `#N+#M <shared theme>`, e.g.
-   `#12+#15 notifications cleanup`). Not the issue's full title. Start both
-   agents in that tab
+   cwd = the worktree, labeled `#N <short title>` (multi-issue:
+   `#N+#M <theme>`), without stealing focus. Start both agents in that tab
    via herdr, each with the unit's effort in its argv:
 
    ```bash
