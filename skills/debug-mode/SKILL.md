@@ -23,9 +23,10 @@ fix, an already-proven root cause, or when debug-mode is already active. Never
 re-invoke debug-mode from inside an active debug-mode run — continue the
 existing evidence loop.
 
-Respect the user's verb: a `diagnose` request ends before the **Fix** step and
-applies no code change; only apply a fix when the task explicitly includes
-correction.
+Respect the user's verb: a `diagnose`-only request ends before the **Fix** step
+and applies no code change. A `debug` request, or an ordinary bug report with no
+explicit verb, continues through the **Fix** step as usual — do not withhold
+the fix just because the task didn't separately say "fix" or "correct".
 
 ## Workflow
 
