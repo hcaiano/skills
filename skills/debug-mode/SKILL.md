@@ -1,8 +1,7 @@
 ---
 name: debug-mode
-description: "Evidence debugging for unresolved bugs. Use when the user says 'diagnose' or 'debug this', or when behavior is broken, flaky, environment-specific, or unexplained and the root cause is not proven. Build a feedback loop, collect runtime evidence, and fix only after evidence identifies the cause."
+description: "Evidence debugging for unresolved bugs. Use when the user says 'diagnose' or 'debug this', or when a bug is flaky, environment-specific, production-only, or its root cause survived a normal reproduction/inspection. Build a feedback loop, collect runtime evidence, and fix only after evidence identifies the cause. Do not use for a compiler/type/lint/test error whose cause is in the output, a review finding that already names cause and fix, an already-proven root cause, or from inside an active debug-mode run."
 user-invocable: true
-disable-model-invocation: true
 argument-hint: "[description of the bug]"
 ---
 
@@ -10,6 +9,24 @@ argument-hint: "[description of the bug]"
 
 Use the **evidence loop** when the root cause is not proven. Avoid plausible fixes
 that only pass once.
+
+## Activation boundary
+
+Reach for this skill — including autonomously, without waiting for the user to
+name it — when the user explicitly says `diagnose`/`debug`, **or** when a normal
+reproduction or inspection has *not* revealed the cause, especially for flaky,
+environment-specific, or production-only bugs.
+
+Do **not** enter debug-mode for a compiler/type/lint/test error whose cause is
+directly in the output, a review finding that already specifies both cause and
+fix, an already-proven root cause, or when debug-mode is already active. Never
+re-invoke debug-mode from inside an active debug-mode run — continue the
+existing evidence loop.
+
+Respect the user's verb: a `diagnose`-only request ends before the **Fix** step
+and applies no code change. A `debug` request, or an ordinary bug report with no
+explicit verb, continues through the **Fix** step as usual — do not withhold
+the fix just because the task didn't separately say "fix" or "correct".
 
 ## Workflow
 

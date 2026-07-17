@@ -42,8 +42,10 @@ npx skills@latest add hcaiano/skills --global --agent codex --copy --yes
 ```
 
 This installs a stable copied snapshot rather than linking the development
-checkout. Codex reads the manual-invocation policy from each skill's
-`agents/openai.yaml`; model selection remains in `~/.codex/config.toml`.
+checkout. Codex reads each skill's invocation policy from its
+`agents/openai.yaml` — manual by default, though some skills (`ask-peer`,
+`debug-mode`, `cyber-audit`) opt into implicit invocation so Codex can reach
+for them autonomously; model selection remains in `~/.codex/config.toml`.
 
 ### Option C — skills.sh CLI (other agent runtimes)
 
@@ -78,7 +80,7 @@ companion skills (`tdd`, `planning-with-files`) and the full details live in
 
 ### Collaboration
 
-- `ask-peer` — manually ask the opposite primary model for one focused review, second opinion, or scoped work pass: Codex → Fable through `claude -p`, Claude → Codex through `codex exec`.
+- `ask-peer` — ask the opposite primary model for one focused review, second opinion, or scoped work pass: Codex → Fable through `claude -p`, Claude → Codex through `codex exec`. In Codex it can invoke automatically to escalate to Fable; in Claude Code it stays manual (user-invoked only).
 - `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
 - `delegate` — run Fable as tech lead: plan and freeze specs, route building to Codex, deep reasoning to an Opus subagent, and taste-sensitive light work to Sonnet, then verify and synthesize — with a fresh-context Fable `skeptic` at commitment boundaries. Claude Code–hosted.
 
