@@ -426,7 +426,7 @@ async function initSession() {
           `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${JSON.stringify(scriptPath)} end --sid ${JSON.stringify(sid)} --stale true`,
         );
       }
-      await reconcileAcknowledged(resumed.path);
+      await reconcileAcknowledged(resumed.path, resumed.session.sid);
       resumed.session = JSON.parse(readFileSync(resumed.path, "utf8"));
       process.stdout.write(
         `${JSON.stringify({ ...resumed.session, resumed: true }, null, 2)}\n`,
@@ -553,6 +553,12 @@ async function withSessionLock(path, mutate) {
   }
 }
 
+function requireLockedSession(session, sid, action) {
+  if (session.active !== true || session.sid !== sid) {
+    fail(`${action} requires active session ${sid}; locked session is ${session.sid ?? "unknown"}`);
+  }
+}
+
 async function acknowledgeInbound(path, sid, from, sequence) {
   await withSessionLock(path, (session) => {
     if (session.active !== true || session.sid !== sid) {
@@ -601,8 +607,11 @@ function reconcileSessionState(session) {
   return reconciled;
 }
 
-async function reconcileAcknowledged(path) {
-  return withSessionLock(path, reconcileSessionState);
+async function reconcileAcknowledged(path, sid) {
+  return withSessionLock(path, (session) => {
+    requireLockedSession(session, sid, "reconcile");
+    return reconcileSessionState(session);
+  });
 }
 
 async function verifyInbound(args) {
@@ -621,7 +630,7 @@ async function verifyInbound(args) {
 
   if (options.seq !== undefined) {
     await acknowledgeInbound(binding.path, claimedSid, claimedFrom, Number(options.seq));
-    await reconcileAcknowledged(binding.path);
+    await reconcileAcknowledged(binding.path, claimedSid);
     binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
   }
 
@@ -724,8 +733,9 @@ async function submitReservedDelivery(path, sid, agent, sequence, paneId) {
   });
 }
 
-async function recordSubmission(path, agent, kind, sequence) {
+async function recordSubmission(path, sid, agent, kind, sequence) {
   await withSessionLock(path, (session) => {
+    requireLockedSession(session, sid, "record submission");
     session.delivery.submitted[agent] = Math.max(
       session.delivery.submitted[agent] ?? 0,
       sequence,
@@ -751,8 +761,9 @@ async function waitForReceipt(path, agent, sequence, timeoutMs) {
 
 async function resetSession() {
   const binding = await verifiedSession();
-  await reconcileAcknowledged(binding.path);
+  await reconcileAcknowledged(binding.path, binding.session.sid);
   await withSessionLock(binding.path, (session) => {
+    requireLockedSession(session, binding.session.sid, "reset");
     const pending = Object.entries(session.delivery.pending).find(([, value]) => value);
     if (pending) {
       fail(`cannot reset while ${pending[0]} seq ${pending[1].seq} awaits receipt`);
@@ -845,7 +856,7 @@ async function send(args) {
   if (!kind || !bodyFile) fail("send requires --kind and --body-file");
 
   let binding = await verifiedSession();
-  await reconcileAcknowledged(binding.path);
+  await reconcileAcknowledged(binding.path, binding.session.sid);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
 
   if (binding.partner.agent_status === "working" && binding.partner.agent !== "codex") {
@@ -907,14 +918,22 @@ async function send(args) {
         binding.partner.pane_id,
       );
       if (await verifySubmission(binding.partner.pane_id, before, header, queuedToCodex)) {
-        await recordSubmission(binding.path, binding.self.agent, kind, sequence);
+        await recordSubmission(
+          binding.path,
+          binding.session.sid,
+          binding.self.agent,
+          kind,
+          sequence,
+        );
         const acknowledged = await waitForReceipt(
           binding.path,
           binding.self.agent,
           sequence,
           Number(options["ack-timeout-ms"] ?? 15000),
         );
-        if (acknowledged) await reconcileAcknowledged(binding.path);
+        if (acknowledged) {
+          await reconcileAcknowledged(binding.path, binding.session.sid);
+        }
         process.stdout.write(
           `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
         );
@@ -924,14 +943,20 @@ async function send(args) {
     fail("send failed: no positive evidence that Enter submitted the message; inspect the partner before explicitly clearing the pending reservation");
   }
 
-  await recordSubmission(binding.path, binding.self.agent, kind, sequence);
+  await recordSubmission(
+    binding.path,
+    binding.session.sid,
+    binding.self.agent,
+    kind,
+    sequence,
+  );
   const acknowledged = await waitForReceipt(
     binding.path,
     binding.self.agent,
     sequence,
     Number(options["ack-timeout-ms"] ?? 15000),
   );
-  if (acknowledged) await reconcileAcknowledged(binding.path);
+  if (acknowledged) await reconcileAcknowledged(binding.path, binding.session.sid);
   process.stdout.write(
     `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
   );
@@ -947,6 +972,7 @@ async function reconcileSession(args) {
       fail("clearing pending delivery requires --clear-pending true and the exact --sid");
     }
     const resolution = await withSessionLock(binding.path, (session) => {
+      requireLockedSession(session, binding.session.sid, "clear pending");
       const applied = reconcileSessionState(session);
       const agent = binding.self.agent;
       const pending = session.delivery.pending[agent];
@@ -967,7 +993,7 @@ async function reconcileSession(args) {
   } else if (options.sid !== undefined) {
     fail("--sid is only valid with --clear-pending true");
   } else {
-    reconciled = await reconcileAcknowledged(binding.path);
+    reconciled = await reconcileAcknowledged(binding.path, binding.session.sid);
   }
   const session = JSON.parse(readFileSync(binding.path, "utf8"));
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
@@ -984,7 +1010,7 @@ async function main() {
     await initSession();
   } else if (command === "verify") {
     const binding = await verifiedSession();
-    await reconcileAcknowledged(binding.path);
+    await reconcileAcknowledged(binding.path, binding.session.sid);
     binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
     process.stdout.write(
       `${JSON.stringify({ self: binding.self, partner: binding.partner, session: binding.session }, null, 2)}\n`,
