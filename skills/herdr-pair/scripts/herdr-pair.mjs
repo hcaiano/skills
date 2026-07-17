@@ -403,6 +403,10 @@ function reconcileSessionState(session) {
   for (const agent of ["claude", "codex"]) {
     const pending = session.delivery?.pending?.[agent];
     if (pending && (session.delivery.received[agent] ?? 0) >= pending.seq) {
+      session.delivery.submitted[agent] = Math.max(
+        session.delivery.submitted[agent] ?? 0,
+        pending.seq,
+      );
       applyAcknowledgedStatus(session, agent, pending);
       session.delivery.pending[agent] = null;
       reconciled.push({ agent, seq: pending.seq, kind: pending.kind });
@@ -499,7 +503,7 @@ async function verifySubmission(paneId, before, header, queuedToCodex) {
   return false;
 }
 
-async function reserveSequence(path, agent) {
+async function reserveSequence(path, agent, kind) {
   return withSessionLock(path, (session) => {
     const pending = session.delivery.pending?.[agent];
     if (pending) {
@@ -508,7 +512,14 @@ async function reserveSequence(path, agent) {
       );
     }
     session.delivery.next[agent] += 1;
-    return session.delivery.next[agent];
+    const sequence = session.delivery.next[agent];
+    session.delivery.pending[agent] = {
+      seq: sequence,
+      kind,
+      reserved_at: new Date().toISOString(),
+      submitted_at: null,
+    };
+    return sequence;
   });
 }
 
@@ -518,11 +529,12 @@ async function recordSubmission(path, agent, kind, sequence) {
       session.delivery.submitted[agent] ?? 0,
       sequence,
     );
-    session.delivery.pending[agent] = {
-      seq: sequence,
-      kind,
-      submitted_at: new Date().toISOString(),
-    };
+    const pending = session.delivery.pending[agent];
+    if (pending?.seq === sequence && pending.kind === kind) {
+      pending.submitted_at = new Date().toISOString();
+    } else if ((session.delivery.received[agent] ?? 0) < sequence) {
+      fail(`delivery reservation for ${agent} seq ${sequence} no longer matches submission`);
+    }
   });
 }
 
@@ -557,7 +569,11 @@ async function resetSession() {
 function endSession(args) {
   const options = parseOptions(args);
   if (!options.sid) fail("end requires --sid and explicit user intent");
-  const binding = discover();
+  const allowStale = options.stale === "true";
+  if (options.stale !== undefined && !allowStale) {
+    fail("--stale must be true when explicitly authorized");
+  }
+  const binding = discover({ allowMissing: allowStale });
   const path = sessionPath(binding.self);
   let session;
   try {
@@ -573,10 +589,6 @@ function endSession(args) {
     fail("refusing to end a session that does not match the caller's exact sid, workspace, and tab");
   }
 
-  const allowStale = options.stale === "true";
-  if (options.stale !== undefined && !allowStale) {
-    fail("--stale must be true when explicitly authorized");
-  }
   if (!allowStale) {
     const normalized = normalizeSession(session, binding).session;
     for (const agent of ["claude", "codex"]) {
@@ -605,7 +617,7 @@ async function send(args) {
   let binding = verifiedSession();
   await reconcileAcknowledged(binding.path);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
-  const sequence = await reserveSequence(binding.path, binding.self.agent);
+  const sequence = await reserveSequence(binding.path, binding.self.agent, kind);
   const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
   const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
@@ -637,7 +649,7 @@ async function send(args) {
     before.tab_id !== binding.self.tab_id ||
     before.agent !== binding.partner.agent
   ) {
-    fail("partner binding changed after text entry; Enter not sent and session unchanged");
+    fail("partner binding changed after text entry; Enter not sent and the delivery reservation remains pending");
   }
   const queuedToCodex = before.agent === "codex" && before.agent_status === "working";
   herdr("pane", "send-keys", binding.partner.pane_id, "Enter");
@@ -662,7 +674,7 @@ async function send(args) {
         return;
       }
     }
-    fail("send failed: no positive evidence that Enter submitted the message; session unchanged");
+    fail("send failed: no positive evidence that Enter submitted the message; inspect the partner before explicitly clearing the pending reservation");
   }
 
   await recordSubmission(binding.path, binding.self.agent, kind, sequence);

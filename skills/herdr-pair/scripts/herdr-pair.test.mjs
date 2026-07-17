@@ -72,7 +72,12 @@ else if (args[0] === "pane" && args[1] === "send-text") {
     session.delivery.received[sender] = sequence;
     fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2) + "\\n");
   }
-  save(); output({});
+  save();
+  if (state.fail_after_enter === true) {
+    process.stderr.write("simulated interruption after Enter\\n");
+    process.exit(1);
+  }
+  output({});
 } else if (args[0] === "pane" && args[1] === "read") process.stdout.write("");
 else { process.stderr.write("unsupported fake herdr args: " + args.join(" ") + "\\n"); process.exit(1); }
 `,
@@ -129,6 +134,27 @@ try {
   assert.equal(session.round, 1);
 
   let state = JSON.parse(readFileSync(statePath, "utf8"));
+  state.fail_after_enter = true;
+  state.panes["w1:p1"].agent_status = "idle";
+  state.panes["w1:p2"].agent_status = "idle";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  assert.throws(
+    () => run("send", "--kind", "task", "--body-file", body, "--ack-timeout-ms", "50"),
+    /simulated interruption after Enter/u,
+  );
+  session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  assert.equal(session.delivery.pending.codex.kind, "task");
+  assert.equal(session.delivery.received.codex, 2);
+  const recoveredAfterEnter = JSON.parse(run("verify")).session;
+  assert.equal(recoveredAfterEnter.delivery.pending.codex, null);
+  assert.equal(recoveredAfterEnter.delivery.submitted.codex, 2);
+  assert.equal(recoveredAfterEnter.last_status.codex, "task");
+  state = JSON.parse(readFileSync(statePath, "utf8"));
+  state.fail_after_enter = false;
+  state.panes["w1:p1"].agent_status = "idle";
+  state.panes["w1:p2"].agent_status = "idle";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+
   state.auto_ack = false;
   state.panes["w1:p1"].agent_status = "idle";
   state.panes["w1:p2"].agent_status = "idle";
@@ -144,15 +170,15 @@ try {
   );
   assert.match(pending, /receipt=pending-partner-may-be-busy-do-not-retry/u);
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
-  assert.equal(session.round, 1);
-  assert.equal(session.last_status.codex, "review");
+  assert.equal(session.round, 2);
+  assert.equal(session.last_status.codex, "task");
   assert.deepEqual(
     { seq: session.delivery.pending.codex.seq, kind: session.delivery.pending.codex.kind },
-    { seq: 2, kind: "task" },
+    { seq: 3, kind: "task" },
   );
-  runAs("w1:p2", "receive", "--sid", created.sid, "--from", "codex", "--seq", "2");
+  runAs("w1:p2", "receive", "--sid", created.sid, "--from", "codex", "--seq", "3");
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
-  assert.equal(session.round, 2);
+  assert.equal(session.round, 3);
   assert.equal(session.last_status.codex, "task");
   assert.equal(session.delivery.pending.codex, null);
   state = JSON.parse(readFileSync(statePath, "utf8"));
@@ -168,8 +194,8 @@ try {
     /receipt=pending-partner-may-be-busy-do-not-retry/u,
   );
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
-  assert.equal(session.round, 2);
-  assert.equal(session.delivery.pending.codex.seq, 3);
+  assert.equal(session.round, 3);
+  assert.equal(session.delivery.pending.codex.seq, 4);
   assert.throws(
     () => run("reconcile", "--clear-pending", "true"),
     /exact --sid/u,
@@ -178,9 +204,9 @@ try {
     run("reconcile", "--sid", created.sid, "--clear-pending", "true"),
   );
   assert.equal(cleared.cleared.agent, "codex");
-  assert.equal(cleared.cleared.seq, 3);
+  assert.equal(cleared.cleared.seq, 4);
   assert.equal(cleared.session.delivery.pending.codex, null);
-  assert.equal(cleared.session.round, 2);
+  assert.equal(cleared.session.round, 3);
 
   state = JSON.parse(readFileSync(statePath, "utf8"));
   state.panes["w1:p1"].agent_status = "idle";
@@ -191,14 +217,14 @@ try {
     /receipt=pending-partner-may-be-busy-do-not-retry/u,
   );
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
-  session.delivery.received.codex = 4;
+  session.delivery.received.codex = 5;
   writeFileSync(sessionPath, `${JSON.stringify(session, null, 2)}\n`);
   const racedAck = JSON.parse(
     run("reconcile", "--sid", created.sid, "--clear-pending", "true"),
   );
   assert.equal(racedAck.cleared, null);
-  assert.deepEqual(racedAck.reconciled, [{ agent: "codex", seq: 4, kind: "review" }]);
-  assert.equal(racedAck.session.round, 3);
+  assert.deepEqual(racedAck.reconciled, [{ agent: "codex", seq: 5, kind: "review" }]);
+  assert.equal(racedAck.session.round, 4);
   assert.equal(racedAck.session.delivery.pending.codex, null);
   state = JSON.parse(readFileSync(statePath, "utf8"));
   state.auto_ack = true;
@@ -240,7 +266,7 @@ try {
   assert.equal(reset.reset, true);
   assert.equal(reset.round, 0);
   assert.deepEqual(reset.last_status, { claude: null, codex: null });
-  assert.equal(reset.delivery.received.codex, 5);
+  assert.equal(reset.delivery.received.codex, 6);
 
   run("end", "--sid", created.sid);
   assert.equal(existsSync(sessionPath), false);
@@ -300,7 +326,11 @@ try {
   const rebound = JSON.parse(run("init"));
   assert.equal(rebound.participants.codex.pane_id, "w1:p1");
   assert.equal(rebound.participants.claude.pane_id, "w1:p2");
-  run("end", "--sid", rebound.sid);
+  state = JSON.parse(readFileSync(statePath, "utf8"));
+  delete state.panes["w1:p2"];
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  run("end", "--sid", rebound.sid, "--stale", "true");
+  assert.equal(existsSync(sessionPath), false);
 
   process.stdout.write("herdr-pair tests: PASS\n");
 } finally {

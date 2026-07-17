@@ -86,17 +86,17 @@ BODY=$(mktemp); trap 'trash "$BODY"' EXIT
 node "$PAIR_SCRIPT" send --kind "$KIND" --body-file "$BODY"
 ```
 
-The sender re-verifies both panes immediately before submission, injects the
-control line, reserves a delivery sequence, and records submission only after
-positive UI evidence. It then waits for `receive` to acknowledge the same
-sequence in `session.json`.
+The sender reserves the sequence and message kind before submission, then
+re-verifies both panes, injects the control line, and records positive UI
+evidence. It waits for `receive` to acknowledge that sequence in
+`session.json`; an ACK can recover an interruption immediately after Enter.
 
 - `receipt=acknowledged`: the partner ran `receive` for this message.
 - `receipt=pending-partner-may-be-busy-do-not-retry`: submission was observed,
   but the partner has not acknowledged it yet. Do not resend. Later run
   `node "$PAIR_SCRIPT" reconcile`; the status advances only after its ACK.
-- A nonzero exit before recorded submission is a transport failure. Surface it
-  to the user without claiming delivery.
+- A nonzero exit is a transport failure. The pending reservation remains so an
+  ACK can reconcile it; never claim delivery or clear it without inspection.
 
 A working Claude is never queued; wait for it to become available. A working
 Codex may be queued only when its exact queue marker contains this message's
@@ -153,9 +153,10 @@ node "$PAIR_SCRIPT" end --sid "<sid>"
 
 `end` verifies the exact sid, workspace, tab, and participants, then trashes
 only that tab's session and removes an empty workspace directory. Closing the
-Herdr tab ends the panes naturally; stale state from a closed tab must never be
-borrowed by another tab. If old pane IDs prevent resume, explain the mismatch
-and use `end --sid "<sid>" --stale true` only with explicit user approval.
+Herdr tab ends the panes naturally; stale state must never be borrowed by
+another tab. If old pane IDs or a missing partner prevent resume, explain the
+mismatch and use `end --sid "<sid>" --stale true` only with explicit user
+approval.
 
 ## Workbench tab
 
