@@ -333,6 +333,31 @@ try {
     join(orphanLock, "owner.json"),
     `${JSON.stringify({
       pid: process.pid,
+      token: "live-owner-with-shifted-clock",
+      boot_time_ms: 0,
+      process_start: execFileSync(
+        "/bin/ps",
+        ["-o", "lstart=", "-p", String(process.pid)],
+        { encoding: "utf8" },
+      ).trim(),
+      created_at: new Date().toISOString(),
+    })}\n`,
+  );
+  const liveOwnerAttempt = runAsync("w1:p1", "init");
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(existsSync(orphanLock), true);
+  execFileSync("trash", [orphanLock]);
+  const afterLiveOwner = JSON.parse(await liveOwnerAttempt);
+  assert.equal(afterLiveOwner.active, true);
+  run("end", "--sid", afterLiveOwner.sid);
+
+  mkdirSync(legacyDirectory, { recursive: true });
+  writeFileSync(join(legacyDirectory, "session.json.tmp.crash"), "partial\n");
+  mkdirSync(orphanLock);
+  writeFileSync(
+    join(orphanLock, "owner.json"),
+    `${JSON.stringify({
+      pid: process.pid,
       token: "reused-pid-owner",
       process_start: "not-the-current-process-start",
       created_at: new Date().toISOString(),

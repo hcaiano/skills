@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, uptime } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,8 +21,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 const schemaVersion = 2;
 const staleLockMs = 60000;
-const bootTimeMs = Date.now() - Math.round(uptime() * 1000);
-const bootTimeToleranceMs = 5000;
 
 class CliError extends Error {}
 
@@ -284,12 +282,6 @@ function requireTrash() {
 }
 
 function recordIsAbandoned(record) {
-  if (
-    Number.isFinite(record?.boot_time_ms) &&
-    Math.abs(record.boot_time_ms - bootTimeMs) > bootTimeToleranceMs
-  ) {
-    return true;
-  }
   if (processIsGone(record?.pid)) return true;
   if (typeof record?.process_start === "string") {
     const current = processStartIdentity(record.pid);
@@ -331,7 +323,6 @@ function reclaimLock(lock, observedOwner, label) {
     pid: process.pid,
     token: randomUUID(),
     owner_token: observedOwner?.token ?? null,
-    boot_time_ms: bootTimeMs,
     process_start: processStartIdentity(process.pid),
     created_at: new Date().toISOString(),
   };
@@ -399,7 +390,6 @@ async function acquireLock(lock, timeoutMs, label) {
     const owner = {
       pid: process.pid,
       token: randomUUID(),
-      boot_time_ms: bootTimeMs,
       process_start: processStartIdentity(process.pid),
       created_at: new Date().toISOString(),
     };
