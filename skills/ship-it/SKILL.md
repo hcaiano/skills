@@ -1,27 +1,25 @@
 ---
 name: ship-it
-description: "Manual-only end-to-end shipping of current work: commit intentional changes, validate, push, create or update the PR, and leave it merge-ready. Use only when the user explicitly invokes ship-it. For an existing PR that only needs feedback handled, use review-pr-comments."
+description: "Manual-only PR creation for current work: commit and push intentional changes, open or update the PR, then invoke review-pr-comments. Use only when the user explicitly invokes ship-it."
 disable-model-invocation: true
 user-invocable: true
-argument-hint: "[branch name or PR number]"
+argument-hint: "[branch name]"
 ---
 
 # Ship It
 
-Take the current work from local changes to a merge-ready PR. Choose the workflow
-that best fits the repository instead of following a fixed sequence.
+Open or update a PR for the current work, then hand it to `$review-pr-comments`.
 
-Required outcomes:
+1. Read the repository instructions and inspect the current branch, diff, and
+   working tree. Preserve unrelated user changes.
+2. Create clear, intentional commits using the repository conventions.
+3. Push safely and open or update one accurate, ready-for-review PR. Create new
+   PRs as non-draft; mark an existing draft ready before the handoff so automatic
+   review starts.
+4. Load and run the installed `$review-pr-comments` skill with that PR. It owns
+   validation, review feedback, CI, and the merge-ready completion gate from this
+   point onward.
 
-- Understand the intended changes and preserve unrelated user work.
-- Make clear, intentional commits using the repository's conventions.
-- Run the relevant local validation and fix failures caused by this work.
-- Push safely and create or update one accurate PR.
-- Apply the `review-pr-comments` completion contract to the resulting PR.
-- Report precise blockers when completion depends on the user or an external
-  system.
-
-Do not force-push, merge, broaden scope, or change the target branch without
-explicit authorization. The PR is complete only when its latest head is
-validated, review-clean, up to date enough to merge safely, and GitHub reports it
-mergeable.
+Do not force-push, merge, modify `main`, broaden scope, or change the target
+branch without explicit authorization. Done when the PR is ready for review and
+`$review-pr-comments` has taken over.
