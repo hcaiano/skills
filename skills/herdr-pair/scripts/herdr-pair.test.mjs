@@ -417,7 +417,10 @@ try {
       process_start: execFileSync(
         "/bin/ps",
         ["-o", "lstart=", "-p", String(process.pid)],
-        { encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } },
+        {
+          encoding: "utf8",
+          env: { ...process.env, LC_ALL: "C", TZ: "America/New_York" },
+        },
       ).trim(),
       created_at: new Date().toISOString(),
     })}\n`,
@@ -443,6 +446,7 @@ try {
       pid: process.pid,
       token: "reused-pid-owner",
       process_start: "not-the-current-process-start",
+      process_start_format: "ps-lstart-c-utc-v1",
       created_at: new Date().toISOString(),
     })}\n`,
   );

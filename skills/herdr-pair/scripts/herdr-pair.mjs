@@ -20,6 +20,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 const schemaVersion = 2;
 const staleLockMs = 60000;
+const processStartFormat = "ps-lstart-c-utc-v1";
 
 class CliError extends Error {}
 
@@ -283,7 +284,10 @@ function requireTrash() {
 
 function recordIsAbandoned(record) {
   if (processIsGone(record?.pid)) return true;
-  if (typeof record?.process_start === "string") {
+  if (
+    typeof record?.process_start === "string" &&
+    record.process_start_format === processStartFormat
+  ) {
     const current = processStartIdentity(record.pid);
     return current !== null && current !== record.process_start;
   }
@@ -324,6 +328,7 @@ function reclaimLock(lock, observedOwner, label) {
     token: randomUUID(),
     owner_token: observedOwner?.token ?? null,
     process_start: processStartIdentity(process.pid),
+    process_start_format: processStartFormat,
     created_at: new Date().toISOString(),
   };
 
@@ -394,6 +399,7 @@ async function acquireLock(lock, timeoutMs, label) {
       pid: process.pid,
       token: randomUUID(),
       process_start: processStartIdentity(process.pid),
+      process_start_format: processStartFormat,
       created_at: new Date().toISOString(),
     };
     try {
