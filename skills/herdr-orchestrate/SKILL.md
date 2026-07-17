@@ -1,6 +1,8 @@
 ---
 name: herdr-orchestrate
-description: "Delegate GitHub issues to agent pairs in dedicated Herdr tabs: triage, group into work units, set up worktree + tab + pair per unit, kick off implement, gate ship-it on the unit's ready report. Use when the user asks which issues are free for agents, asks to orchestrate or delegate issue work in Herdr, asks for the status of delegated work, or input begins with `[unit`."
+description: "Manual-only orchestrator for delegating GitHub issues to agent pairs in dedicated Herdr tabs: triage, work units, worktree + pair per unit, implement → ship-it, status on demand."
+disable-model-invocation: true
+user-invocable: true
 argument-hint: "[issue numbers | gh filters]"
 ---
 
@@ -62,7 +64,8 @@ Then branch on the input:
 - **Status** — "how are things going", "what needs me": jump to
   [Status report](#status-report).
 - **Unit report** — input starting with `[unit`: jump to
-  [Unit reports](#unit-reports).
+  [Unit reports](#unit-reports). Reports name this skill; if one arrives
+  when this skill is not in context, re-invoking it lands here.
 - **Delegation** — continue with triage; in-flight issues are already taken.
 
 ## Phase 1 — Triage
