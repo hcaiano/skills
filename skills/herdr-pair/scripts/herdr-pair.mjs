@@ -225,31 +225,86 @@ async function spawn() {
   fail(`spawned pane did not become an idle ${binding.partnerAgent} in the current tab:\n${recent}`);
 }
 
-function lockIsAbandoned(lock) {
+function processIsGone(pid) {
+  if (!Number.isInteger(pid) || pid < 1) return true;
   try {
-    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
-    if (Date.now() - Date.parse(owner.created_at) >= staleLockMs) return true;
-    if (!Number.isInteger(owner.pid) || owner.pid < 1) return true;
-    try {
-      process.kill(owner.pid, 0);
-      return false;
-    } catch (error) {
-      return error.code === "ESRCH";
-    }
-  } catch {
-    try {
-      return Date.now() - statSync(lock).mtimeMs >= staleLockMs;
-    } catch {
-      return true;
-    }
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
   }
 }
 
-function reclaimLock(lock, label) {
+function recordIsAbandoned(record) {
+  return (
+    Date.now() - Date.parse(record?.created_at) >= staleLockMs ||
+    processIsGone(record?.pid)
+  );
+}
+
+function readLockOwner(lock) {
   try {
-    execFileSync("trash", [lock]);
+    return JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function lockIsAbandoned(lock, owner) {
+  if (owner) return recordIsAbandoned(owner);
+  try {
+    return Date.now() - statSync(lock).mtimeMs >= staleLockMs;
+  } catch {
+    return true;
+  }
+}
+
+function releaseReclaimClaim(lock, claim) {
+  const claimPath = join(lock, "reclaim.json");
+  try {
+    const current = JSON.parse(readFileSync(claimPath, "utf8"));
+    if (current.token === claim.token) unlinkSync(claimPath);
   } catch (error) {
-    if (existsSync(lock)) fail(`cannot reclaim abandoned ${label} lock: ${error.message}`);
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
+function reclaimLock(lock, observedOwner, label) {
+  const claimPath = join(lock, "reclaim.json");
+  const claim = {
+    pid: process.pid,
+    token: randomUUID(),
+    owner_token: observedOwner?.token ?? null,
+    created_at: new Date().toISOString(),
+  };
+
+  try {
+    writeFileSync(claimPath, `${JSON.stringify(claim)}\n`, { flag: "wx" });
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    if (error.code !== "EEXIST") {
+      fail(`cannot claim abandoned ${label} lock: ${error.message}`);
+    }
+    try {
+      const existing = JSON.parse(readFileSync(claimPath, "utf8"));
+      if (recordIsAbandoned(existing)) {
+        const current = JSON.parse(readFileSync(claimPath, "utf8"));
+        if (current.token === existing.token) unlinkSync(claimPath);
+      }
+    } catch {}
+    return false;
+  }
+
+  try {
+    const currentOwner = readLockOwner(lock);
+    if ((currentOwner?.token ?? null) !== (observedOwner?.token ?? null)) return false;
+    execFileSync("trash", [lock]);
+    return true;
+  } catch (error) {
+    if (!existsSync(lock)) return true;
+    fail(`cannot reclaim abandoned ${label} lock: ${error.message}`);
+  } finally {
+    if (existsSync(lock)) releaseReclaimClaim(lock, claim);
   }
 }
 
@@ -274,9 +329,9 @@ async function acquireLock(lock, timeoutMs, label) {
       if (error.code !== "EEXIST") {
         fail(`cannot acquire ${label} lock: ${error.message}`);
       }
-      if (lockIsAbandoned(lock)) {
-        reclaimLock(lock, label);
-        continue;
+      const observedOwner = readLockOwner(lock);
+      if (lockIsAbandoned(lock, observedOwner)) {
+        if (reclaimLock(lock, observedOwner, label)) continue;
       }
       if (Date.now() >= deadline) fail(`cannot acquire ${label} lock: already owned`);
       await sleep(25);
@@ -292,7 +347,9 @@ async function acquireLock(lock, timeoutMs, label) {
       writeFileSync(join(lock, "owner.json"), `${JSON.stringify(owner)}\n`, { flag: "wx" });
       return owner;
     } catch (error) {
-      reclaimLock(lock, label);
+      try {
+        execFileSync("trash", [lock]);
+      } catch {}
       fail(`cannot record ${label} lock owner: ${error.message}`);
     }
   }
@@ -309,7 +366,7 @@ async function initSession() {
     if (existsSync(path)) {
       let resumed;
       try {
-        resumed = verifiedSession();
+        resumed = await verifiedSession();
       } catch (error) {
         let sid = "<sid>";
         try {
@@ -360,16 +417,7 @@ async function initSession() {
   }
 }
 
-function verifiedSession() {
-  const live = discover();
-  const path = sessionPath(live.self);
-  let session;
-  try {
-    session = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    fail(`cannot load current-tab session ${path}: ${error.message}`);
-  }
-
+function validateSessionEnvelope(session, live) {
   if (
     session.workspace_id !== live.self.workspace_id ||
     session.tab_id !== live.self.tab_id
@@ -382,10 +430,34 @@ function verifiedSession() {
   ) {
     fail(`session schema ${session.schema_version} is newer than supported schema ${schemaVersion}`);
   }
+}
+
+async function verifiedSession() {
+  const live = discover();
+  const path = sessionPath(live.self);
+  let session;
+  try {
+    session = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    fail(`cannot load current-tab session ${path}: ${error.message}`);
+  }
+
+  validateSessionEnvelope(session, live);
 
   const normalized = normalizeSession(session, live);
-  session = normalized.session;
-  if (normalized.changed) atomicWrite(path, session);
+  if (normalized.changed) {
+    await withSessionLock(path, (latest) => {
+      validateSessionEnvelope(latest, live);
+      const migrated = normalizeSession(latest, live);
+      if (migrated.changed) {
+        for (const key of Object.keys(latest)) delete latest[key];
+        Object.assign(latest, migrated.session);
+      }
+    });
+    session = JSON.parse(readFileSync(path, "utf8"));
+  } else {
+    session = normalized.session;
+  }
 
   if (
     session.workspace_id !== live.self.workspace_id ||
@@ -487,7 +559,7 @@ async function verifyInbound(args) {
   const claimedFrom = options.from;
   if (!claimedSid || !claimedFrom) fail("receive requires --sid and --from");
 
-  const binding = verifiedSession();
+  const binding = await verifiedSession();
   if (claimedSid !== binding.session.sid) {
     fail(`inbound sid ${claimedSid} does not match current-tab session ${binding.session.sid}`);
   }
@@ -611,7 +683,7 @@ async function waitForReceipt(path, agent, sequence, timeoutMs) {
 }
 
 async function resetSession() {
-  const binding = verifiedSession();
+  const binding = await verifiedSession();
   await reconcileAcknowledged(binding.path);
   await withSessionLock(binding.path, (session) => {
     const pending = Object.entries(session.delivery.pending).find(([, value]) => value);
@@ -676,7 +748,7 @@ async function send(args) {
   const bodyFile = options["body-file"];
   if (!kind || !bodyFile) fail("send requires --kind and --body-file");
 
-  let binding = verifiedSession();
+  let binding = await verifiedSession();
   await reconcileAcknowledged(binding.path);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
   const sequence = await reserveSequence(binding.path, binding.self.agent, kind);
@@ -692,7 +764,7 @@ async function send(args) {
   // Re-resolve immediately before the first write. Codex has a verified queue
   // indicator; Claude does not, so a busy Claude returns to the wait loop.
   while (true) {
-    binding = verifiedSession();
+    binding = await verifiedSession();
     if (
       binding.partner.agent_status !== "working" ||
       binding.partner.agent === "codex"
@@ -754,7 +826,7 @@ async function send(args) {
 
 async function reconcileSession(args) {
   const options = parseOptions(args);
-  const binding = verifiedSession();
+  const binding = await verifiedSession();
   let reconciled;
   let cleared = null;
   if (options["clear-pending"] !== undefined) {
@@ -798,7 +870,7 @@ async function main() {
   } else if (command === "init") {
     await initSession();
   } else if (command === "verify") {
-    const binding = verifiedSession();
+    const binding = await verifiedSession();
     await reconcileAcknowledged(binding.path);
     binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
     process.stdout.write(

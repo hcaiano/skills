@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -96,6 +96,20 @@ const runAs = (paneId, ...args) =>
   execFileSync(process.execPath, [helper, ...args], {
     encoding: "utf8",
     env: { ...env, HERDR_PANE_ID: paneId },
+  });
+const runAsync = (paneId, ...args) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [helper, ...args], {
+      env: { ...env, HERDR_PANE_ID: paneId },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr || `helper exited ${code}`));
+    });
   });
 const run = (...args) => runAs("w1:p1", ...args);
 const sessionPath = join(home, ".herdr-coworkers", "w1", "w1_t1", "session.json");
@@ -281,7 +295,17 @@ try {
     join(orphanLock, "owner.json"),
     `${JSON.stringify({ pid: 999999, token: "dead-owner", created_at: new Date().toISOString() })}\n`,
   );
-  const repaired = JSON.parse(run("init"));
+  writeFileSync(
+    join(orphanLock, "reclaim.json"),
+    `${JSON.stringify({ pid: 999999, token: "dead-reclaimer", created_at: new Date().toISOString() })}\n`,
+  );
+  const repairedOutputs = await Promise.all([
+    runAsync("w1:p1", "init"),
+    runAsync("w1:p2", "init"),
+  ]);
+  const repairedSessions = repairedOutputs.map((output) => JSON.parse(output));
+  assert.equal(repairedSessions[0].sid, repairedSessions[1].sid);
+  const repaired = repairedSessions[0];
   assert.equal(repaired.schema_version, 2);
   assert.equal(repaired.active, true);
   assert.equal(existsSync(orphanLock), false);
