@@ -55,6 +55,16 @@ const statePath = process.env.FAKE_HERDR_STATE;
 const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
 const save = () => fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\\n");
 const output = (result) => process.stdout.write(JSON.stringify({ result }) + "\\n");
+const flushAck = () => {
+  const ack = state.pending_ack;
+  if (!ack || fs.existsSync(ack.sessionPath + ".lock")) return;
+  const session = JSON.parse(fs.readFileSync(ack.sessionPath, "utf8"));
+  session.delivery.received[ack.sender] = ack.sequence;
+  fs.writeFileSync(ack.sessionPath, JSON.stringify(session, null, 2) + "\\n");
+  delete state.pending_ack;
+  save();
+};
+flushAck();
 if (args[0] === "pane" && args[1] === "get") output({ pane: state.panes[args[2]] });
 else if (args[0] === "pane" && args[1] === "list") output({ panes: Object.values(state.panes) });
 else if (args[0] === "pane" && args[1] === "send-text") {
@@ -68,9 +78,7 @@ else if (args[0] === "pane" && args[1] === "send-text") {
     const sequence = Number(control[4]);
     const slug = pane.tab_id.replaceAll(":", "_");
     const sessionPath = path.join(process.env.HOME, ".herdr-coworkers", pane.workspace_id, slug, "session.json");
-    const session = JSON.parse(fs.readFileSync(sessionPath, "utf8"));
-    session.delivery.received[sender] = sequence;
-    fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2) + "\\n");
+    state.pending_ack = { sender, sequence, sessionPath };
   }
   save();
   if (state.fail_after_enter === true) {
@@ -156,9 +164,6 @@ try {
     () => run("send", "--kind", "task", "--body-file", body, "--ack-timeout-ms", "50"),
     /simulated interruption after Enter/u,
   );
-  session = JSON.parse(readFileSync(sessionPath, "utf8"));
-  assert.equal(session.delivery.pending.codex.kind, "task");
-  assert.equal(session.delivery.received.codex, 2);
   const recoveredAfterEnter = JSON.parse(run("verify")).session;
   assert.equal(recoveredAfterEnter.delivery.pending.codex, null);
   assert.equal(recoveredAfterEnter.delivery.submitted.codex, 2);
@@ -190,6 +195,11 @@ try {
     { seq: session.delivery.pending.codex.seq, kind: session.delivery.pending.codex.kind },
     { seq: 3, kind: "task" },
   );
+  assert.throws(
+    () => run("end", "--sid", created.sid),
+    /cannot end while codex seq 3 awaits receipt/u,
+  );
+  assert.equal(JSON.parse(readFileSync(sessionPath, "utf8")).active, true);
   runAs("w1:p2", "receive", "--sid", created.sid, "--from", "codex", "--seq", "3");
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
   assert.equal(session.round, 3);

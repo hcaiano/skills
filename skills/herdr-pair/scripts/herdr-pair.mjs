@@ -637,8 +637,11 @@ async function verifySubmission(paneId, before, header, queuedToCodex) {
   return false;
 }
 
-async function reserveSequence(path, agent, kind) {
+async function reserveSequence(path, sid, agent, kind) {
   return withSessionLock(path, (session) => {
+    if (session.active !== true || session.sid !== sid) {
+      fail("cannot reserve delivery for an inactive or replaced session");
+    }
     const pending = session.delivery.pending?.[agent];
     if (pending) {
       fail(
@@ -654,6 +657,18 @@ async function reserveSequence(path, agent, kind) {
       submitted_at: null,
     };
     return sequence;
+  });
+}
+
+async function submitReservedDelivery(path, sid, agent, sequence, paneId) {
+  await withSessionLock(path, (session) => {
+    if (session.active !== true || session.sid !== sid) {
+      fail("session ended or was replaced before Enter; message not submitted");
+    }
+    if (session.delivery.pending?.[agent]?.seq !== sequence) {
+      fail(`delivery reservation ${agent} seq ${sequence} is no longer active; message not submitted`);
+    }
+    herdr("pane", "send-keys", paneId, "Enter");
   });
 }
 
@@ -700,7 +715,7 @@ async function resetSession() {
   );
 }
 
-function endSession(args) {
+async function endSession(args) {
   const options = parseOptions(args);
   if (!options.sid) fail("end requires --sid and explicit user intent");
   const allowStale = options.stale === "true";
@@ -709,28 +724,41 @@ function endSession(args) {
   }
   const binding = discover({ allowMissing: allowStale });
   const path = sessionPath(binding.self);
+  if (!existsSync(path)) fail(`cannot load current-tab session ${path}: file does not exist`);
+  const lock = `${path}.lock`;
+  const lockOwner = await acquireLock(lock, 5000, "session termination");
   let session;
   try {
     session = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    fail(`cannot load current-tab session ${path}: ${error.message}`);
-  }
-  if (
-    session.sid !== options.sid ||
-    session.workspace_id !== binding.self.workspace_id ||
-    session.tab_id !== binding.self.tab_id
-  ) {
-    fail("refusing to end a session that does not match the caller's exact sid, workspace, and tab");
-  }
+    if (
+      session.sid !== options.sid ||
+      session.workspace_id !== binding.self.workspace_id ||
+      session.tab_id !== binding.self.tab_id
+    ) {
+      fail("refusing to end a session that does not match the caller's exact sid, workspace, and tab");
+    }
 
-  if (!allowStale) {
-    const normalized = normalizeSession(session, binding).session;
-    for (const agent of ["claude", "codex"]) {
-      const expected = agent === binding.self.agent ? binding.self.pane_id : binding.partner.pane_id;
-      if (normalized.participants?.[agent]?.pane_id !== expected) {
-        fail("refusing to end a session whose recorded participants do not match this tab; explicit stale recovery requires --stale true");
+    if (!allowStale) {
+      const normalized = normalizeSession(session, binding).session;
+      for (const agent of ["claude", "codex"]) {
+        const expected = agent === binding.self.agent ? binding.self.pane_id : binding.partner.pane_id;
+        if (normalized.participants?.[agent]?.pane_id !== expected) {
+          fail("refusing to end a session whose recorded participants do not match this tab; explicit stale recovery requires --stale true");
+        }
       }
     }
+
+    const pending = Object.entries(session.delivery?.pending ?? {}).find(([, value]) => value);
+    if (pending) {
+      fail(`cannot end while ${pending[0]} seq ${pending[1].seq} awaits receipt or explicit clear`);
+    }
+    session.active = false;
+    atomicWrite(path, session);
+  } catch (error) {
+    if (error instanceof CliError) throw error;
+    fail(`cannot load current-tab session ${path}: ${error.message}`);
+  } finally {
+    releaseLock(lock, lockOwner);
   }
 
   const directory = dirname(path);
@@ -751,7 +779,12 @@ async function send(args) {
   let binding = await verifiedSession();
   await reconcileAcknowledged(binding.path);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
-  const sequence = await reserveSequence(binding.path, binding.self.agent, kind);
+  const sequence = await reserveSequence(
+    binding.path,
+    binding.session.sid,
+    binding.self.agent,
+    kind,
+  );
   const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
   const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
@@ -786,13 +819,25 @@ async function send(args) {
     fail("partner binding changed after text entry; Enter not sent and the delivery reservation remains pending");
   }
   const queuedToCodex = before.agent === "codex" && before.agent_status === "working";
-  herdr("pane", "send-keys", binding.partner.pane_id, "Enter");
+  await submitReservedDelivery(
+    binding.path,
+    binding.session.sid,
+    binding.self.agent,
+    sequence,
+    binding.partner.pane_id,
+  );
 
   if (!(await verifySubmission(binding.partner.pane_id, before, header, queuedToCodex))) {
     // Retry only when the exact header is visibly still in the composer. An
     // ambiguous timeout must not risk a duplicate submission.
     if (headerAtPrompt(binding.partner.pane_id, header)) {
-      herdr("pane", "send-keys", binding.partner.pane_id, "Enter");
+      await submitReservedDelivery(
+        binding.path,
+        binding.session.sid,
+        binding.self.agent,
+        sequence,
+        binding.partner.pane_id,
+      );
       if (await verifySubmission(binding.partner.pane_id, before, header, queuedToCodex)) {
         await recordSubmission(binding.path, binding.self.agent, kind, sequence);
         const acknowledged = await waitForReceipt(
@@ -885,7 +930,7 @@ async function main() {
   } else if (command === "reconcile") {
     await reconcileSession(args);
   } else if (command === "end") {
-    endSession(args);
+    await endSession(args);
   } else {
     fail("usage: herdr-pair.mjs discover | spawn | init | verify | reconcile [--sid SID --clear-pending true] | reset | end --sid SID [--stale true] | receive --sid SID --from AGENT [--seq N] | send --kind KIND --body-file FILE [--timeout-ms MS] [--ack-timeout-ms MS]");
   }

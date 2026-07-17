@@ -156,7 +156,8 @@ only that tab's session and removes an empty workspace directory. Closing the
 Herdr tab ends the panes naturally; stale state must never be borrowed by
 another tab. If old pane IDs or a missing partner prevent resume, explain the
 mismatch and use `end --sid "<sid>" --stale true` only with explicit user
-approval.
+approval. `end` refuses while delivery is pending; wait for its ACK or use the
+explicit inspected clear path before ending.
 
 ## Workbench tab
 
