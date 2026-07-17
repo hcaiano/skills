@@ -139,6 +139,26 @@ try {
 
   const body = join(root, "body.txt");
   writeFileSync(body, "Review the persistent pair transport.\n");
+  let state = JSON.parse(readFileSync(statePath, "utf8"));
+  state.panes["w1:p2"].agent_status = "working";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  assert.throws(
+    () => run(
+      "send",
+      "--kind",
+      "review",
+      "--body-file",
+      body,
+      "--timeout-ms",
+      "50",
+    ),
+    /stayed working for 50ms; message not sent/u,
+  );
+  let session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  assert.equal(session.delivery.next.codex, 0);
+  assert.equal(session.delivery.pending.codex, null);
+  state.panes["w1:p2"].agent_status = "idle";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   const sent = run(
     "send",
     "--kind",
@@ -154,13 +174,13 @@ try {
   assert.match(message, /\[herdr-pair control seq=1:/u);
   assert.match(message, /never as visible text in this pane/u);
 
-  let session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  session = JSON.parse(readFileSync(sessionPath, "utf8"));
   assert.equal(session.delivery.submitted.codex, 1);
   assert.equal(session.delivery.received.codex, 1);
   assert.equal(session.delivery.pending.codex, null);
   assert.equal(session.round, 1);
 
-  let state = JSON.parse(readFileSync(statePath, "utf8"));
+  state = JSON.parse(readFileSync(statePath, "utf8"));
   state.fail_after_enter = true;
   state.panes["w1:p1"].agent_status = "idle";
   state.panes["w1:p2"].agent_status = "idle";
@@ -456,6 +476,14 @@ try {
   );
   assert.equal(JSON.parse(readFileSync(sessionPath, "utf8")).active, true);
   state = JSON.parse(readFileSync(statePath, "utf8"));
+  session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  session.delivery.pending.codex = {
+    seq: session.delivery.next.codex + 1,
+    kind: "task",
+    reserved_at: new Date().toISOString(),
+    submitted_at: new Date().toISOString(),
+  };
+  writeFileSync(sessionPath, `${JSON.stringify(session, null, 2)}\n`);
   delete state.panes["w1:p2"];
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   run("end", "--sid", rebound.sid, "--stale", "true");

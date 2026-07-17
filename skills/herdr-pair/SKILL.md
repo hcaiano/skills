@@ -86,8 +86,8 @@ BODY=$(mktemp); trap 'trash "$BODY"' EXIT
 node "$PAIR_SCRIPT" send --kind "$KIND" --body-file "$BODY"
 ```
 
-The sender reserves the sequence and message kind before submission, then
-re-verifies both panes, injects the control line, and records positive UI
+The sender waits for a working Claude before reserving the sequence and message
+kind, then injects the control line and records positive UI
 evidence. It waits for `receive` to acknowledge that sequence in
 `session.json`; an ACK can recover an interruption immediately after Enter.
 
@@ -95,8 +95,9 @@ evidence. It waits for `receive` to acknowledge that sequence in
 - `receipt=pending-partner-may-be-busy-do-not-retry`: submission was observed,
   but the partner has not acknowledged it yet. Do not resend. Later run
   `node "$PAIR_SCRIPT" reconcile`; the status advances only after its ACK.
-- A nonzero exit is a transport failure. The pending reservation remains so an
-  ACK can reconcile it; never claim delivery or clear it without inspection.
+- A nonzero exit after reservation is a transport failure. The pending
+  reservation remains so an ACK can reconcile it; never claim delivery or clear
+  it without inspection. A pre-reservation wait timeout leaves no pending state.
 
 A working Claude is never queued; wait for it to become available. A working
 Codex may be queued only when its exact queue marker contains this message's
@@ -156,8 +157,9 @@ only that tab's session and removes an empty workspace directory. Closing the
 Herdr tab ends the panes naturally; stale state must never be borrowed by
 another tab. If old pane IDs or a missing partner prevent resume, explain the
 mismatch and use `end --sid "<sid>" --stale true` only with explicit user
-approval. `end` refuses while delivery is pending; wait for its ACK or use the
-explicit inspected clear path before ending.
+approval. Normal `end` refuses while delivery is pending; wait for its ACK or
+use the explicit inspected clear path. An explicitly approved stale end may
+discard pending state only when the partner pane is already gone.
 
 ## Workbench tab
 

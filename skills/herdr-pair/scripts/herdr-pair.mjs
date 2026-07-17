@@ -802,7 +802,7 @@ async function endSession(args) {
     }
 
     const pending = Object.entries(session.delivery?.pending ?? {}).find(([, value]) => value);
-    if (pending) {
+    if (pending && !(allowStale && binding.partner === null)) {
       fail(`cannot end while ${pending[0]} seq ${pending[1].seq} awaits receipt or explicit clear`);
     }
     session.active = false;
@@ -839,16 +839,6 @@ async function send(args) {
   let binding = await verifiedSession();
   await reconcileAcknowledged(binding.path);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
-  const sequence = await reserveSequence(
-    binding.path,
-    binding.session.sid,
-    binding.self.agent,
-    kind,
-  );
-  const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
-  const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
-  const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
-  const message = `${header}\n${control}\n\n${body}`;
 
   if (binding.partner.agent_status === "working" && binding.partner.agent !== "codex") {
     await waitUntilNotWorking(binding.partner.pane_id, Number(options["timeout-ms"] ?? 60000));
@@ -866,6 +856,16 @@ async function send(args) {
     }
     await waitUntilNotWorking(binding.partner.pane_id, Number(options["timeout-ms"] ?? 60000));
   }
+  const sequence = await reserveSequence(
+    binding.path,
+    binding.session.sid,
+    binding.self.agent,
+    kind,
+  );
+  const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
+  const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
+  const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
+  const message = `${header}\n${control}\n\n${body}`;
   herdr("pane", "send-text", binding.partner.pane_id, message);
   await sleep(750);
   // Capture the delivery mode immediately before Enter. The partner may have
