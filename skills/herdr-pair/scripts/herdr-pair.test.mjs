@@ -54,8 +54,6 @@ const args = process.argv.slice(2);
 const statePath = process.env.FAKE_HERDR_STATE;
 const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
 const save = () => fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\\n");
-state.call_count = (state.call_count || 0) + 1;
-save();
 const output = (result) => process.stdout.write(JSON.stringify({ result }) + "\\n");
 const flushAck = () => {
   const ack = state.pending_ack;
@@ -158,9 +156,10 @@ try {
       created_at: new Date().toISOString(),
     })}\n`,
   );
-  const callsBeforeDelayedAck = JSON.parse(readFileSync(statePath, "utf8")).call_count ?? 0;
-  const delayedAck = runAsync(
+  const ackWaitMarker = join(root, "ack-waiting-on-lock");
+  const delayedAck = runAsyncWithEnv(
     "w1:p1",
+    { HERDR_PAIR_TEST_LOCK_WAIT_MARKER: ackWaitMarker },
     "receive",
     "--sid",
     created.sid,
@@ -170,12 +169,9 @@ try {
     "1",
   );
   const verifiedDeadline = Date.now() + 5000;
-  while (
-    (JSON.parse(readFileSync(statePath, "utf8")).call_count ?? 0) <
-      callsBeforeDelayedAck + 3
-  ) {
+  while (!existsSync(ackWaitMarker)) {
     if (Date.now() >= verifiedDeadline) {
-      assert.fail("delayed receive did not finish live session verification");
+      assert.fail("delayed receive did not block on the held session lock");
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }

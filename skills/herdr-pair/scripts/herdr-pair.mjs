@@ -378,6 +378,9 @@ async function acquireLock(lock, timeoutMs, label) {
       if (error.code !== "EEXIST") {
         fail(`cannot acquire ${label} lock: ${error.message}`);
       }
+      if (process.env.HERDR_PAIR_TEST_LOCK_WAIT_MARKER) {
+        writeFileSync(process.env.HERDR_PAIR_TEST_LOCK_WAIT_MARKER, `${lock}\n`);
+      }
       const observedOwner = readLockOwner(lock);
       if (lockIsAbandoned(lock, observedOwner)) {
         if (reclaimLock(lock, observedOwner, label)) continue;
