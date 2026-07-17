@@ -1,6 +1,7 @@
 interface:
   display_name: "Herdr Pair"
-  short_description: "Pair Claude and Codex inside Herdr"
+  short_description: "Keep Claude and Codex paired in Herdr"
+  default_prompt: "Use $herdr-pair to keep Claude and Codex collaborating in this Herdr tab until I end the pair."
 
 policy:
   allow_implicit_invocation: true

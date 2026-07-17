@@ -4,6 +4,7 @@ import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -11,12 +12,16 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const scriptPath = fileURLToPath(import.meta.url);
+const schemaVersion = 2;
+
+class CliError extends Error {}
 
 function fail(message) {
-  process.stderr.write(`${message}\n`);
-  process.exit(1);
+  throw new CliError(message);
 }
 
 function herdr(...args) {
@@ -58,6 +63,88 @@ function opposite(agent) {
 function sessionPath(self) {
   const slug = self.tab_id.replaceAll(":", "_");
   return join(homedir(), ".herdr-coworkers", self.workspace_id, slug, "session.json");
+}
+
+function emptyDelivery() {
+  return {
+    next: { claude: 0, codex: 0 },
+    submitted: { claude: 0, codex: 0 },
+    received: { claude: 0, codex: 0 },
+    pending: { claude: null, codex: null },
+  };
+}
+
+function atomicWrite(path, value) {
+  const temp = `${path}.tmp.${process.pid}`;
+  writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  renameSync(temp, path);
+}
+
+function normalizeSession(session, live) {
+  let changed = false;
+  const normalized = structuredClone(session);
+
+  if (!normalized.participants && normalized.self && normalized.partner) {
+    normalized.participants = {
+      [normalized.self.agent]: { pane_id: normalized.self.pane_id },
+      [normalized.partner.agent]: { pane_id: normalized.partner.pane_id },
+    };
+    delete normalized.self;
+    delete normalized.partner;
+    changed = true;
+  }
+  if (normalized.schema_version !== schemaVersion) {
+    normalized.schema_version = schemaVersion;
+    changed = true;
+  }
+  if (normalized.initiator !== "claude" && normalized.initiator !== "codex") {
+    normalized.initiator = live?.self.agent ?? null;
+    changed = true;
+  }
+  if (normalized.active === undefined) {
+    normalized.active = true;
+    changed = true;
+  }
+  if (!Number.isInteger(normalized.completed_cycles)) {
+    normalized.completed_cycles = 0;
+    changed = true;
+  }
+  if (!normalized.delivery) {
+    normalized.delivery = emptyDelivery();
+    changed = true;
+  } else {
+    for (const field of ["next", "submitted", "received"]) {
+      if (!normalized.delivery[field]) {
+        normalized.delivery[field] = { claude: 0, codex: 0 };
+        changed = true;
+      }
+      for (const agent of ["claude", "codex"]) {
+        if (
+          !Number.isInteger(normalized.delivery[field][agent]) ||
+          normalized.delivery[field][agent] < 0
+        ) {
+          normalized.delivery[field][agent] = 0;
+          changed = true;
+        }
+      }
+    }
+    if (!normalized.delivery.pending) {
+      normalized.delivery.pending = { claude: null, codex: null };
+      changed = true;
+    }
+    for (const agent of ["claude", "codex"]) {
+      const pending = normalized.delivery.pending[agent];
+      if (
+        pending !== null &&
+        (!Number.isInteger(pending?.seq) || pending.seq < 1 || typeof pending.kind !== "string")
+      ) {
+        normalized.delivery.pending[agent] = null;
+        changed = true;
+      }
+    }
+  }
+
+  return { session: normalized, changed };
 }
 
 function discover({ allowMissing = false } = {}) {
@@ -134,45 +221,81 @@ async function spawn() {
   fail(`spawned pane did not become an idle ${binding.partnerAgent} in the current tab:\n${recent}`);
 }
 
-function initSession() {
+async function acquireLock(lock, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      mkdirSync(lock);
+      return;
+    } catch (error) {
+      if (error.code !== "EEXIST" || Date.now() >= deadline) {
+        fail(`cannot acquire ${label} lock: ${error.message}`);
+      }
+      await sleep(25);
+    }
+  }
+}
+
+async function initSession() {
   const binding = discover();
   const path = sessionPath(binding.self);
-  if (existsSync(path)) fail(`current-tab session already exists: ${path}`);
-
-  const session = {
-    sid: `${Math.floor(Date.now() / 1000)}-${execFileSync("openssl", ["rand", "-hex", "2"], { encoding: "utf8" }).trim()}`,
-    workspace_id: binding.self.workspace_id,
-    tab_id: binding.self.tab_id,
-    initiator: binding.self.agent,
-    participants: {
-      claude: {
-        pane_id:
-          binding.self.agent === "claude" ? binding.self.pane_id : binding.partner.pane_id,
-      },
-      codex: {
-        pane_id: binding.self.agent === "codex" ? binding.self.pane_id : binding.partner.pane_id,
-      },
-    },
-    round: 0,
-    last_status: { claude: null, codex: null },
-    no_progress_count: 0,
-    workbench: { tab_id: null, server_pane: null, logs_pane: null },
-    created_at: new Date().toISOString(),
-  };
-
   const directory = dirname(path);
   mkdirSync(dirname(directory), { recursive: true });
-  // The tab directory itself is the boot lock. Existing or half-written state
-  // fail-closes instead of being overwritten by a concurrent initiator.
+  const lock = `${directory}.init.lock`;
+  await acquireLock(lock, 5000, "session init");
   try {
-    mkdirSync(directory);
-  } catch (error) {
-    fail(`current-tab session directory already exists or cannot be created: ${error.message}`);
+    if (existsSync(path)) {
+      let resumed;
+      try {
+        resumed = verifiedSession();
+      } catch (error) {
+        let sid = "<sid>";
+        try {
+          sid = JSON.parse(readFileSync(path, "utf8")).sid ?? sid;
+        } catch {}
+        fail(
+          `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${JSON.stringify(scriptPath)} end --sid ${JSON.stringify(sid)} --stale true`,
+        );
+      }
+      await reconcileAcknowledged(resumed.path);
+      resumed.session = JSON.parse(readFileSync(resumed.path, "utf8"));
+      process.stdout.write(
+        `${JSON.stringify({ ...resumed.session, resumed: true }, null, 2)}\n`,
+      );
+      return;
+    }
+
+    const session = {
+      schema_version: schemaVersion,
+      sid: `${Math.floor(Date.now() / 1000)}-${execFileSync("openssl", ["rand", "-hex", "2"], { encoding: "utf8" }).trim()}`,
+      workspace_id: binding.self.workspace_id,
+      tab_id: binding.self.tab_id,
+      initiator: binding.self.agent,
+      active: true,
+      participants: {
+        claude: {
+          pane_id:
+            binding.self.agent === "claude" ? binding.self.pane_id : binding.partner.pane_id,
+        },
+        codex: {
+          pane_id: binding.self.agent === "codex" ? binding.self.pane_id : binding.partner.pane_id,
+        },
+      },
+      round: 0,
+      last_status: { claude: null, codex: null },
+      completed_cycles: 0,
+      no_progress_count: 0,
+      delivery: emptyDelivery(),
+      workbench: { tab_id: null, server_pane: null, logs_pane: null },
+      created_at: new Date().toISOString(),
+    };
+
+    mkdirSync(directory, { recursive: true });
+    atomicWrite(path, session);
+    process.stdout.write(`${JSON.stringify(session, null, 2)}\n`);
+  } finally {
+    rmdirSync(lock);
   }
-  const temp = `${path}.tmp.${process.pid}`;
-  writeFileSync(temp, `${JSON.stringify(session, null, 2)}\n`, { flag: "wx" });
-  renameSync(temp, path);
-  process.stdout.write(`${JSON.stringify(session, null, 2)}\n`);
 }
 
 function verifiedSession() {
@@ -187,8 +310,26 @@ function verifiedSession() {
 
   if (
     session.workspace_id !== live.self.workspace_id ||
+    session.tab_id !== live.self.tab_id
+  ) {
+    fail("session does not belong to the caller's exact workspace and tab");
+  }
+  if (
+    Number.isInteger(session.schema_version) &&
+    session.schema_version > schemaVersion
+  ) {
+    fail(`session schema ${session.schema_version} is newer than supported schema ${schemaVersion}`);
+  }
+
+  const normalized = normalizeSession(session, live);
+  session = normalized.session;
+  if (normalized.changed) atomicWrite(path, session);
+
+  if (
+    session.workspace_id !== live.self.workspace_id ||
     session.tab_id !== live.self.tab_id ||
-    !session.participants
+    !session.participants ||
+    session.active !== true
   ) {
     fail("session does not belong to the caller's exact workspace and tab");
   }
@@ -214,7 +355,67 @@ function verifiedSession() {
   return { ...live, partner, path, session };
 }
 
-function verifyInbound(args) {
+async function withSessionLock(path, mutate) {
+  const lock = `${path}.lock`;
+  await acquireLock(lock, 5000, "session update");
+
+  try {
+    const session = JSON.parse(readFileSync(path, "utf8"));
+    const result = await mutate(session);
+    atomicWrite(path, session);
+    return result;
+  } finally {
+    rmdirSync(lock);
+  }
+}
+
+async function acknowledgeInbound(path, from, sequence) {
+  const current = JSON.parse(readFileSync(path, "utf8"));
+  const maximum = current.delivery?.next?.[from] ?? 0;
+  if (!Number.isInteger(sequence) || sequence < 1 || sequence > maximum) {
+    fail(`inbound sequence ${sequence} is outside the reserved range for ${from} (1-${maximum})`);
+  }
+  await withSessionLock(path, (session) => {
+    session.delivery.received[from] = Math.max(
+      session.delivery.received[from] ?? 0,
+      sequence,
+    );
+  });
+}
+
+function applyAcknowledgedStatus(session, agent, pending) {
+  const wasComplete =
+    session.last_status.claude === "accepted" &&
+    session.last_status.codex === "accepted";
+  session.round += 1;
+  session.last_status[agent] = pending.kind;
+  const isComplete =
+    session.last_status.claude === "accepted" &&
+    session.last_status.codex === "accepted";
+  if (!wasComplete && isComplete) {
+    session.completed_cycles += 1;
+    session.last_completed_at = new Date().toISOString();
+  }
+}
+
+function reconcileSessionState(session) {
+  const reconciled = [];
+  for (const agent of ["claude", "codex"]) {
+    const pending = session.delivery?.pending?.[agent];
+    if (pending && (session.delivery.received[agent] ?? 0) >= pending.seq) {
+      applyAcknowledgedStatus(session, agent, pending);
+      session.delivery.pending[agent] = null;
+      reconciled.push({ agent, seq: pending.seq, kind: pending.kind });
+    }
+  }
+  return reconciled;
+}
+
+async function reconcileAcknowledged(path) {
+  return withSessionLock(path, reconcileSessionState);
+}
+
+async function verifyInbound(args) {
   const options = parseOptions(args);
   const claimedSid = options.sid;
   const claimedFrom = options.from;
@@ -226,6 +427,12 @@ function verifyInbound(args) {
   }
   if (claimedFrom !== binding.partner.agent) {
     fail(`inbound sender ${claimedFrom} is not current-tab partner ${binding.partner.agent}`);
+  }
+
+  if (options.seq !== undefined) {
+    await acknowledgeInbound(binding.path, claimedFrom, Number(options.seq));
+    await reconcileAcknowledged(binding.path);
+    binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
   }
 
   process.stdout.write(
@@ -292,31 +499,101 @@ async function verifySubmission(paneId, before, header, queuedToCodex) {
   return false;
 }
 
-async function updateSession(path, agent, kind) {
-  const lock = `${path}.lock`;
-  const deadline = Date.now() + 5000;
-  while (true) {
-    try {
-      mkdirSync(lock);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST" || Date.now() >= deadline) {
-        fail(`cannot acquire session update lock: ${error.message}`);
+async function reserveSequence(path, agent) {
+  return withSessionLock(path, (session) => {
+    const pending = session.delivery.pending?.[agent];
+    if (pending) {
+      fail(
+        `previous ${agent} message seq ${pending.seq} is still awaiting receipt; run reconcile and do not send another message yet`,
+      );
+    }
+    session.delivery.next[agent] += 1;
+    return session.delivery.next[agent];
+  });
+}
+
+async function recordSubmission(path, agent, kind, sequence) {
+  await withSessionLock(path, (session) => {
+    session.delivery.submitted[agent] = Math.max(
+      session.delivery.submitted[agent] ?? 0,
+      sequence,
+    );
+    session.delivery.pending[agent] = {
+      seq: sequence,
+      kind,
+      submitted_at: new Date().toISOString(),
+    };
+  });
+}
+
+async function waitForReceipt(path, agent, sequence, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const session = JSON.parse(readFileSync(path, "utf8"));
+    if ((session.delivery?.received?.[agent] ?? 0) >= sequence) return true;
+    await sleep(50);
+  }
+  return false;
+}
+
+async function resetSession() {
+  const binding = verifiedSession();
+  await reconcileAcknowledged(binding.path);
+  await withSessionLock(binding.path, (session) => {
+    const pending = Object.entries(session.delivery.pending).find(([, value]) => value);
+    if (pending) {
+      fail(`cannot reset while ${pending[0]} seq ${pending[1].seq} awaits receipt`);
+    }
+    session.round = 0;
+    session.last_status = { claude: null, codex: null };
+    session.no_progress_count = 0;
+    session.last_reset_at = new Date().toISOString();
+  });
+  process.stdout.write(
+    `${JSON.stringify({ ...JSON.parse(readFileSync(binding.path, "utf8")), reset: true }, null, 2)}\n`,
+  );
+}
+
+function endSession(args) {
+  const options = parseOptions(args);
+  if (!options.sid) fail("end requires --sid and explicit user intent");
+  const binding = discover();
+  const path = sessionPath(binding.self);
+  let session;
+  try {
+    session = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    fail(`cannot load current-tab session ${path}: ${error.message}`);
+  }
+  if (
+    session.sid !== options.sid ||
+    session.workspace_id !== binding.self.workspace_id ||
+    session.tab_id !== binding.self.tab_id
+  ) {
+    fail("refusing to end a session that does not match the caller's exact sid, workspace, and tab");
+  }
+
+  const allowStale = options.stale === "true";
+  if (options.stale !== undefined && !allowStale) {
+    fail("--stale must be true when explicitly authorized");
+  }
+  if (!allowStale) {
+    const normalized = normalizeSession(session, binding).session;
+    for (const agent of ["claude", "codex"]) {
+      const expected = agent === binding.self.agent ? binding.self.pane_id : binding.partner.pane_id;
+      if (normalized.participants?.[agent]?.pane_id !== expected) {
+        fail("refusing to end a session whose recorded participants do not match this tab; explicit stale recovery requires --stale true");
       }
-      await sleep(25);
     }
   }
 
-  try {
-    const session = JSON.parse(readFileSync(path, "utf8"));
-    session.round += 1;
-    session.last_status[agent] = kind;
-    const temp = `${path}.tmp.${process.pid}`;
-    writeFileSync(temp, `${JSON.stringify(session, null, 2)}\n`);
-    renameSync(temp, path);
-  } finally {
-    rmdirSync(lock);
+  const directory = dirname(path);
+  const workspaceDirectory = dirname(directory);
+  execFileSync("trash", [directory]);
+  if (existsSync(workspaceDirectory) && readdirSync(workspaceDirectory).length === 0) {
+    rmdirSync(workspaceDirectory);
   }
+  process.stdout.write(`ended herdr-pair session ${session.sid} for tab ${binding.self.tab_id}\n`);
 }
 
 async function send(args) {
@@ -326,9 +603,13 @@ async function send(args) {
   if (!kind || !bodyFile) fail("send requires --kind and --body-file");
 
   let binding = verifiedSession();
+  await reconcileAcknowledged(binding.path);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
+  const sequence = await reserveSequence(binding.path, binding.self.agent);
   const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
-  const message = `${header}\n\n${body}`;
+  const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
+  const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
+  const message = `${header}\n${control}\n\n${body}`;
 
   if (binding.partner.agent_status === "working" && binding.partner.agent !== "codex") {
     await waitUntilNotWorking(binding.partner.pane_id, Number(options["timeout-ms"] ?? 60000));
@@ -367,35 +648,107 @@ async function send(args) {
     if (headerAtPrompt(binding.partner.pane_id, header)) {
       herdr("pane", "send-keys", binding.partner.pane_id, "Enter");
       if (await verifySubmission(binding.partner.pane_id, before, header, queuedToCodex)) {
-        await updateSession(binding.path, binding.self.agent, kind);
-        process.stdout.write(`${header}\n`);
+        await recordSubmission(binding.path, binding.self.agent, kind, sequence);
+        const acknowledged = await waitForReceipt(
+          binding.path,
+          binding.self.agent,
+          sequence,
+          Number(options["ack-timeout-ms"] ?? 15000),
+        );
+        if (acknowledged) await reconcileAcknowledged(binding.path);
+        process.stdout.write(
+          `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
+        );
         return;
       }
     }
     fail("send failed: no positive evidence that Enter submitted the message; session unchanged");
   }
 
-  await updateSession(binding.path, binding.self.agent, kind);
-  process.stdout.write(`${header}\n`);
+  await recordSubmission(binding.path, binding.self.agent, kind, sequence);
+  const acknowledged = await waitForReceipt(
+    binding.path,
+    binding.self.agent,
+    sequence,
+    Number(options["ack-timeout-ms"] ?? 15000),
+  );
+  if (acknowledged) await reconcileAcknowledged(binding.path);
+  process.stdout.write(
+    `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
+  );
 }
 
-const [command, ...args] = process.argv.slice(2);
-
-if (command === "discover") {
-  process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
-} else if (command === "spawn") {
-  await spawn();
-} else if (command === "init") {
-  initSession();
-} else if (command === "verify") {
+async function reconcileSession(args) {
+  const options = parseOptions(args);
   const binding = verifiedSession();
-  process.stdout.write(
-    `${JSON.stringify({ self: binding.self, partner: binding.partner, session: binding.session }, null, 2)}\n`,
-  );
-} else if (command === "receive") {
-  verifyInbound(args);
-} else if (command === "send") {
-  await send(args);
-} else {
-  fail("usage: herdr-pair.mjs discover | spawn | init | verify | receive --sid SID --from AGENT | send --kind KIND --body-file FILE [--timeout-ms MS]");
+  let reconciled;
+  let cleared = null;
+  if (options["clear-pending"] !== undefined) {
+    if (options["clear-pending"] !== "true" || options.sid !== binding.session.sid) {
+      fail("clearing pending delivery requires --clear-pending true and the exact --sid");
+    }
+    const resolution = await withSessionLock(binding.path, (session) => {
+      const applied = reconcileSessionState(session);
+      const agent = binding.self.agent;
+      const pending = session.delivery.pending[agent];
+      if (!pending) {
+        if (applied.some((item) => item.agent === agent)) {
+          return { reconciled: applied, cleared: null };
+        }
+        fail(`no unacknowledged ${agent} delivery is pending`);
+      }
+      const record = { ...pending, cleared_at: new Date().toISOString() };
+      session.delivery.pending[agent] = null;
+      session.delivery.last_cleared_pending ??= { claude: null, codex: null };
+      session.delivery.last_cleared_pending[agent] = record;
+      return { reconciled: applied, cleared: { agent, ...record } };
+    });
+    reconciled = resolution.reconciled;
+    cleared = resolution.cleared;
+  } else if (options.sid !== undefined) {
+    fail("--sid is only valid with --clear-pending true");
+  } else {
+    reconciled = await reconcileAcknowledged(binding.path);
+  }
+  const session = JSON.parse(readFileSync(binding.path, "utf8"));
+  process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
+}
+
+async function main() {
+  const [command, ...args] = process.argv.slice(2);
+
+  if (command === "discover") {
+    process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
+  } else if (command === "spawn") {
+    await spawn();
+  } else if (command === "init") {
+    await initSession();
+  } else if (command === "verify") {
+    const binding = verifiedSession();
+    await reconcileAcknowledged(binding.path);
+    binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
+    process.stdout.write(
+      `${JSON.stringify({ self: binding.self, partner: binding.partner, session: binding.session }, null, 2)}\n`,
+    );
+  } else if (command === "receive") {
+    await verifyInbound(args);
+  } else if (command === "send") {
+    await send(args);
+  } else if (command === "reset") {
+    await resetSession();
+  } else if (command === "reconcile") {
+    await reconcileSession(args);
+  } else if (command === "end") {
+    endSession(args);
+  } else {
+    fail("usage: herdr-pair.mjs discover | spawn | init | verify | reconcile [--sid SID --clear-pending true] | reset | end --sid SID [--stale true] | receive --sid SID --from AGENT [--seq N] | send --kind KIND --body-file FILE [--timeout-ms MS] [--ack-timeout-ms MS]");
+  }
+}
+
+try {
+  await main();
+} catch (error) {
+  const detail = error instanceof CliError ? error.message : error.stack ?? error.message;
+  process.stderr.write(`${detail}\n`);
+  process.exitCode = 1;
 }
