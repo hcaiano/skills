@@ -1,6 +1,6 @@
 ---
 name: review-pr-comments
-description: "Review cleanup for an existing PR: validate the complete head, evaluate feedback, apply valid in-scope fixes, respond where useful, and leave the PR merge-ready. Use when the user explicitly invokes review-pr-comments or ship-it hands off a newly opened or updated PR."
+description: "Review cleanup for an existing PR: validate the complete head, evaluate feedback, apply valid in-scope fixes, respond where useful, and leave the PR merge-ready. Activate automatically only when ship-it hands off a newly opened or updated PR; otherwise require explicit review-pr-comments invocation."
 user-invocable: true
 argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 ---
@@ -9,6 +9,10 @@ argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 
 Make the selected existing PR merge-ready. Use the available GitHub tools and
 repository conventions; choose the most efficient workflow for the live state.
+
+Invocation gate: activate automatically only after `$ship-it` was explicitly
+invoked in the current turn. In every other case, require the user to invoke
+`$review-pr-comments` explicitly.
 
 Required outcomes:
 
