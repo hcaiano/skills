@@ -133,8 +133,8 @@ at that tab instead of creating a second unit for it.
    unit fails here — hand the agent a fully set-up worktree or none.
 3. **Tab and pair.** Create a tab in the recorded workspace with
    cwd = the worktree, labeled `#N <short title>` (multi-issue:
-   `#N+#M <theme>`), without stealing focus. Start both agents in it at the
-   unit's effort:
+   `#N+#M <theme>`), without stealing focus. Start both agents in that tab
+   via herdr, each with the unit's effort in its argv:
 
    ```bash
    claude --effort <tier>
@@ -142,9 +142,8 @@ at that tab instead of creating a second unit for it.
    ```
 
    The lead is the same CLI you are running as (the one proven installed and
-   authenticated); the other is its peer, in a split pane. The lead's
-   `herdr-pair` run discovers the existing peer and adopts it instead of
-   spawning a default-effort one. Wait until both report idle.
+   authenticated); the other is its peer, in a split pane (guardrail 4).
+   Wait until both report idle.
 4. **Kickoff.** Fill the orchestrator target with your own agent target
    (recorded in the preconditions). Send the message below to the lead, then
    read the pane back; if the text sits unsubmitted in the composer, submit
