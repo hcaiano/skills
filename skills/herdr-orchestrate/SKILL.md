@@ -28,7 +28,8 @@ names, and issue references literal.
   orchestrator must run inside Herdr). If missing, stop and say so.
 - Run from the project repository (or `cd` to the repo the user names).
 - Record the orchestrator's own location once (`herdr pane current`): its
-  `workspace_id` and agent target are used throughout.
+  `workspace_id` and `pane_id` are used throughout — the `pane_id` is where
+  delegates send their reports.
 
 ## Guardrails
 
@@ -147,10 +148,33 @@ at that tab instead of creating a second unit for it.
    The lead is the same CLI you are running as (the one proven installed and
    authenticated); the other is its peer, in a split pane (guardrail 4).
    Wait until both report idle.
-4. **Kickoff.** Fill the orchestrator target with your own agent target
-   (recorded in the preconditions). Send the message below to the lead, then
-   read the pane back; if the text sits unsubmitted in the composer, submit
-   it (enter). The unit is live when the lead reports working.
+4. **Kickoff.** Send the message below to the lead per
+   [Sending a message to an agent](#sending-a-message-to-an-agent), filling
+   the orchestrator `pane_id` from the preconditions. The unit is live when
+   the lead reports working.
+
+### Sending a message to an agent
+
+`herdr agent send` only types text into the composer; it does not submit.
+Every message — kickoffs, go-aheads, and the reports you tell delegates to
+send — needs an explicit Enter, aimed at a `pane_id` (e.g. `w9:p9`), not a
+label. Steps:
+
+1. Resolve the target's `pane_id` (`herdr agent get <target>`) and wait until
+   it reports idle (`herdr agent wait <target> --status idle`) — a working
+   agent queues keystrokes instead of accepting them.
+2. Type, then submit:
+
+   ```bash
+   herdr agent send <pane_id> "<text>"
+   herdr pane send-keys <pane_id> Enter
+   ```
+
+3. Verify by reading the pane (`herdr agent read <pane_id> --source visible`):
+   the text has left the composer (it no longer sits after the `❯` prompt;
+   on Codex the line "Messages to be submitted after next tool call" confirms
+   Enter enqueued it). If it is still in the composer, send `Enter` once more;
+   if still stuck after that, stop and report.
 
 ### Kickoff message template
 
@@ -163,8 +187,10 @@ You are the lead agent for this work unit in a dedicated Herdr tab.
 Issues in this unit: <#N[, #M, ...]> — implement them all on this branch and
 ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
-Orchestrator: report milestones to it with
-  herdr agent send <orchestrator target> "[unit <label>] <kind>: <one line>"
+Orchestrator pane: <orchestrator pane_id>. Report milestones to it — type the
+line, then submit it with Enter (agent send alone does not submit):
+  herdr agent send <orchestrator pane_id> "[unit <label>] <kind>: <one line>"
+  herdr pane send-keys <orchestrator pane_id> Enter
 where <kind> is ready (pair accepted the work), shipped (PR URL, CI state),
 or blocked (the decision you need). If a send fails, state the same line in
 your own pane instead — the orchestrator's survey will find it.
@@ -211,8 +237,8 @@ workspace (run a fresh phase 0 survey if the map is stale or missing), then
 act by kind:
 
 - `ready` — the pair accepted the work. Reply with the go-ahead
-  (`herdr agent send <lead> "..."`): run the ship-it skill, then report
-  shipped. Tell the user the unit is shipping.
+  ([send](#sending-a-message-to-an-agent) the lead: run the ship-it skill,
+  then report shipped). Tell the user the unit is shipping.
 - `shipped` — record the PR URL and CI state; tell the user it is ready for
   their review and merge decision.
 - `blocked` — read the unit's pane, and surface the tab and the exact
