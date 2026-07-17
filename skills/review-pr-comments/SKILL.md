@@ -10,9 +10,9 @@ argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 Make the selected existing PR merge-ready. Use the available GitHub tools and
 repository conventions; choose the most efficient workflow for the live state.
 
-Invocation gate: activate automatically only after `$ship-it` was explicitly
-invoked in the current turn. In every other case, require the user to invoke
-`$review-pr-comments` explicitly.
+Invocation gate: activate automatically only as part of an active `$ship-it`
+workflow or its direct handoff, including resumptions after a blocker. In every
+other case, require the user to invoke `$review-pr-comments` explicitly.
 
 Required outcomes:
 
