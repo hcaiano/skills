@@ -105,6 +105,11 @@ const runAs = (paneId, ...args) =>
     encoding: "utf8",
     env: { ...env, HERDR_PANE_ID: paneId },
   });
+const runAsWithEnv = (paneId, overrides, ...args) =>
+  execFileSync(process.execPath, [helper, ...args], {
+    encoding: "utf8",
+    env: { ...env, ...overrides, HERDR_PANE_ID: paneId },
+  });
 const runAsync = (paneId, ...args) =>
   new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [helper, ...args], {
@@ -322,6 +327,23 @@ try {
   run("end", "--sid", repaired.sid);
 
   mkdirSync(legacyDirectory, { recursive: true });
+  writeFileSync(join(legacyDirectory, "session.json.tmp.crash"), "partial\n");
+  mkdirSync(orphanLock);
+  writeFileSync(
+    join(orphanLock, "owner.json"),
+    `${JSON.stringify({
+      pid: process.pid,
+      token: "reused-pid-owner",
+      process_start: "not-the-current-process-start",
+      created_at: new Date().toISOString(),
+    })}\n`,
+  );
+  const pidReuseRecovered = JSON.parse(run("init"));
+  assert.equal(pidReuseRecovered.active, true);
+  assert.equal(existsSync(orphanLock), false);
+  run("end", "--sid", pidReuseRecovered.sid);
+
+  mkdirSync(legacyDirectory, { recursive: true });
   writeFileSync(
     sessionPath,
     `${JSON.stringify({
@@ -381,6 +403,33 @@ try {
   const rebound = JSON.parse(run("init"));
   assert.equal(rebound.participants.codex.pane_id, "w1:p1");
   assert.equal(rebound.participants.claude.pane_id, "w1:p2");
+  assert.throws(
+    () => runAsWithEnv(
+      "w1:p1",
+      { PATH: `${bin}:${dirname(process.execPath)}` },
+      "end",
+      "--sid",
+      rebound.sid,
+    ),
+    /requires trash on PATH before it can deactivate the session/u,
+  );
+  assert.equal(JSON.parse(readFileSync(sessionPath, "utf8")).active, true);
+  const failingTrashBin = join(root, "failing-trash-bin");
+  mkdirSync(failingTrashBin);
+  const failingTrash = join(failingTrashBin, "trash");
+  writeFileSync(failingTrash, "#!/bin/sh\nexit 42\n");
+  chmodSync(failingTrash, 0o755);
+  assert.throws(
+    () => runAsWithEnv(
+      "w1:p1",
+      { PATH: `${failingTrashBin}:${bin}:${dirname(process.execPath)}` },
+      "end",
+      "--sid",
+      rebound.sid,
+    ),
+    /cannot trash herdr-pair session; restored active state/u,
+  );
+  assert.equal(JSON.parse(readFileSync(sessionPath, "utf8")).active, true);
   state = JSON.parse(readFileSync(statePath, "utf8"));
   delete state.panes["w1:p2"];
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);

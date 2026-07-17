@@ -18,7 +18,7 @@ Set `SKILL_DIR` to this skill directory and
 `PAIR_SCRIPT="$SKILL_DIR/scripts/herdr-pair.mjs"`. Always use that absolute
 path; the project cwd is unrelated to the installed skill path.
 
-Require `herdr` on `PATH`, `HERDR_ENV=1`, and `HERDR_PANE_ID`. If any is
+Require `herdr` and `trash` on `PATH`, `HERDR_ENV=1`, and `HERDR_PANE_ID`. If any is
 missing, stop and tell the user to install or start Herdr.
 
 ## Guardrails

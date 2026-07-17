@@ -260,6 +260,29 @@ function processIsGone(pid) {
   }
 }
 
+function processStartIdentity(pid) {
+  if (!Number.isInteger(pid) || pid < 1) return null;
+  try {
+    return execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
+      encoding: "utf8",
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function requireTrash() {
+  try {
+    const executable = execFileSync("/bin/sh", ["-c", "command -v trash"], {
+      encoding: "utf8",
+    }).trim();
+    if (!executable) throw new Error("not found");
+    return executable;
+  } catch {
+    fail("herdr-pair end requires trash on PATH before it can deactivate the session");
+  }
+}
+
 function recordIsAbandoned(record) {
   if (
     Number.isFinite(record?.boot_time_ms) &&
@@ -267,7 +290,12 @@ function recordIsAbandoned(record) {
   ) {
     return true;
   }
-  return processIsGone(record?.pid);
+  if (processIsGone(record?.pid)) return true;
+  if (typeof record?.process_start === "string") {
+    const current = processStartIdentity(record.pid);
+    return current !== null && current !== record.process_start;
+  }
+  return false;
 }
 
 function readLockOwner(lock) {
@@ -304,6 +332,7 @@ function reclaimLock(lock, observedOwner, label) {
     token: randomUUID(),
     owner_token: observedOwner?.token ?? null,
     boot_time_ms: bootTimeMs,
+    process_start: processStartIdentity(process.pid),
     created_at: new Date().toISOString(),
   };
 
@@ -371,6 +400,7 @@ async function acquireLock(lock, timeoutMs, label) {
       pid: process.pid,
       token: randomUUID(),
       boot_time_ms: bootTimeMs,
+      process_start: processStartIdentity(process.pid),
       created_at: new Date().toISOString(),
     };
     try {
@@ -752,8 +782,11 @@ async function endSession(args) {
   if (options.stale !== undefined && !allowStale) {
     fail("--stale must be true when explicitly authorized");
   }
+  const trash = requireTrash();
   const binding = discover({ allowMissing: allowStale });
   const path = sessionPath(binding.self);
+  const directory = dirname(path);
+  const workspaceDirectory = dirname(directory);
   if (!existsSync(path)) fail(`cannot load current-tab session ${path}: file does not exist`);
   const lock = `${path}.lock`;
   const lockOwner = await acquireLock(lock, 5000, "session termination");
@@ -784,6 +817,16 @@ async function endSession(args) {
     }
     session.active = false;
     atomicWrite(path, session);
+    try {
+      execFileSync(trash, [directory]);
+    } catch (error) {
+      if (existsSync(path)) {
+        session.active = true;
+        atomicWrite(path, session);
+        const detail = error.stderr?.toString().trim() || error.message;
+        fail(`cannot trash herdr-pair session; restored active state: ${detail}`);
+      }
+    }
   } catch (error) {
     if (error instanceof CliError) throw error;
     fail(`cannot load current-tab session ${path}: ${error.message}`);
@@ -791,9 +834,6 @@ async function endSession(args) {
     releaseLock(lock, lockOwner);
   }
 
-  const directory = dirname(path);
-  const workspaceDirectory = dirname(directory);
-  execFileSync("trash", [directory]);
   if (existsSync(workspaceDirectory) && readdirSync(workspaceDirectory).length === 0) {
     rmdirSync(workspaceDirectory);
   }
