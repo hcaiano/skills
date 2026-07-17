@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -21,6 +20,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 const schemaVersion = 2;
 const staleLockMs = 60000;
+const processStartFormat = "ps-lstart-c-utc-v1";
 
 class CliError extends Error {}
 
@@ -263,6 +263,7 @@ function processStartIdentity(pid) {
   try {
     return execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
     }).trim() || null;
   } catch {
     return null;
@@ -283,7 +284,10 @@ function requireTrash() {
 
 function recordIsAbandoned(record) {
   if (processIsGone(record?.pid)) return true;
-  if (typeof record?.process_start === "string") {
+  if (
+    typeof record?.process_start === "string" &&
+    record.process_start_format === processStartFormat
+  ) {
     const current = processStartIdentity(record.pid);
     return current !== null && current !== record.process_start;
   }
@@ -324,6 +328,7 @@ function reclaimLock(lock, observedOwner, label) {
     token: randomUUID(),
     owner_token: observedOwner?.token ?? null,
     process_start: processStartIdentity(process.pid),
+    process_start_format: processStartFormat,
     created_at: new Date().toISOString(),
   };
 
@@ -378,6 +383,9 @@ async function acquireLock(lock, timeoutMs, label) {
       if (error.code !== "EEXIST") {
         fail(`cannot acquire ${label} lock: ${error.message}`);
       }
+      if (process.env.HERDR_PAIR_TEST_LOCK_WAIT_MARKER) {
+        writeFileSync(process.env.HERDR_PAIR_TEST_LOCK_WAIT_MARKER, `${lock}\n`);
+      }
       const observedOwner = readLockOwner(lock);
       if (lockIsAbandoned(lock, observedOwner)) {
         if (reclaimLock(lock, observedOwner, label)) continue;
@@ -391,6 +399,7 @@ async function acquireLock(lock, timeoutMs, label) {
       pid: process.pid,
       token: randomUUID(),
       process_start: processStartIdentity(process.pid),
+      process_start_format: processStartFormat,
       created_at: new Date().toISOString(),
     };
     try {
@@ -426,7 +435,7 @@ async function initSession() {
           `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${JSON.stringify(scriptPath)} end --sid ${JSON.stringify(sid)} --stale true`,
         );
       }
-      await reconcileAcknowledged(resumed.path);
+      await reconcileAcknowledged(resumed.path, resumed.session.sid);
       resumed.session = JSON.parse(readFileSync(resumed.path, "utf8"));
       process.stdout.write(
         `${JSON.stringify({ ...resumed.session, resumed: true }, null, 2)}\n`,
@@ -553,13 +562,21 @@ async function withSessionLock(path, mutate) {
   }
 }
 
-async function acknowledgeInbound(path, from, sequence) {
-  const current = JSON.parse(readFileSync(path, "utf8"));
-  const maximum = current.delivery?.next?.[from] ?? 0;
-  if (!Number.isInteger(sequence) || sequence < 1 || sequence > maximum) {
-    fail(`inbound sequence ${sequence} is outside the reserved range for ${from} (1-${maximum})`);
+function requireLockedSession(session, sid, action) {
+  if (session.active !== true || session.sid !== sid) {
+    fail(`${action} requires active session ${sid}; locked session is ${session.sid ?? "unknown"}`);
   }
+}
+
+async function acknowledgeInbound(path, sid, from, sequence) {
   await withSessionLock(path, (session) => {
+    if (session.active !== true || session.sid !== sid) {
+      fail(`inbound sid ${sid} does not match the active locked session ${session.sid ?? "unknown"}`);
+    }
+    const maximum = session.delivery?.next?.[from] ?? 0;
+    if (!Number.isInteger(sequence) || sequence < 1 || sequence > maximum) {
+      fail(`inbound sequence ${sequence} is outside the reserved range for ${from} (1-${maximum})`);
+    }
     session.delivery.received[from] = Math.max(
       session.delivery.received[from] ?? 0,
       sequence,
@@ -599,8 +616,11 @@ function reconcileSessionState(session) {
   return reconciled;
 }
 
-async function reconcileAcknowledged(path) {
-  return withSessionLock(path, reconcileSessionState);
+async function reconcileAcknowledged(path, sid) {
+  return withSessionLock(path, (session) => {
+    requireLockedSession(session, sid, "reconcile");
+    return reconcileSessionState(session);
+  });
 }
 
 async function verifyInbound(args) {
@@ -618,8 +638,8 @@ async function verifyInbound(args) {
   }
 
   if (options.seq !== undefined) {
-    await acknowledgeInbound(binding.path, claimedFrom, Number(options.seq));
-    await reconcileAcknowledged(binding.path);
+    await acknowledgeInbound(binding.path, claimedSid, claimedFrom, Number(options.seq));
+    await reconcileAcknowledged(binding.path, claimedSid);
     binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
   }
 
@@ -722,8 +742,9 @@ async function submitReservedDelivery(path, sid, agent, sequence, paneId) {
   });
 }
 
-async function recordSubmission(path, agent, kind, sequence) {
+async function recordSubmission(path, sid, agent, kind, sequence) {
   await withSessionLock(path, (session) => {
+    requireLockedSession(session, sid, "record submission");
     session.delivery.submitted[agent] = Math.max(
       session.delivery.submitted[agent] ?? 0,
       sequence,
@@ -749,8 +770,9 @@ async function waitForReceipt(path, agent, sequence, timeoutMs) {
 
 async function resetSession() {
   const binding = await verifiedSession();
-  await reconcileAcknowledged(binding.path);
+  await reconcileAcknowledged(binding.path, binding.session.sid);
   await withSessionLock(binding.path, (session) => {
+    requireLockedSession(session, binding.session.sid, "reset");
     const pending = Object.entries(session.delivery.pending).find(([, value]) => value);
     if (pending) {
       fail(`cannot reset while ${pending[0]} seq ${pending[1].seq} awaits receipt`);
@@ -828,8 +850,10 @@ async function endSession(args) {
     releaseLock(lock, lockOwner);
   }
 
-  if (existsSync(workspaceDirectory) && readdirSync(workspaceDirectory).length === 0) {
+  try {
     rmdirSync(workspaceDirectory);
+  } catch (error) {
+    if (!["ENOENT", "ENOTEMPTY"].includes(error.code)) throw error;
   }
   process.stdout.write(`ended herdr-pair session ${session.sid} for tab ${binding.self.tab_id}\n`);
 }
@@ -841,7 +865,7 @@ async function send(args) {
   if (!kind || !bodyFile) fail("send requires --kind and --body-file");
 
   let binding = await verifiedSession();
-  await reconcileAcknowledged(binding.path);
+  await reconcileAcknowledged(binding.path, binding.session.sid);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
 
   if (binding.partner.agent_status === "working" && binding.partner.agent !== "codex") {
@@ -903,14 +927,22 @@ async function send(args) {
         binding.partner.pane_id,
       );
       if (await verifySubmission(binding.partner.pane_id, before, header, queuedToCodex)) {
-        await recordSubmission(binding.path, binding.self.agent, kind, sequence);
+        await recordSubmission(
+          binding.path,
+          binding.session.sid,
+          binding.self.agent,
+          kind,
+          sequence,
+        );
         const acknowledged = await waitForReceipt(
           binding.path,
           binding.self.agent,
           sequence,
           Number(options["ack-timeout-ms"] ?? 15000),
         );
-        if (acknowledged) await reconcileAcknowledged(binding.path);
+        if (acknowledged) {
+          await reconcileAcknowledged(binding.path, binding.session.sid);
+        }
         process.stdout.write(
           `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
         );
@@ -920,14 +952,20 @@ async function send(args) {
     fail("send failed: no positive evidence that Enter submitted the message; inspect the partner before explicitly clearing the pending reservation");
   }
 
-  await recordSubmission(binding.path, binding.self.agent, kind, sequence);
+  await recordSubmission(
+    binding.path,
+    binding.session.sid,
+    binding.self.agent,
+    kind,
+    sequence,
+  );
   const acknowledged = await waitForReceipt(
     binding.path,
     binding.self.agent,
     sequence,
     Number(options["ack-timeout-ms"] ?? 15000),
   );
-  if (acknowledged) await reconcileAcknowledged(binding.path);
+  if (acknowledged) await reconcileAcknowledged(binding.path, binding.session.sid);
   process.stdout.write(
     `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
   );
@@ -943,6 +981,7 @@ async function reconcileSession(args) {
       fail("clearing pending delivery requires --clear-pending true and the exact --sid");
     }
     const resolution = await withSessionLock(binding.path, (session) => {
+      requireLockedSession(session, binding.session.sid, "clear pending");
       const applied = reconcileSessionState(session);
       const agent = binding.self.agent;
       const pending = session.delivery.pending[agent];
@@ -963,7 +1002,7 @@ async function reconcileSession(args) {
   } else if (options.sid !== undefined) {
     fail("--sid is only valid with --clear-pending true");
   } else {
-    reconciled = await reconcileAcknowledged(binding.path);
+    reconciled = await reconcileAcknowledged(binding.path, binding.session.sid);
   }
   const session = JSON.parse(readFileSync(binding.path, "utf8"));
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
@@ -980,7 +1019,7 @@ async function main() {
     await initSession();
   } else if (command === "verify") {
     const binding = await verifiedSession();
-    await reconcileAcknowledged(binding.path);
+    await reconcileAcknowledged(binding.path, binding.session.sid);
     binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
     process.stdout.write(
       `${JSON.stringify({ self: binding.self, partner: binding.partner, session: binding.session }, null, 2)}\n`,

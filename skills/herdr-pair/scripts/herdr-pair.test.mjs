@@ -110,10 +110,10 @@ const runAsWithEnv = (paneId, overrides, ...args) =>
     encoding: "utf8",
     env: { ...env, ...overrides, HERDR_PANE_ID: paneId },
   });
-const runAsync = (paneId, ...args) =>
+const runAsyncWithEnv = (paneId, overrides, ...args) =>
   new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [helper, ...args], {
-      env: { ...env, HERDR_PANE_ID: paneId },
+      env: { ...env, ...overrides, HERDR_PANE_ID: paneId },
     });
     let stdout = "";
     let stderr = "";
@@ -124,6 +124,7 @@ const runAsync = (paneId, ...args) =>
       else reject(new Error(stderr || `helper exited ${code}`));
     });
   });
+const runAsync = (paneId, ...args) => runAsyncWithEnv(paneId, {}, ...args);
 const run = (...args) => runAs("w1:p1", ...args);
 const sessionPath = join(home, ".herdr-coworkers", "w1", "w1_t1", "session.json");
 
@@ -136,6 +137,64 @@ try {
   const resumed = JSON.parse(run("init"));
   assert.equal(resumed.resumed, true);
   assert.equal(resumed.sid, created.sid);
+
+  const beforeDelayedAck = JSON.parse(readFileSync(sessionPath, "utf8"));
+  beforeDelayedAck.delivery.next.claude = 1;
+  writeFileSync(sessionPath, `${JSON.stringify(beforeDelayedAck, null, 2)}\n`);
+  const ackLock = `${sessionPath}.lock`;
+  mkdirSync(ackLock);
+  writeFileSync(
+    join(ackLock, "owner.json"),
+    `${JSON.stringify({
+      pid: process.pid,
+      token: "hold-ack-for-session-replacement",
+      process_start: execFileSync(
+        "/bin/ps",
+        ["-o", "lstart=", "-p", String(process.pid)],
+        { encoding: "utf8", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } },
+      ).trim(),
+      created_at: new Date().toISOString(),
+    })}\n`,
+  );
+  const ackWaitMarker = join(root, "ack-waiting-on-lock");
+  const delayedAck = runAsyncWithEnv(
+    "w1:p1",
+    { HERDR_PAIR_TEST_LOCK_WAIT_MARKER: ackWaitMarker },
+    "receive",
+    "--sid",
+    created.sid,
+    "--from",
+    "claude",
+    "--seq",
+    "1",
+  );
+  const verifiedDeadline = Date.now() + 5000;
+  while (!existsSync(ackWaitMarker)) {
+    if (Date.now() >= verifiedDeadline) {
+      assert.fail("delayed receive did not block on the held session lock");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  writeFileSync(
+    sessionPath,
+    `${JSON.stringify({
+      ...beforeDelayedAck,
+      sid: "replacement-sid",
+      delivery: {
+        ...beforeDelayedAck.delivery,
+        next: { claude: 0, codex: 0 },
+        submitted: { claude: 0, codex: 0 },
+        received: { claude: 0, codex: 0 },
+        pending: { claude: null, codex: null },
+      },
+    }, null, 2)}\n`,
+  );
+  execFileSync("trash", [ackLock]);
+  await assert.rejects(
+    delayedAck,
+    /inbound sid .* does not match the active locked session replacement-sid/u,
+  );
+  writeFileSync(sessionPath, `${JSON.stringify(beforeDelayedAck, null, 2)}\n`);
 
   const body = join(root, "body.txt");
   writeFileSync(body, "Review the persistent pair transport.\n");
@@ -358,12 +417,19 @@ try {
       process_start: execFileSync(
         "/bin/ps",
         ["-o", "lstart=", "-p", String(process.pid)],
-        { encoding: "utf8" },
+        {
+          encoding: "utf8",
+          env: { ...process.env, LC_ALL: "C", TZ: "America/New_York" },
+        },
       ).trim(),
       created_at: new Date().toISOString(),
     })}\n`,
   );
-  const liveOwnerAttempt = runAsync("w1:p1", "init");
+  const liveOwnerAttempt = runAsyncWithEnv(
+    "w1:p1",
+    { TZ: "America/New_York" },
+    "init",
+  );
   await new Promise((resolve) => setTimeout(resolve, 250));
   assert.equal(existsSync(orphanLock), true);
   execFileSync("trash", [orphanLock]);
@@ -380,6 +446,7 @@ try {
       pid: process.pid,
       token: "reused-pid-owner",
       process_start: "not-the-current-process-start",
+      process_start_format: "ps-lstart-c-utc-v1",
       created_at: new Date().toISOString(),
     })}\n`,
   );
@@ -496,10 +563,13 @@ try {
     submitted_at: new Date().toISOString(),
   };
   writeFileSync(sessionPath, `${JSON.stringify(session, null, 2)}\n`);
+  const otherTabDirectory = join(home, ".herdr-coworkers", "w1", "other_tab");
+  mkdirSync(otherTabDirectory);
   delete state.panes["w1:p2"];
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   run("end", "--sid", rebound.sid, "--stale", "true");
   assert.equal(existsSync(sessionPath), false);
+  assert.equal(existsSync(otherTabDirectory), true);
 
   process.stdout.write("herdr-pair tests: PASS\n");
 } finally {
