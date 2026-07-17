@@ -38,8 +38,9 @@ names, and issue references literal.
 2. One work unit per tab; address only panes this run created.
 3. Delegation ends at kickoff: reviewing diffs, answering delegate questions,
    and merging belong to the user.
-4. The delegate's `herdr-pair` run owns partner spawn and the pair protocol —
-   start only the lead agent.
+4. The delegate's `herdr-pair` run owns the pair protocol. Start the pair's
+   two agents yourself at the unit's effort — `herdr-pair` adopts an existing
+   peer and only spawns (at default effort) when one is missing.
 5. The project's own tooling (worktree script, triage skill, implement skill)
    outranks any generic fallback in this file.
 6. A failed unit stops at the failed step: clean up only what this run created
@@ -98,10 +99,21 @@ reason:
 A unit stays small enough to ship as one reviewable PR while the other tabs
 run in parallel. When unsure, ask the user rather than guessing.
 
-Present the proposed split — one line per unit: issues, one-line rationale,
-proposed branch name — and stop.
+Grade each unit's **effort** — the reasoning level both its agents will run
+at — from what the issues demand:
 
-Done when the user has approved a split; their regrouping wins.
+- `low` — mechanical change with an obvious diff: copy tweak, config value,
+  straightforward rename.
+- `medium` — routine feature or fix on an established pattern in one area.
+- `high` — cross-cutting change, ambiguous spec, or unfamiliar subsystem.
+- `xhigh` — architectural or algorithmic work where wrong turns are
+  expensive.
+
+Present the proposed split — one line per unit: issues, one-line rationale,
+proposed branch name, effort — and stop.
+
+Done when the user has approved a split and each unit's effort; their
+regrouping and regrading win.
 
 ## Phase 3 — Delegate (per approved work unit)
 
@@ -119,13 +131,20 @@ at that tab instead of creating a second unit for it.
    only: `git worktree add`. Resolve the resulting path with
    `git worktree list --porcelain`. If the pipeline fails (deps, env), the
    unit fails here — hand the agent a fully set-up worktree or none.
-3. **Tab and lead agent.** Create a tab in the recorded workspace with
+3. **Tab and pair.** Create a tab in the recorded workspace with
    cwd = the worktree, labeled `#N <short title>` (multi-issue:
-   `#N+#M <theme>`), without stealing focus. Start the lead agent in it —
-   the same CLI you are running as (`claude` or `codex`); `herdr-pair`
-   spawns the opposite peer, so the pair composition is the same either way,
-   and your own CLI is the one proven installed and authenticated. Wait
-   until the lead reports idle.
+   `#N+#M <theme>`), without stealing focus. Start both agents in it at the
+   unit's effort:
+
+   ```bash
+   claude --effort <tier>
+   codex -c model_reasoning_effort="<tier>"
+   ```
+
+   The lead is the same CLI you are running as (the one proven installed and
+   authenticated); the other is its peer, in a split pane. The lead's
+   `herdr-pair` run discovers the existing peer and adopts it instead of
+   spawning a default-effort one. Wait until both report idle.
 4. **Kickoff.** Fill the orchestrator target with your own agent target
    (recorded in the preconditions). Send the message below to the lead, then
    read the pane back; if the text sits unsubmitted in the composer, submit
@@ -148,7 +167,8 @@ where <kind> is ready (pair accepted the work), shipped (PR URL, CI state),
 or blocked (the decision you need). If a send fails, state the same line in
 your own pane instead — the orchestrator's survey will find it.
 
-1. Run the herdr-pair skill to spawn and pair with your peer.
+1. Run the herdr-pair skill to pair with the peer already running in this
+   tab.
 2. Implement the issue(s) with the project's implement skill, coordinating
    through the pair protocol (write leases, review, ready/accepted).
    <For multi-issue units: suggested order and why, if ordering matters.>
@@ -171,7 +191,7 @@ Issue #<N>: <title>
 ## Phase 4 — Report and monitor
 
 1. After the last kickoff, summarize for the user: one line per unit — tab
-   label, issues, branch, worktree path, agent target, status.
+   label, issues, branch, worktree path, effort, agent target, status.
 2. End the turn after the summary: delegates push their milestones back as
    [unit reports](#unit-reports), so there is nothing to poll. Active
    watching (`herdr wait agent-status` on the delegate panes) is a fallback
