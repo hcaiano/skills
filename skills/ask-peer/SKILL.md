@@ -10,8 +10,7 @@ argument-hint: "<question, review, or scoped task for the other agent>"
 
 One request, one opposite-model reply. This is the phone-friendly headless path:
 use it for a focused second opinion, review, or bounded work pass. Use
-`herdr-pair` for a visible multi-turn dialogue and `delegate` for Fable-led
-multi-slice orchestration.
+`herdr-pair` for a visible multi-turn dialogue.
 
 Detect the current harness, then read the matching reference in full:
 
