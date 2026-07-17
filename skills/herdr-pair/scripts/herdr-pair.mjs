@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, uptime } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,6 +21,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 const schemaVersion = 2;
 const staleLockMs = 60000;
+const bootTimeMs = Date.now() - Math.round(uptime() * 1000);
+const bootTimeToleranceMs = 5000;
 
 class CliError extends Error {}
 
@@ -146,6 +148,29 @@ function normalizeSession(session, live) {
         changed = true;
       }
     }
+    for (const agent of ["claude", "codex"]) {
+      const pending = normalized.delivery.pending[agent];
+      const pendingSequence = pending?.seq ?? 0;
+      const next = Math.max(
+        normalized.delivery.next[agent],
+        normalized.delivery.submitted[agent],
+        normalized.delivery.received[agent],
+        pendingSequence,
+      );
+      if (normalized.delivery.next[agent] !== next) {
+        normalized.delivery.next[agent] = next;
+        changed = true;
+      }
+      const submitted = Math.max(
+        normalized.delivery.submitted[agent],
+        normalized.delivery.received[agent],
+        pending?.submitted_at ? pendingSequence : 0,
+      );
+      if (normalized.delivery.submitted[agent] !== submitted) {
+        normalized.delivery.submitted[agent] = submitted;
+        changed = true;
+      }
+    }
   }
 
   return { session: normalized, changed };
@@ -236,10 +261,13 @@ function processIsGone(pid) {
 }
 
 function recordIsAbandoned(record) {
-  return (
-    Date.now() - Date.parse(record?.created_at) >= staleLockMs ||
-    processIsGone(record?.pid)
-  );
+  if (
+    Number.isFinite(record?.boot_time_ms) &&
+    Math.abs(record.boot_time_ms - bootTimeMs) > bootTimeToleranceMs
+  ) {
+    return true;
+  }
+  return processIsGone(record?.pid);
 }
 
 function readLockOwner(lock) {
@@ -275,6 +303,7 @@ function reclaimLock(lock, observedOwner, label) {
     pid: process.pid,
     token: randomUUID(),
     owner_token: observedOwner?.token ?? null,
+    boot_time_ms: bootTimeMs,
     created_at: new Date().toISOString(),
   };
 
@@ -341,6 +370,7 @@ async function acquireLock(lock, timeoutMs, label) {
     const owner = {
       pid: process.pid,
       token: randomUUID(),
+      boot_time_ms: bootTimeMs,
       created_at: new Date().toISOString(),
     };
     try {

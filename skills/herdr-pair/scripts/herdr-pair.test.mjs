@@ -333,15 +333,29 @@ try {
       round: 4,
       last_status: { claude: "ready", codex: "review" },
       no_progress_count: 0,
+      delivery: {
+        submitted: { claude: 0, codex: 7 },
+        received: { claude: 0, codex: 6 },
+        pending: {
+          claude: null,
+          codex: { seq: 8, kind: "task", submitted_at: null },
+        },
+      },
     }, null, 2)}\n`,
   );
-  const migrated = JSON.parse(run("verify")).session;
+  let migrated = JSON.parse(run("verify")).session;
   assert.equal(migrated.schema_version, 2);
   assert.equal(migrated.active, true);
   assert.deepEqual(migrated.participants, {
     codex: { pane_id: "w1:p1" },
     claude: { pane_id: "w1:p2" },
   });
+  assert.equal(migrated.delivery.next.codex, 8);
+  assert.equal(migrated.delivery.submitted.codex, 7);
+  assert.equal(migrated.delivery.received.codex, 6);
+  migrated = JSON.parse(
+    run("reconcile", "--sid", "legacy-1", "--clear-pending", "true"),
+  ).session;
   const future = { ...migrated, schema_version: 99 };
   writeFileSync(sessionPath, `${JSON.stringify(future, null, 2)}\n`);
   assert.throws(() => run("init"), /session schema 99 is newer/u);
