@@ -5,7 +5,6 @@ import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   renameSync,
   rmdirSync,
@@ -263,6 +262,7 @@ function processStartIdentity(pid) {
   try {
     return execFileSync("/bin/ps", ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
     }).trim() || null;
   } catch {
     return null;
@@ -553,13 +553,15 @@ async function withSessionLock(path, mutate) {
   }
 }
 
-async function acknowledgeInbound(path, from, sequence) {
-  const current = JSON.parse(readFileSync(path, "utf8"));
-  const maximum = current.delivery?.next?.[from] ?? 0;
-  if (!Number.isInteger(sequence) || sequence < 1 || sequence > maximum) {
-    fail(`inbound sequence ${sequence} is outside the reserved range for ${from} (1-${maximum})`);
-  }
+async function acknowledgeInbound(path, sid, from, sequence) {
   await withSessionLock(path, (session) => {
+    if (session.active !== true || session.sid !== sid) {
+      fail(`inbound sid ${sid} does not match the active locked session ${session.sid ?? "unknown"}`);
+    }
+    const maximum = session.delivery?.next?.[from] ?? 0;
+    if (!Number.isInteger(sequence) || sequence < 1 || sequence > maximum) {
+      fail(`inbound sequence ${sequence} is outside the reserved range for ${from} (1-${maximum})`);
+    }
     session.delivery.received[from] = Math.max(
       session.delivery.received[from] ?? 0,
       sequence,
@@ -618,7 +620,7 @@ async function verifyInbound(args) {
   }
 
   if (options.seq !== undefined) {
-    await acknowledgeInbound(binding.path, claimedFrom, Number(options.seq));
+    await acknowledgeInbound(binding.path, claimedSid, claimedFrom, Number(options.seq));
     await reconcileAcknowledged(binding.path);
     binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
   }
@@ -828,8 +830,10 @@ async function endSession(args) {
     releaseLock(lock, lockOwner);
   }
 
-  if (existsSync(workspaceDirectory) && readdirSync(workspaceDirectory).length === 0) {
+  try {
     rmdirSync(workspaceDirectory);
+  } catch (error) {
+    if (!["ENOENT", "ENOTEMPTY"].includes(error.code)) throw error;
   }
   process.stdout.write(`ended herdr-pair session ${session.sid} for tab ${binding.self.tab_id}\n`);
 }
