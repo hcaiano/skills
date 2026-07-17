@@ -1,6 +1,7 @@
 interface:
   display_name: "Debug Mode"
-  short_description: "Run evidence-first debugging on request"
+  short_description: "Run evidence-first debugging on unresolved bugs"
+  default_prompt: "When a bug's root cause is not proven — flaky, environment-specific, production-only, or unrevealed by normal inspection — use $debug-mode to build a feedback loop and fix only after evidence identifies the cause."
 
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
