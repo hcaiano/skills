@@ -159,7 +159,8 @@ another tab. If old pane IDs or a missing partner prevent resume, explain the
 mismatch and use `end --sid "<sid>" --stale true` only with explicit user
 approval. Normal `end` refuses while delivery is pending; wait for its ACK or
 use the explicit inspected clear path. An explicitly approved stale end may
-discard pending state only when the partner pane is already gone.
+discard pending state only when the partner pane is gone or its recorded
+participant binding is stale.
 
 ## Workbench tab
 

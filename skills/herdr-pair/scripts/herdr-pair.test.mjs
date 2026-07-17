@@ -440,6 +440,18 @@ try {
         codex: { pane_id: "w1:old-codex" },
         claude: { pane_id: "w1:old-claude" },
       },
+      delivery: {
+        ...migrated.delivery,
+        pending: {
+          ...migrated.delivery.pending,
+          codex: {
+            seq: migrated.delivery.next.codex + 1,
+            kind: "task",
+            reserved_at: new Date().toISOString(),
+            submitted_at: new Date().toISOString(),
+          },
+        },
+      },
     }, null, 2)}\n`,
   );
   assert.throws(() => run("init"), /cannot resume existing current-tab session.*--stale true/u);

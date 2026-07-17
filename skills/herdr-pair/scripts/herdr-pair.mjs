@@ -791,18 +791,22 @@ async function endSession(args) {
       fail("refusing to end a session that does not match the caller's exact sid, workspace, and tab");
     }
 
-    if (!allowStale) {
-      const normalized = normalizeSession(session, binding).session;
+    const normalized = normalizeSession(session, binding).session;
+    let participantMismatch = binding.partner === null;
+    if (binding.partner) {
       for (const agent of ["claude", "codex"]) {
         const expected = agent === binding.self.agent ? binding.self.pane_id : binding.partner.pane_id;
         if (normalized.participants?.[agent]?.pane_id !== expected) {
-          fail("refusing to end a session whose recorded participants do not match this tab; explicit stale recovery requires --stale true");
+          participantMismatch = true;
         }
       }
     }
+    if (!allowStale && participantMismatch) {
+      fail("refusing to end a session whose recorded participants do not match this tab; explicit stale recovery requires --stale true");
+    }
 
     const pending = Object.entries(session.delivery?.pending ?? {}).find(([, value]) => value);
-    if (pending && !(allowStale && binding.partner === null)) {
+    if (pending && !(allowStale && participantMismatch)) {
       fail(`cannot end while ${pending[0]} seq ${pending[1].seq} awaits receipt or explicit clear`);
     }
     session.active = false;
