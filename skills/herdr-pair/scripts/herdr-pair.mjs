@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -8,6 +9,8 @@ import {
   readFileSync,
   renameSync,
   rmdirSync,
+  statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -17,6 +20,7 @@ import { fileURLToPath } from "node:url";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 const schemaVersion = 2;
+const staleLockMs = 60000;
 
 class CliError extends Error {}
 
@@ -221,17 +225,75 @@ async function spawn() {
   fail(`spawned pane did not become an idle ${binding.partnerAgent} in the current tab:\n${recent}`);
 }
 
+function lockIsAbandoned(lock) {
+  try {
+    const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8"));
+    if (Date.now() - Date.parse(owner.created_at) >= staleLockMs) return true;
+    if (!Number.isInteger(owner.pid) || owner.pid < 1) return true;
+    try {
+      process.kill(owner.pid, 0);
+      return false;
+    } catch (error) {
+      return error.code === "ESRCH";
+    }
+  } catch {
+    try {
+      return Date.now() - statSync(lock).mtimeMs >= staleLockMs;
+    } catch {
+      return true;
+    }
+  }
+}
+
+function reclaimLock(lock, label) {
+  try {
+    execFileSync("trash", [lock]);
+  } catch (error) {
+    if (existsSync(lock)) fail(`cannot reclaim abandoned ${label} lock: ${error.message}`);
+  }
+}
+
+function releaseLock(lock, owner) {
+  const ownerPath = join(lock, "owner.json");
+  try {
+    const current = JSON.parse(readFileSync(ownerPath, "utf8"));
+    if (current.token !== owner.token) return;
+    unlinkSync(ownerPath);
+    rmdirSync(lock);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+
 async function acquireLock(lock, timeoutMs, label) {
   const deadline = Date.now() + timeoutMs;
   while (true) {
     try {
       mkdirSync(lock);
-      return;
     } catch (error) {
-      if (error.code !== "EEXIST" || Date.now() >= deadline) {
+      if (error.code !== "EEXIST") {
         fail(`cannot acquire ${label} lock: ${error.message}`);
       }
+      if (lockIsAbandoned(lock)) {
+        reclaimLock(lock, label);
+        continue;
+      }
+      if (Date.now() >= deadline) fail(`cannot acquire ${label} lock: already owned`);
       await sleep(25);
+      continue;
+    }
+
+    const owner = {
+      pid: process.pid,
+      token: randomUUID(),
+      created_at: new Date().toISOString(),
+    };
+    try {
+      writeFileSync(join(lock, "owner.json"), `${JSON.stringify(owner)}\n`, { flag: "wx" });
+      return owner;
+    } catch (error) {
+      reclaimLock(lock, label);
+      fail(`cannot record ${label} lock owner: ${error.message}`);
     }
   }
 }
@@ -242,7 +304,7 @@ async function initSession() {
   const directory = dirname(path);
   mkdirSync(dirname(directory), { recursive: true });
   const lock = `${directory}.init.lock`;
-  await acquireLock(lock, 5000, "session init");
+  const lockOwner = await acquireLock(lock, 5000, "session init");
   try {
     if (existsSync(path)) {
       let resumed;
@@ -294,7 +356,7 @@ async function initSession() {
     atomicWrite(path, session);
     process.stdout.write(`${JSON.stringify(session, null, 2)}\n`);
   } finally {
-    rmdirSync(lock);
+    releaseLock(lock, lockOwner);
   }
 }
 
@@ -357,7 +419,7 @@ function verifiedSession() {
 
 async function withSessionLock(path, mutate) {
   const lock = `${path}.lock`;
-  await acquireLock(lock, 5000, "session update");
+  const lockOwner = await acquireLock(lock, 5000, "session update");
 
   try {
     const session = JSON.parse(readFileSync(path, "utf8"));
@@ -365,7 +427,7 @@ async function withSessionLock(path, mutate) {
     atomicWrite(path, session);
     return result;
   } finally {
-    rmdirSync(lock);
+    releaseLock(lock, lockOwner);
   }
 }
 

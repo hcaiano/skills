@@ -275,9 +275,16 @@ try {
   const legacyDirectory = dirname(sessionPath);
   mkdirSync(legacyDirectory, { recursive: true });
   writeFileSync(join(legacyDirectory, "session.json.tmp.crash"), "partial\n");
+  const orphanLock = `${legacyDirectory}.init.lock`;
+  mkdirSync(orphanLock);
+  writeFileSync(
+    join(orphanLock, "owner.json"),
+    `${JSON.stringify({ pid: 999999, token: "dead-owner", created_at: new Date().toISOString() })}\n`,
+  );
   const repaired = JSON.parse(run("init"));
   assert.equal(repaired.schema_version, 2);
   assert.equal(repaired.active, true);
+  assert.equal(existsSync(orphanLock), false);
   run("end", "--sid", repaired.sid);
 
   mkdirSync(legacyDirectory, { recursive: true });
