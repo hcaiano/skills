@@ -54,6 +54,8 @@ const args = process.argv.slice(2);
 const statePath = process.env.FAKE_HERDR_STATE;
 const state = JSON.parse(fs.readFileSync(statePath, "utf8"));
 const save = () => fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\\n");
+state.call_count = (state.call_count || 0) + 1;
+save();
 const output = (result) => process.stdout.write(JSON.stringify({ result }) + "\\n");
 const flushAck = () => {
   const ack = state.pending_ack;
@@ -156,6 +158,7 @@ try {
       created_at: new Date().toISOString(),
     })}\n`,
   );
+  const callsBeforeDelayedAck = JSON.parse(readFileSync(statePath, "utf8")).call_count ?? 0;
   const delayedAck = runAsync(
     "w1:p1",
     "receive",
@@ -166,7 +169,16 @@ try {
     "--seq",
     "1",
   );
-  await new Promise((resolve) => setTimeout(resolve, 250));
+  const verifiedDeadline = Date.now() + 5000;
+  while (
+    (JSON.parse(readFileSync(statePath, "utf8")).call_count ?? 0) <
+      callsBeforeDelayedAck + 3
+  ) {
+    if (Date.now() >= verifiedDeadline) {
+      assert.fail("delayed receive did not finish live session verification");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
   writeFileSync(
     sessionPath,
     `${JSON.stringify({
