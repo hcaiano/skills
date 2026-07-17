@@ -102,7 +102,7 @@ None are bundled in this repo — `art-director` documents the dependency rather
 - `check-logs` — read an existing herdr/turbo dev TUI's app logs without starting or stopping servers.
 - `goal-loop` — name one target and what "better" means; Claude and Codex keep improving that one thing with real testing until the goal's quality bar and the peer both pass. (Formerly `test-fix-loop`.)
 - `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
-- `ship-it` — commit, push, open/update PRs, and keep checking CI/review feedback.
+- `ship-it` — commit, push, open/update a PR, then invoke `review-pr-comments`.
 
 ### Deprecated
 

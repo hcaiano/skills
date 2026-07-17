@@ -1,6 +1,6 @@
 interface:
   display_name: "Ship It"
-  short_description: "Manually ship current work to a merge-ready PR"
+  short_description: "Open a PR, then hand off review cleanup"
 
 policy:
   allow_implicit_invocation: false
