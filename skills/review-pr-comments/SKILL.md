@@ -1,58 +1,42 @@
 ---
 name: review-pr-comments
-description: "Review cleanup for an existing PR: validate the complete head, evaluate feedback, apply valid in-scope fixes, respond where useful, and leave the PR merge-ready. Activate automatically only when ship-it hands off a newly opened or updated PR; otherwise require explicit review-pr-comments invocation."
+description: "On-demand review cleanup for an existing PR that has actual feedback: verify each comment, apply valid in-scope fixes in one batched round, respond where useful, and leave the PR merge-ready. Only runs when the user explicitly invokes review-pr-comments."
 user-invocable: true
+disable-model-invocation: true
 argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 ---
 
 # Review PR Comments
 
-Make the selected existing PR merge-ready. Use the available GitHub tools and
-repository conventions; choose the most efficient workflow for the live state.
+Handle real review feedback on an existing PR. This is an on-demand, exception
+path: most PRs have no comments because cloud auto-review is disabled and the
+heavy review already happened locally (ship-it's dual-review gate). Do not
+summon bot reviews (`@codex review`, `@coderabbitai review`), and never treat a
+bot's silence as something to wait for.
 
-Invocation gate: activate automatically only as part of an active `$ship-it`
-workflow or its direct handoff, including resumptions after a blocker. In every
-other case, require the user to invoke `$review-pr-comments` explicitly.
+Process, at most TWO rounds (a round = collect → triage → one batched commit →
+push → required CI green on the new head):
 
-Required outcomes:
+1. Collect all open feedback: human reviews, bot comments, unresolved and
+   outdated threads, failing checks.
+2. Triage each finding against the code:
+   - **Fix in the batch:** real correctness, security, or data-integrity
+     issues, and anything a human reviewer explicitly requested.
+   - **Reply, don't push:** style nits, defensive hardening for invariants
+     that already hold, severity-inflated or duplicate findings. Answer the
+     thread, resolve it, move on. A nit is never a reason for a push.
+   - **Surface to the user:** product/architecture decisions, scope
+     expansions, conflicting reviewer guidance.
+3. Validate the complete head (original changes plus fixes), commit and push
+   once, and wait for required CI (poll at 60–120 s intervals, never tight
+   loops).
 
-- Inspect all relevant human and automated review feedback, including unresolved
-  or outdated threads that remain open.
-- Verify each finding against the code. Fix valid in-scope issues, explain false
-  positives, and surface genuinely ambiguous or out-of-scope decisions.
-- Keep changes scoped to the PR unless the user explicitly expands the task.
-- Validate the complete PR head, including the original changes and any fixes.
-  Commit and push fixes safely, and resolve or reply to review threads when that
-  improves the audit trail.
-- Babysit the PR through a settled review epoch as defined below.
+After two rounds, stop pushing: report remaining items with your triage and
+recommendation. Feedback arriving after your final push does not reopen the
+loop. Success: required checks green on the final head, human-requested
+changes addressed, every open thread fixed or answered, and GitHub reports the
+PR mergeable — bot re-reviews are never a completion requirement.
 
-## Review epoch
-
-Every push starts a new review epoch and invalidates all earlier clean results.
-Capture the new head SHA and keep polling the live PR, checking reviewer surfaces
-before CI. Inspect unresolved threads (including outdated ones), review comments,
-review bodies, issue comments, checks, target-branch compatibility, and
-mergeability.
-
-While the epoch is active:
-
-- Wait for the automatic reviewers and checks normally observed for this PR or
-  repository to report a terminal result tied to the captured head SHA. A clean
-  snapshot before that is provisional.
-- Treat every new actionable finding or failure as current work: verify it, fix
-  all valid in-scope feedback, validate, commit, push, and restart the epoch with
-  the new head SHA.
-- Keep polling normally pending automation. Stop only for a precise blocker such
-  as required user judgment, unavailable authentication, rate limits, or
-  automation that is demonstrably stalled.
-
-Success requires one settled epoch: the head SHA is unchanged; every expected
-reviewer and required check has completed for that SHA; required checks are
-green; the complete head passes the relevant repository validation; no
-unresolved, actionable, or unanswered feedback remains on any review surface;
-the target branch is compatible; and GitHub reports the PR mergeable. If an
-expected reviewer has no observable completion signal, report that as remaining
-uncertainty rather than declaring success.
-
-Do not merge, force-push, modify `main`, create follow-up PRs, or make product and
-architecture decisions without authorization.
+Do not merge, force-push, modify `main`, create follow-up PRs (nit-cleanup
+follow-up PRs are explicitly banned), or make product and architecture
+decisions without authorization.

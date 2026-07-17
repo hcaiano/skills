@@ -1,6 +1,6 @@
 interface:
   display_name: "Review PR Comments"
-  short_description: "Finish review cleanup on an existing PR"
+  short_description: "Handle real feedback on an existing PR (on demand)"
 
 policy:
-  allow_implicit_invocation: true
+  allow_implicit_invocation: false
