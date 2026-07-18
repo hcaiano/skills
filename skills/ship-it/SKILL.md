@@ -15,7 +15,10 @@ request bot reviews, or wait for them.
 1. Read the repository instructions and inspect the current branch, diff, and
    working tree. Preserve unrelated user changes.
 2. **Local dual-review gate** (skip only for diffs touching exclusively
-   docs/markdown/config with no runtime surface):
+   docs/markdown/config with no runtime surface). This is a fresh adversarial
+   review of the FINAL diff — reviews that happened while writing the code
+   (pair acceptance, impeccable, in-flight feedback) are a different thing
+   and leave this gate unrun:
    - Run your own review command against the merge base with the target branch
      (Claude: the `code-review` skill; Codex: `/review` against that branch).
      Model budget: run reviews on the standard tier (Claude: Opus, e.g.
@@ -33,18 +36,25 @@ request bot reviews, or wait for them.
      interesting ones in the PR description instead of fixing them). Re-review
      only the fix diff once to confirm it is clean — never a third full pass;
      surface any leftovers to the user instead.
+   - The gate leaves a **receipt**: a `## Dual-review` section for the PR body
+     naming both reviewers that ran, the finding counts, and each valid
+     finding's disposition (fixed in `<sha>` / deferred to `#N`). A skipped
+     gate still leaves one stating the skip reason (e.g. docs-only diff).
 3. Create clear, intentional commits using the repository conventions.
-4. Push safely and open or update one accurate, ready-for-review PR. Create new
+4. Push safely and open or update one accurate, ready-for-review PR whose body
+   carries the step-2 receipt — no receipt, no PR: if you cannot point at a
+   completed gate on this final diff, you are still at step 2. Create new
    PRs as non-draft; verify after creation that the draft/ready state on GitHub
    matches what you intended (tooling has silently dropped draft state before).
 5. Wait for required CI checks on the PR head (poll at 60–120 s intervals,
    never tight loops). Fix a red check with one batched commit and push; after
    two red rounds, stop and report. Do not wait for or solicit bot reviews.
-6. Report the outcome to the user: PR link, CI status, and any findings you
-   discarded or deferred. If actionable review comments appear later (humans,
+6. Report the outcome to the user: PR link, CI status, the receipt summary,
+   and any findings you discarded or deferred. If actionable review comments appear later (humans,
    or a manually triggered CodeRabbit), the user can invoke
    `$review-pr-comments` to handle them — do not invoke it yourself.
 
 Do not force-push, merge, modify `main`, broaden scope, or change the target
-branch without explicit authorization. Done when the PR is open with green
-required checks and the user has the report.
+branch without explicit authorization. Done when the PR is open with the
+dual-review receipt in its body, green required checks, and the user has the
+report.

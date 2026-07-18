@@ -39,8 +39,10 @@ names, and issue references literal.
    where the flag exists; where it doesn't (e.g. `herdr agent list`), filter
    the output to the recorded `workspace_id` before acting on any row.
 2. One work unit per tab; address only panes this run created.
-3. Delegation ends at kickoff: reviewing diffs, answering delegate questions,
-   and merging belong to the user.
+3. The pair implements; the orchestrator aims and reviews (kickoff pointers,
+   ready-review feedback) but never edits the unit's code. Its ready-review
+   advises — it replaces neither the ship-it gate nor the user, who owns
+   merges and final approval.
 4. The delegate's `herdr-pair` run owns the pair protocol. Start the pair's
    two agents yourself at the unit's effort — `herdr-pair` adopts an existing
    peer and only spawns (at default effort) when one is missing.
@@ -145,9 +147,9 @@ at that tab instead of creating a second unit for it.
    codex -c model_reasoning_effort="<tier>"
    ```
 
-   The lead is the same CLI you are running as (the one proven installed and
-   authenticated); the other is its peer, in a split pane (guardrail 4).
-   Wait until both report idle.
+   The lead is `codex` (the stronger implementer tier) unless the user says
+   otherwise; the other is its peer, in a split pane (guardrail 4). Wait
+   until both report idle.
 4. **Kickoff.** Send the message below to the lead per
    [Sending a message to an agent](#sending-a-message-to-an-agent), filling
    the orchestrator `pane_id` from the preconditions. The unit is live when
@@ -171,7 +173,9 @@ separate keystroke aimed at a `pane_id` (e.g. `w9:p9`), not a label.
 
 Fill every placeholder. Include the full body of every issue in the unit so
 the delegate never depends on `gh` mid-flight; state the implementation order
-when it matters.
+when it matters. You already digested these issues in phase 2 — spend that:
+fill the suggested-approach block with concrete pointers (approach, key
+files/areas, pitfalls, constraints) so the implementers start aimed.
 
 ```text
 You are the lead agent for this work unit in a dedicated Herdr tab.
@@ -186,16 +190,22 @@ then Enter (send alone does not submit):
 decision you need). If a send fails, state the line in your own pane — the
 survey finds it.
 
+Suggested approach (from the orchestrator; deviate with reason):
+<approach, key files/areas, pitfalls, constraints — and for multi-issue
+units the suggested order and why>
+
 1. Run the herdr-pair skill to pair with the peer already running in this
    tab.
 2. Implement the issue(s) with the project's implement skill, coordinating
    through the pair protocol (write leases, review, ready/accepted).
-   <For multi-issue units: suggested order and why, if ordering matters.>
-3. When the pair accepts the work, report ready and wait for the
-   orchestrator's go-ahead.
-4. On go-ahead, run the ship-it skill to open the PR (reference every issue:
-   "Closes #N, closes #M"), wait for green CI, then report shipped. Merging
-   stays with the user.
+3. When the pair accepts the work, report ready and wait. The orchestrator
+   reviews the diff and either sends feedback (address it, report ready
+   again) or the go-ahead.
+4. On go-ahead, run the ship-it skill: its dual-review gate is a fresh
+   review of the final diff — pair acceptance does not satisfy it — and
+   must leave its `## Dual-review` receipt in the PR body. Open the PR
+   (reference every issue: "Closes #N, closes #M"), wait for green CI, then
+   report shipped. Merging stays with the user.
 5. If you need a user decision, report blocked and wait — the user reads this
    tab directly.
 
@@ -227,11 +237,17 @@ On receiving one, confirm the label matches an in-flight unit in this
 workspace (run a fresh phase 0 survey if the map is stale or missing), then
 act by kind:
 
-- `ready` — the pair accepted the work. Reply with the go-ahead
-  ([send](#sending-a-message-to-an-agent) the lead: run the ship-it skill,
-  then report shipped). Tell the user the unit is shipping.
-- `shipped` — record the PR URL and CI state; tell the user it is ready for
-  their review and merge decision.
+- `ready` — the pair accepted the work. Review the unit's diff yourself
+  (`git -C <worktree> diff <merge-base>`) against the issues' intent — this
+  is where the orchestrator's intelligence pays: correctness, scope, missed
+  requirements. Findings → [send](#sending-a-message-to-an-agent) them to
+  the lead as feedback and await the next ready. Clean → send the go-ahead
+  (run the ship-it skill, then report shipped) and tell the user the unit is
+  shipping.
+- `shipped` — verify the PR body carries the `## Dual-review` receipt; if it
+  is missing the gate did not run — send the unit back to run it, and tell
+  the user. With the receipt: record the PR URL and CI state; tell the user
+  it is ready for their review and merge decision.
 - `blocked` — read the unit's pane, and surface the tab and the exact
   decision to the user.
 
