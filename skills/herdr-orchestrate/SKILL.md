@@ -11,8 +11,8 @@ argument-hint: "[issue numbers | gh filters]"
 A **work unit** is the atom of delegation: one worktree, one Herdr tab, one
 agent pair, one PR. A unit holds one issue by default, or several issues that
 belong together and ship as a single PR. This skill finds free issues, splits
-them into units with the user, sets each unit up, and kicks it off; the user
-then reviews and interjects per tab.
+them into units with the user, sets each unit up, kicks it off, and reviews
+its diff before it ships; the user reviews and interjects per tab.
 
 For herdr CLI mechanics — command syntax, IDs, JSON output — follow the
 `herdr` skill installed alongside this one: print the relevant command group
@@ -45,7 +45,7 @@ names, and issue references literal.
    merges and final approval.
 4. The delegate's `herdr-pair` run owns the pair protocol. Start the pair's
    two agents yourself at the unit's effort — `herdr-pair` adopts an existing
-   peer and only spawns (at default effort) when one is missing.
+   peer and only spawns (at default effort and model) when one is missing.
 5. The project's own tooling (worktree script, triage skill, implement skill)
    outranks any generic fallback in this file.
 6. A failed unit stops at the failed step: clean up only what this run created
