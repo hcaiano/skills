@@ -143,9 +143,12 @@ at that tab instead of creating a second unit for it.
    via herdr, each with the unit's effort in its argv:
 
    ```bash
-   claude --effort <tier>
+   claude --model opus --effort <tier>
    codex -c model_reasoning_effort="<tier>"
    ```
+
+   Pin `--model opus` always: a bare `claude` inherits the user's saved
+   default — often Fable, which is advisor-only and never implements.
 
    The lead is `codex` (the stronger implementer tier) unless the user says
    otherwise; the other is its peer, in a split pane (guardrail 4). Wait
