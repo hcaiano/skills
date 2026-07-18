@@ -143,16 +143,14 @@ at that tab instead of creating a second unit for it.
    via herdr, each with the unit's effort in its argv:
 
    ```bash
-   claude --model opus --effort <tier>
-   codex -c model_reasoning_effort="<tier>"
+   codex -c model_reasoning_effort="<tier>"    # first: the tab's initial pane
+   claude --model opus --effort <tier>         # second: the split pane
    ```
 
-   Pin `--model opus` always: a bare `claude` inherits the user's saved
-   default — often Fable, which is advisor-only and never implements.
-
-   The lead is `codex` (the stronger implementer tier) unless the user says
-   otherwise; the other is its peer, in a split pane (guardrail 4). Wait
-   until both report idle.
+   `codex` is the lead, always in the tab's initial pane; `claude` is its
+   peer in the split (guardrail 4). Pin `--model opus` always: a bare
+   `claude` inherits the user's saved default — often Fable, which is
+   advisor-only and never implements. Wait until both report idle.
 4. **Kickoff.** Send the message below to the lead per
    [Sending a message to an agent](#sending-a-message-to-an-agent), filling
    the orchestrator `pane_id` from the preconditions. The unit is live when
