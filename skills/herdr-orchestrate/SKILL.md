@@ -28,8 +28,7 @@ names, and issue references literal.
   orchestrator must run inside Herdr). If missing, stop and say so.
 - Run from the project repository (or `cd` to the repo the user names).
 - Record the orchestrator's own location once (`herdr pane current`): its
-  `workspace_id` and `pane_id` are used throughout — the `pane_id` is where
-  delegates send their reports.
+  `workspace_id` scopes everything this skill touches.
 
 ## Guardrails
 
@@ -60,17 +59,16 @@ recovers the full picture from it instead of from memory.
 List the workspace's tabs and agents (`herdr tab list --workspace <id>`;
 `herdr agent list` filtered to the recorded workspace per guardrail 1).
 For each `#N`-labeled tab, note its issues, branch, agent states
-(working / blocked / idle), any open PR for its branch (`gh pr list`), and —
-in the lead's pane output — any `[unit ...]` report line that never reached
-you (the delegate fallback when a send fails); treat it as received.
+(working / blocked / idle), any open PR for its branch (`gh pr list`), and
+the newest `[unit ...]` report line in the lead's pane output — that pane is
+the report channel; treat an unhandled line as just received.
 
 Then branch on the input:
 
 - **Status** — "how are things going", "what needs me": jump to
   [Status report](#status-report).
-- **Unit report** — input starting with `[unit`: jump to
-  [Unit reports](#unit-reports). Reports name this skill; if one arrives
-  when this skill is not in context, re-invoking it lands here.
+- **Unit report** — a watch on a lead pane fired, or input starts with
+  `[unit`: jump to [Unit reports](#unit-reports).
 - **Delegation** — continue with triage; in-flight issues are already taken.
 
 ## Phase 1 — Triage
@@ -154,9 +152,15 @@ at that tab instead of creating a second unit for it.
    `claude` inherits the user's saved default — often Fable, which is
    advisor-only and never implements. Wait until both report idle.
 4. **Kickoff.** Send the message below to the lead per
-   [Sending a message to an agent](#sending-a-message-to-an-agent), filling
-   the orchestrator `pane_id` from the preconditions. The unit is live when
-   the lead reports working.
+   [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
+   is live when the lead reports working.
+5. **Watch.** Reports arrive by watching, not by delegates typing into your
+   pane. Start a background wait on the lead's pane
+   (`herdr wait agent-status <lead pane_id> --status idle --timeout 3600000`,
+   and another for `blocked`); when one fires, read the pane tail
+   (`herdr agent read <lead pane_id>`) for the newest `[unit <label>]` line
+   and act per [Unit reports](#unit-reports), then restart the watch while
+   the unit is in flight.
 
 ### Sending a message to an agent
 
@@ -185,17 +189,11 @@ You are the lead agent for this work unit in a dedicated Herdr tab.
 Issues in this unit: <#N[, #M, ...]> — implement them all on this branch and
 ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
-Orchestrator pane: <orchestrator pane_id>. Report milestones there with
-pane run (it types AND submits — never agent send plus a separate Enter,
-which lands as a newline), after waiting for idle:
-  herdr agent wait <orchestrator pane_id> --status idle --timeout 120000
-  herdr pane run <orchestrator pane_id> "[unit <label>] <kind>: <one line>"
-Read the pane back (herdr agent read <orchestrator pane_id>); if your line
-sits unsubmitted, herdr pane send-keys <orchestrator pane_id> Enter. On wait
-timeout or a still-stuck line, state the line in your own pane instead — the
-survey finds it.
+Milestones: the orchestrator watches THIS pane — do not type into any other
+pane. Report a milestone by ending your reply with a single line:
+  [unit <label>] <kind>: <one line>
 <kind> is ready (pair accepted), shipped (PR URL, CI state), or blocked (the
-decision you need).
+decision you need). Then stop and wait; the orchestrator reads it here.
 
 Suggested approach (from the orchestrator; deviate with reason):
 <approach, key files/areas, pitfalls, constraints — and for multi-issue
@@ -228,10 +226,10 @@ Issue #<N>: <title>
 
 1. After the last kickoff, summarize for the user: one line per unit — tab
    label, issues, branch, worktree path, effort, agent target, status.
-2. End the turn after the summary: delegates push their milestones back as
-   [unit reports](#unit-reports), so there is nothing to poll. Active
-   watching (`herdr wait agent-status` on the delegate panes) is a fallback
-   for when the user asks to be watched over.
+2. End the turn after the summary: the background watches from phase 3
+   step 5 wake you when a unit reports — there is nothing to poll. On any
+   wake or user turn, glance for watches that died (timeout, kill) and
+   restart them.
 
 Done when every approved unit is live in its own tab and the user has the
 summary, or each failed unit has a per-unit failure report naming the failed
@@ -239,10 +237,10 @@ step.
 
 ## Unit reports
 
-Delegates push milestones as input lines starting with `[unit <label>]`.
-On receiving one, confirm the label matches an in-flight unit in this
-workspace (run a fresh phase 0 survey if the map is stale or missing), then
-act by kind:
+Milestones arrive when a watch on a lead pane fires — read that pane's tail
+for the newest `[unit <label>]` line — or, rarely, as pasted `[unit` input.
+Confirm the label matches an in-flight unit in this workspace (run a fresh
+phase 0 survey if the map is stale or missing), then act by kind:
 
 - `ready` — the pair accepted the work. Review the unit's diff yourself
   (`git -C <worktree> diff <merge-base>`) against the issues' intent — this
