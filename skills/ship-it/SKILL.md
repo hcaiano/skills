@@ -31,11 +31,15 @@ request bot reviews, or wait for them.
      - Solo fallback: run the counterpart CLI headlessly on the same diff
        (`codex exec` in read-only mode, or `claude -p` with the code-review
        skill) and collect its findings.
-   - Merge and deduplicate both findings lists. Fix valid, in-scope findings in
-     ONE batch. Discard style nits and out-of-scope suggestions (note the
-     interesting ones in the PR description instead of fixing them). Re-review
-     only the fix diff once to confirm it is clean — never a third full pass;
-     surface any leftovers to the user instead.
+   - Merge and deduplicate both findings lists. Review output is advisory: a
+     finding is valid only after you verify it against the real code path.
+     Fix valid, in-scope findings in ONE batch. Discard style nits and
+     out-of-scope suggestions (note the interesting ones in the PR description
+     instead of fixing them). A fix that demands a new contract or
+     architecture, or would roughly double the diff, is not a fix — stop and
+     surface it as a follow-up. Re-review only the fix diff once to confirm it
+     is clean — never a third full pass; surface any leftovers to the user
+     instead.
    - The gate leaves a **receipt**: a `## Dual-review` section for the PR body
      naming both reviewers that ran, the finding counts, and each valid
      finding's disposition (fixed in `<sha>` / deferred to `#N`). A skipped
