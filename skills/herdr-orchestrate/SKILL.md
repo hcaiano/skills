@@ -60,7 +60,9 @@ recovers the full picture from it instead of from memory.
 List the workspace's tabs and agents (`herdr tab list --workspace <id>`;
 `herdr agent list` filtered to the recorded workspace per guardrail 1).
 For each `#N`-labeled tab, note its issues, branch, agent states
-(working / blocked / idle), and any open PR for its branch (`gh pr list`).
+(working / blocked / idle), any open PR for its branch (`gh pr list`), and —
+in the lead's pane output — any `[unit ...]` report line that never reached
+you (the delegate fallback when a send fails); treat it as received.
 
 Then branch on the input:
 
@@ -183,13 +185,17 @@ You are the lead agent for this work unit in a dedicated Herdr tab.
 Issues in this unit: <#N[, #M, ...]> — implement them all on this branch and
 ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
-Orchestrator pane: <orchestrator pane_id>. Report milestones there — send,
-then Enter (send alone does not submit):
+Orchestrator pane: <orchestrator pane_id>. Report milestones there. A working
+agent drops keystrokes and send alone does not submit, so: wait, send, Enter,
+verify:
+  herdr agent wait <orchestrator pane_id> --status idle --timeout 120000
   herdr agent send <orchestrator pane_id> "[unit <label>] <kind>: <one line>"
   herdr pane send-keys <orchestrator pane_id> Enter
+Read the pane back (herdr agent read <orchestrator pane_id>); if your line
+still sits in the composer, send Enter once more. On wait timeout or a still-
+stuck line, state the line in your own pane instead — the survey finds it.
 <kind> is ready (pair accepted), shipped (PR URL, CI state), or blocked (the
-decision you need). If a send fails, state the line in your own pane — the
-survey finds it.
+decision you need).
 
 Suggested approach (from the orchestrator; deviate with reason):
 <approach, key files/areas, pitfalls, constraints — and for multi-issue
