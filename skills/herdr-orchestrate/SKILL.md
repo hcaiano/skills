@@ -16,18 +16,21 @@ its diff before it ships; the user reviews and interjects per tab.
 
 For herdr CLI mechanics — command syntax, IDs, JSON output — follow the
 `herdr` skill installed alongside this one: print the relevant command group
-(`herdr tab`, `herdr agent`) instead of guessing flags, and read identifiers
-from command responses. The CLI auto-updates and can change mid-run — when a
-command errors with an unknown subcommand or flag, re-read the `herdr` skill
-and the CLI's own help instead of retrying remembered syntax.
+(`herdr tab`, `herdr agent`, `herdr pane`) instead of guessing flags, and
+read identifiers from command responses. The CLI auto-updates and can change
+mid-run — when a command errors with an unknown subcommand or flag, re-read
+the `herdr` skill and the CLI's own help instead of retrying remembered
+syntax.
 
 Talk to the user in their current language. Keep commands, paths, branch
 names, and issue references literal.
 
 ## Preconditions
 
-- `herdr` and `gh` on `PATH`, `HERDR_ENV=1`, and `HERDR_PANE_ID` set (the
-  orchestrator must run inside Herdr). If missing, stop and say so.
+- `herdr` with the agent automation commands (`herdr agent start`,
+  `herdr agent prompt`, `herdr agent wait`) and `gh` on `PATH`,
+  `HERDR_ENV=1`, and `HERDR_PANE_ID` set (the orchestrator must run inside
+  Herdr). If any is missing, stop and say so.
 - Run from the project repository (or `cd` to the repo the user names).
 - Record the orchestrator's own location once (`herdr pane current`): its
   `workspace_id` scopes everything this skill touches.
@@ -153,20 +156,23 @@ at that tab instead of creating a second unit for it.
    title>" --no-focus`; multi-issue label: `#N+#M <theme>`). The new tab
    arrives with one shell pane — that is the lead's pane. Read its
    `pane_id` from the create response's `root_pane` (or `herdr pane list
-   --workspace <id>` filtered to the new tab), launch the lead in it, and
-   split exactly
-   once for the peer (guardrail 4):
+   --workspace <id>` filtered to the new tab), start the lead in it, and
+   split exactly once for the peer (guardrail 4):
 
    ```bash
-   herdr pane run <initial pane_id> 'codex -c model_reasoning_effort="<tier>"'
+   herdr agent start lead-<N> --kind codex --pane <initial pane_id> -- -c model_reasoning_effort="<tier>"
    herdr pane split <initial pane_id> --direction right --no-focus
-   herdr pane run <split pane_id> "claude --model opus --effort <tier>"
+   herdr agent start peer-<N> --kind claude --pane <split pane_id> -- --model opus --effort <tier>
    ```
 
-   Pin `--model opus` always: a bare `claude` inherits the user's saved
-   default — often Fable, which is advisor-only and never implements. Done
-   when both agents report idle (or `done` — same readiness, unseen) and
-   the tab holds exactly two panes
+   `<N>` is the unit's first issue number; the names `lead-<N>` / `peer-<N>`
+   address these agents in every later `herdr agent` command, so pane IDs
+   never need to be carried around. Arguments after `--` pass to the agent
+   executable. Pin `--model opus` always: a bare `claude` inherits the
+   user's saved default — often Fable, which is advisor-only and never
+   implements. `herdr agent start` returns only once its agent is up (and
+   fails on timeout), so the pair is ready when both starts succeed and the
+   tab holds exactly two panes
    (`herdr pane list --workspace <id>` filtered to this tab): lead in the
    tab's original pane, peer in the split. A leftover shell pane means the
    lead was split in instead — close it.
@@ -179,29 +185,31 @@ at that tab instead of creating a second unit for it.
    `blocked` (a background tab lands on `done`, a focused one on `idle`):
 
    ```bash
-   herdr agent wait <lead pane_id> --timeout 3600000
+   herdr agent wait lead-<N> --timeout 3600000
    ```
 
-   Reserve `--until <state>` for state-specific checks, e.g.
-   `--until working` to confirm a kickoff actually started a turn.
+   Arm it as a background process, one per unit. Reserve `--until <state>`
+   for state-specific checks, e.g. `--until working` to confirm a kickoff
+   actually started a turn.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
    the unit is quiet. Treat every wake — the wait firing, the wait dying, a
    user turn — the same way: read the lead's current status
-   (`herdr agent get <lead pane_id>`) and pane tail
-   (`herdr agent read <lead pane_id>`) for the newest `[unit <label>]`
-   line first, since the transition may have happened while unwatched;
-   act per [Unit reports](#unit-reports) on any line newer than the last
-   one handled; then re-arm while the unit is in flight. Re-arm by state,
-   not blindly: a default wait armed while the pane already sits on
+   (`herdr agent get lead-<N>`) and pane tail
+   (`herdr agent read lead-<N> --source recent-unwrapped --lines 120`)
+   for the newest `[unit <label>]` line first, since the transition may
+   have happened while unwatched; act per [Unit reports](#unit-reports) on
+   any line newer than the last one handled; then re-arm the wait for any
+   unit still in flight whose wait fired or died. Re-arm by state, not
+   blindly: a default wait armed while the pane already sits on
    `idle`/`done` fires immediately and loops. If the lead is already
    settled and its newest milestone is handled, arm the chained form —
    wait for the next turn to start, then for it to settle:
 
    ```bash
-   herdr agent wait <lead pane_id> --until working --timeout 3600000 \
-     && herdr agent wait <lead pane_id> --timeout 3600000
+   herdr agent wait lead-<N> --until working --timeout 3600000 \
+     && herdr agent wait lead-<N> --timeout 3600000
    ```
 
    Only a pane currently `working` (or `blocked`) gets a bare default
@@ -209,21 +217,22 @@ at that tab instead of creating a second unit for it.
 
 ### Sending a message to an agent
 
-Use `herdr agent prompt` — it submits text plus encoded Enter atomically,
-honoring the pane's live bracketed-paste mode, aimed at a `pane_id` (e.g.
-`w9:p9`), not a label. Never coordinate a raw text write with a separate
-Enter: that Enter can land as a newline instead of a submit.
+Use `herdr agent prompt` — it submits the text plus an encoded Enter in one
+operation and honors bracketed-paste mode, so no separate Enter and no
+read-back verification are ever needed. Address the agent by the name given
+at `herdr agent start` (e.g. `lead-42`).
 
-1. Resolve the `pane_id` and current status (`herdr agent get <target>`).
-   `idle` or `done` → ready to receive; `working` → wait for the turn to
-   settle first (`herdr agent wait <pane_id> --timeout 120000`), then
-   prompt.
-2. `herdr agent prompt <pane_id> "<text>" --wait`. `--wait` returns when
-   the agent reaches the next settled state (`idle`/`done`/`blocked`), so
-   for a kickoff you may drop it and rely on the phase 3 watch instead.
+1. Check the target's status (`herdr agent get <name>`). `idle`, `done`, or
+   `blocked` → ready to receive; `working` → wait for the turn to settle
+   first (`herdr agent wait <name> --timeout 120000`), then prompt.
+2. `herdr agent prompt <name> "<text>" --wait`. `--wait` returns when the
+   agent reaches the next settled state (`idle`/`done`/`blocked`); for a
+   kickoff you may drop it and rely on the phase 3 watch instead. A
+   nonzero exit means the message was not submitted — stop and report
+   rather than retrying blindly.
 3. On `agent_prompt_stalled` the submission produced no lifecycle change —
-   read the pane (`herdr agent read <pane_id> --source visible`) to see
-   what actually landed, then stop and report; do not blind-retry.
+   read the pane (`herdr agent read <name> --source visible`) to see what
+   actually landed, then stop and report; do not blind-retry.
 
 ### Kickoff message template
 
