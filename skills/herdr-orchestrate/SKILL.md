@@ -137,20 +137,26 @@ at that tab instead of creating a second unit for it.
    only: `git worktree add`. Resolve the resulting path with
    `git worktree list --porcelain`. If the pipeline fails (deps, env), the
    unit fails here — hand the agent a fully set-up worktree or none.
-3. **Tab and pair.** Create a tab in the recorded workspace with
-   cwd = the worktree, labeled `#N <short title>` (multi-issue:
-   `#N+#M <theme>`), without stealing focus. Start both agents in that tab
-   via herdr, each with the unit's effort in its argv:
+3. **Tab and pair.** Create the unit's tab in the recorded workspace
+   (`herdr tab create --workspace <id> --cwd <worktree> --label "#N <short
+   title>" --no-focus`; multi-issue label: `#N+#M <theme>`). The new tab
+   arrives with one shell pane — that is the lead's pane. Read its
+   `pane_id` from the create response (or `herdr pane list --workspace
+   <id>` filtered to the new tab), launch the lead in it, and split exactly
+   once for the peer (guardrail 4):
 
    ```bash
-   codex -c model_reasoning_effort="<tier>"    # first: the tab's initial pane
-   claude --model opus --effort <tier>         # second: the split pane
+   herdr pane run <initial pane_id> 'codex -c model_reasoning_effort="<tier>"'
+   herdr pane split <initial pane_id> --direction right --no-focus
+   herdr pane run <split pane_id> "claude --model opus --effort <tier>"
    ```
 
-   `codex` is the lead, always in the tab's initial pane; `claude` is its
-   peer in the split (guardrail 4). Pin `--model opus` always: a bare
-   `claude` inherits the user's saved default — often Fable, which is
-   advisor-only and never implements. Wait until both report idle.
+   Pin `--model opus` always: a bare `claude` inherits the user's saved
+   default — often Fable, which is advisor-only and never implements. Done
+   when both agents report idle and the tab holds exactly two panes
+   (`herdr pane list --workspace <id>` filtered to this tab): lead in the
+   tab's original pane, peer in the split. A leftover shell pane means the
+   lead was split in instead — close it.
 4. **Kickoff.** Send the message below to the lead per
    [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
    is live when the lead reports working.
