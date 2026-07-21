@@ -16,7 +16,7 @@ its diff before it ships; the user reviews and interjects per tab.
 
 For herdr CLI mechanics — command syntax, IDs, JSON output — follow the
 `herdr` skill installed alongside this one: print the relevant command group
-(`herdr tab`, `herdr agent`, `herdr wait`) instead of guessing flags, and
+(`herdr tab`, `herdr agent`, `herdr pane`) instead of guessing flags, and
 read identifiers from command responses.
 
 Talk to the user in their current language. Keep commands, paths, branch
@@ -24,8 +24,10 @@ names, and issue references literal.
 
 ## Preconditions
 
-- `herdr` and `gh` on `PATH`, `HERDR_ENV=1`, and `HERDR_PANE_ID` set (the
-  orchestrator must run inside Herdr). If missing, stop and say so.
+- `herdr` with the agent automation commands (`herdr agent start`,
+  `herdr agent prompt`, `herdr agent wait`) and `gh` on `PATH`,
+  `HERDR_ENV=1`, and `HERDR_PANE_ID` set (the orchestrator must run inside
+  Herdr). If any is missing, stop and say so.
 - Run from the project repository (or `cd` to the repo the user names).
 - Record the orchestrator's own location once (`herdr pane current`): its
   `workspace_id` scopes everything this skill touches.
@@ -142,20 +144,23 @@ at that tab instead of creating a second unit for it.
    title>" --no-focus`; multi-issue label: `#N+#M <theme>`). The new tab
    arrives with one shell pane — that is the lead's pane. Read its
    `pane_id` from the create response's `root_pane` (or `herdr pane list
-   --workspace <id>` filtered to the new tab), launch the lead in it, and
-   split exactly
-   once for the peer (guardrail 4):
+   --workspace <id>` filtered to the new tab), start the lead in it, and
+   split exactly once for the peer (guardrail 4):
 
    ```bash
-   herdr pane run <initial pane_id> 'codex -c model_reasoning_effort="<tier>"'
+   herdr agent start lead-<N> --kind codex --pane <initial pane_id> -- -c model_reasoning_effort="<tier>"
    herdr pane split <initial pane_id> --direction right --no-focus
-   herdr pane run <split pane_id> "claude --model opus --effort <tier>"
+   herdr agent start peer-<N> --kind claude --pane <split pane_id> -- --model opus --effort <tier>
    ```
 
-   Pin `--model opus` always: a bare `claude` inherits the user's saved
-   default — often Fable, which is advisor-only and never implements. Done
-   when both agents report idle (or `done` — same readiness, unseen) and
-   the tab holds exactly two panes
+   `<N>` is the unit's first issue number; the names `lead-<N>` / `peer-<N>`
+   address these agents in every later `herdr agent` command, so pane IDs
+   never need to be carried around. Arguments after `--` pass to the agent
+   executable. Pin `--model opus` always: a bare `claude` inherits the
+   user's saved default — often Fable, which is advisor-only and never
+   implements. `herdr agent start` returns only once its agent is up (and
+   fails on timeout), so the pair is ready when both starts succeed and the
+   tab holds exactly two panes
    (`herdr pane list --workspace <id>` filtered to this tab): lead in the
    tab's original pane, peer in the split. A leftover shell pane means the
    lead was split in instead — close it.
@@ -164,48 +169,39 @@ at that tab instead of creating a second unit for it.
    is live when the lead reports working.
 5. **Watch.** Reports arrive by watching, not by delegates typing into your
    pane. A lead that finishes a turn in a background tab lands on `done`,
-   in a focused one on `idle` — so a watch covers three statuses, one
-   background wait each (`herdr wait agent-status` takes a single
-   `--status`):
+   in a focused one on `idle`; a stuck one on `blocked` — one wait covers
+   all three (`herdr agent wait` accepts several `--until` states):
 
    ```bash
-   herdr wait agent-status <lead pane_id> --status done --timeout 3600000
-   herdr wait agent-status <lead pane_id> --status idle --timeout 3600000
-   herdr wait agent-status <lead pane_id> --status blocked --timeout 3600000
+   herdr agent wait lead-<N> --until done --until idle --until blocked --timeout 3600000
    ```
 
-   Arm all three concurrently, each as its own background process — run
-   in sequence, the first would block the rest.
+   Arm it as a background process, one per unit.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
    the unit is quiet. Treat every wake — a wait firing, a wait dying, a
    user turn — the same way: read the lead's current status
-   (`herdr agent get <lead pane_id>`) and pane tail
-   (`herdr agent read <lead pane_id>`) for the newest `[unit <label>]`
-   line first, since the transition may have happened while unwatched;
-   act per [Unit reports](#unit-reports) on any line newer than the last
-   one handled; then bring the watch back to strength — replace only the
-   waits that fired or died, leaving still-running ones in place — while
-   the unit is in flight.
+   (`herdr agent get lead-<N>`) and pane tail
+   (`herdr agent read lead-<N> --source recent-unwrapped --lines 120`)
+   for the newest `[unit <label>]` line first, since the transition may
+   have happened while unwatched; act per [Unit reports](#unit-reports) on
+   any line newer than the last one handled; then re-arm the wait for any
+   unit still in flight whose wait fired or died.
 
 ### Sending a message to an agent
 
-Use `herdr pane run` — it types the text and submits in one operation, aimed
-at a `pane_id` (e.g. `w9:p9`), not a label. Never coordinate `agent send`
-plus a separate Enter: that Enter can land as a newline instead of a submit.
+Use `herdr agent prompt` — it submits the text plus an encoded Enter in one
+operation and honors bracketed-paste mode, so no separate Enter and no
+read-back verification are ever needed. Address the agent by the name given
+at `herdr agent start` (e.g. `lead-42`).
 
-1. Resolve the `pane_id` and current status (`herdr agent get <target>`).
-   `idle` or `done` → ready to receive; `working` queues keys, so wait for
-   the turn to end first: arm `herdr wait agent-status <pane_id> --status
-   done --timeout 120000` and its `--status idle` twin concurrently and
-   proceed when the first fires (a background pane lands on `done`, a
-   focused one on `idle`).
-2. `herdr pane run <pane_id> "<text>"`.
-3. Read the pane back (`herdr agent read <pane_id> --source visible`): the
-   text should have left the `❯` prompt (Codex shows "Messages to be
-   submitted after next tool call"). Still in the composer →
-   `herdr pane send-keys <pane_id> Enter` once, then stop and report.
+1. Check the target's status (`herdr agent get <name>`). `idle`, `done`, or
+   `blocked` → ready to receive; `working` → wait for the turn to end
+   first: `herdr agent wait <name> --until idle --until done --timeout
+   120000` (a background pane lands on `done`, a focused one on `idle`).
+2. `herdr agent prompt <name> "<text>"`. A nonzero exit means the message
+   was not submitted — stop and report rather than retrying blindly.
 
 ### Kickoff message template
 
