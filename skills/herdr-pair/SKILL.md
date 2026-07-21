@@ -18,8 +18,10 @@ Set `SKILL_DIR` to this skill directory and
 `PAIR_SCRIPT="$SKILL_DIR/scripts/herdr-pair.mjs"`. Always use that absolute
 path; the project cwd is unrelated to the installed skill path.
 
-Require `herdr` and `trash` on `PATH`, `HERDR_ENV=1`, and `HERDR_PANE_ID`. If any is
-missing, stop and tell the user to install or start Herdr.
+Require `herdr` with the agent automation commands (`herdr agent start`,
+`herdr agent prompt`) and `trash` on `PATH`, `HERDR_ENV=1`, and
+`HERDR_PANE_ID`. If any is missing, stop and tell the user to install or
+start (or update) Herdr.
 
 ## Guardrails
 
@@ -86,10 +88,12 @@ BODY=$(mktemp); trap 'trash "$BODY"' EXIT
 node "$PAIR_SCRIPT" send --kind "$KIND" --body-file "$BODY"
 ```
 
-The sender waits for a working Claude before reserving the sequence and message
-kind, then injects the control line and records positive UI
-evidence. It waits for `receive` to acknowledge that sequence in
-`session.json`; an ACK can recover an interruption immediately after Enter.
+The sender waits for the partner to be promptable, reserves the sequence and
+message kind, then injects the control line and submits header, control line,
+and body in one `herdr agent prompt` call — text plus encoded Enter,
+bracketed-paste safe. It waits for `receive` to acknowledge that sequence in
+`session.json`; an ACK can recover an interruption immediately after
+submission.
 
 - `receipt=acknowledged`: the partner ran `receive` for this message.
 - `receipt=pending-partner-may-be-busy-do-not-retry`: submission was observed,
@@ -99,9 +103,9 @@ evidence. It waits for `receive` to acknowledge that sequence in
   reservation remains so an ACK can reconcile it; never claim delivery or clear
   it without inspection. A pre-reservation wait timeout leaves no pending state.
 
-A working Claude is never queued; wait for it to become available. A working
-Codex may be queued only when its exact queue marker contains this message's
-header.
+A working Claude is never prompted mid-turn; the sender waits for its turn to
+end. A working Codex may be prompted while working — Codex queues the message
+for its next turn.
 
 If inspection proves a pending message never reached the partner, clear only
 that delivery with explicit user approval:

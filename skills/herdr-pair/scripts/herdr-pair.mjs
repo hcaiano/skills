@@ -210,11 +210,6 @@ async function spawn() {
     return;
   }
 
-  const executable = execFileSync("sh", ["-lc", `command -v ${binding.partnerAgent}`], {
-    encoding: "utf8",
-  }).trim();
-  if (!executable) fail(`no ${binding.partnerAgent} executable on PATH`);
-
   const split = result(
     "pane",
     "split",
@@ -225,27 +220,31 @@ async function spawn() {
     binding.self.cwd,
     "--no-focus",
   ).pane;
-  herdr("pane", "run", split.pane_id, executable);
+  const name = `pair-${binding.partnerAgent}-${binding.self.tab_id.replaceAll(":", "_")}`;
+  herdr(
+    "agent",
+    "start",
+    name,
+    "--kind",
+    binding.partnerAgent,
+    "--pane",
+    split.pane_id,
+    "--timeout",
+    "60000",
+  );
 
-  const deadline = Date.now() + 60000;
-  while (Date.now() < deadline) {
-    const pane = paneGet(split.pane_id);
-    if (
-      pane.workspace_id === binding.self.workspace_id &&
-      pane.tab_id === binding.self.tab_id &&
-      pane.agent === binding.partnerAgent &&
-      ["idle", "done"].includes(pane.agent_status)
-    ) {
-      process.stdout.write(
-        `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent }, null, 2)}\n`,
-      );
-      return;
-    }
-    await sleep(250);
+  const pane = paneGet(split.pane_id);
+  if (
+    pane.workspace_id !== binding.self.workspace_id ||
+    pane.tab_id !== binding.self.tab_id ||
+    pane.agent !== binding.partnerAgent
+  ) {
+    const recent = readPartner(split.pane_id, "recent-unwrapped", "40");
+    fail(`spawned pane did not come up as ${binding.partnerAgent} in the current tab:\n${recent}`);
   }
-
-  const recent = readPartner(split.pane_id, "recent-unwrapped", "40");
-  fail(`spawned pane did not become an idle ${binding.partnerAgent} in the current tab:\n${recent}`);
+  process.stdout.write(
+    `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent }, null, 2)}\n`,
+  );
 }
 
 function processIsGone(pid) {
@@ -675,38 +674,6 @@ async function waitUntilNotWorking(paneId, timeoutMs) {
   fail(`partner ${paneId} stayed working for ${timeoutMs}ms; message not sent`);
 }
 
-function codexQueueVisible(paneId, header) {
-  const visible = readPartner(paneId, "visible", "40");
-  const normalized = visible.replace(/\s+/gu, " ");
-  const normalizedHeader = header.replace(/\s+/gu, " ");
-  // Measured on Codex 0.144.5: this marker appears only after Enter has
-  // enqueued the message, not while text merely sits in the composer.
-  return (
-    normalized.includes("Messages to be submitted after next tool call") &&
-    normalized.includes(normalizedHeader)
-  );
-}
-
-function headerAtPrompt(paneId, header) {
-  const visible = readPartner(paneId, "visible", "50");
-  return visible
-    .split("\n")
-    .some((line) => /^\s*[›>❯]\s*/u.test(line) && line.includes(header));
-}
-
-async function verifySubmission(paneId, before, header, queuedToCodex) {
-  const deadline = Date.now() + 15000;
-  let sawAvailable = before.agent_status !== "working";
-  while (Date.now() < deadline) {
-    const pane = paneGet(paneId);
-    if (queuedToCodex && codexQueueVisible(paneId, header)) return true;
-    if (pane.agent_status !== "working") sawAvailable = true;
-    if (sawAvailable && pane.agent_status === "working") return true;
-    await sleep(25);
-  }
-  return false;
-}
-
 async function reserveSequence(path, sid, agent, kind) {
   return withSessionLock(path, (session) => {
     if (session.active !== true || session.sid !== sid) {
@@ -730,15 +697,15 @@ async function reserveSequence(path, sid, agent, kind) {
   });
 }
 
-async function submitReservedDelivery(path, sid, agent, sequence, paneId) {
+async function promptReservedDelivery(path, sid, agent, sequence, paneId, message) {
   await withSessionLock(path, (session) => {
     if (session.active !== true || session.sid !== sid) {
-      fail("session ended or was replaced before Enter; message not submitted");
+      fail("session ended or was replaced before submission; message not sent");
     }
     if (session.delivery.pending?.[agent]?.seq !== sequence) {
-      fail(`delivery reservation ${agent} seq ${sequence} is no longer active; message not submitted`);
+      fail(`delivery reservation ${agent} seq ${sequence} is no longer active; message not sent`);
     }
-    herdr("pane", "send-keys", paneId, "Enter");
+    herdr("agent", "prompt", paneId, message);
   });
 }
 
@@ -758,11 +725,18 @@ async function recordSubmission(path, sid, agent, kind, sequence) {
   });
 }
 
-async function waitForReceipt(path, agent, sequence, timeoutMs) {
+async function waitForReceipt(path, agent, sequence, partnerPaneId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const session = JSON.parse(readFileSync(path, "utf8"));
     if ((session.delivery?.received?.[agent] ?? 0) >= sequence) return true;
+    // The receipt lands via the partner's receive; observing the pane too
+    // ends the wait early when the partner is gone instead of timing out.
+    try {
+      paneGet(partnerPaneId);
+    } catch {
+      return false;
+    }
     await sleep(50);
   }
   return false;
@@ -868,12 +842,9 @@ async function send(args) {
   await reconcileAcknowledged(binding.path, binding.session.sid);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
 
-  if (binding.partner.agent_status === "working" && binding.partner.agent !== "codex") {
-    await waitUntilNotWorking(binding.partner.pane_id, Number(options["timeout-ms"] ?? 60000));
-  }
-
-  // Re-resolve immediately before the first write. Codex has a verified queue
-  // indicator; Claude does not, so a busy Claude returns to the wait loop.
+  // A working Claude cannot take a prompt mid-turn; Codex queues prompts
+  // natively, so it may be prompted while working. Re-resolve after every
+  // wait so the reservation binds to a current partner.
   while (true) {
     binding = await verifiedSession();
     if (
@@ -894,63 +865,14 @@ async function send(args) {
   const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
   const message = `${header}\n${control}\n\n${body}`;
-  herdr("pane", "send-text", binding.partner.pane_id, message);
-  await sleep(750);
-  // Capture the delivery mode immediately before Enter. The partner may have
-  // completed its previous turn after binding resolution but before submission.
-  const before = paneGet(binding.partner.pane_id);
-  if (
-    before.workspace_id !== binding.self.workspace_id ||
-    before.tab_id !== binding.self.tab_id ||
-    before.agent !== binding.partner.agent
-  ) {
-    fail("partner binding changed after text entry; Enter not sent and the delivery reservation remains pending");
-  }
-  const queuedToCodex = before.agent === "codex" && before.agent_status === "working";
-  await submitReservedDelivery(
+  await promptReservedDelivery(
     binding.path,
     binding.session.sid,
     binding.self.agent,
     sequence,
     binding.partner.pane_id,
+    message,
   );
-
-  if (!(await verifySubmission(binding.partner.pane_id, before, header, queuedToCodex))) {
-    // Retry only when the exact header is visibly still in the composer. An
-    // ambiguous timeout must not risk a duplicate submission.
-    if (headerAtPrompt(binding.partner.pane_id, header)) {
-      await submitReservedDelivery(
-        binding.path,
-        binding.session.sid,
-        binding.self.agent,
-        sequence,
-        binding.partner.pane_id,
-      );
-      if (await verifySubmission(binding.partner.pane_id, before, header, queuedToCodex)) {
-        await recordSubmission(
-          binding.path,
-          binding.session.sid,
-          binding.self.agent,
-          kind,
-          sequence,
-        );
-        const acknowledged = await waitForReceipt(
-          binding.path,
-          binding.self.agent,
-          sequence,
-          Number(options["ack-timeout-ms"] ?? 15000),
-        );
-        if (acknowledged) {
-          await reconcileAcknowledged(binding.path, binding.session.sid);
-        }
-        process.stdout.write(
-          `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
-        );
-        return;
-      }
-    }
-    fail("send failed: no positive evidence that Enter submitted the message; inspect the partner before explicitly clearing the pending reservation");
-  }
 
   await recordSubmission(
     binding.path,
@@ -963,6 +885,7 @@ async function send(args) {
     binding.path,
     binding.self.agent,
     sequence,
+    binding.partner.pane_id,
     Number(options["ack-timeout-ms"] ?? 15000),
   );
   if (acknowledged) await reconcileAcknowledged(binding.path, binding.session.sid);

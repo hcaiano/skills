@@ -67,10 +67,9 @@ const flushAck = () => {
 flushAck();
 if (args[0] === "pane" && args[1] === "get") output({ pane: state.panes[args[2]] });
 else if (args[0] === "pane" && args[1] === "list") output({ panes: Object.values(state.panes) });
-else if (args[0] === "pane" && args[1] === "send-text") {
-  state.last_message = args[3]; save(); output({});
-} else if (args[0] === "pane" && args[1] === "send-keys") {
+else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
+  state.last_message = args[3];
   pane.agent_status = "working";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive --sid \\"?([^\\" ]+)\\"? --from \\"?([^\\" ]+)\\"? --seq (\\d+)/);
   if (control && state.auto_ack !== false) {
@@ -81,8 +80,8 @@ else if (args[0] === "pane" && args[1] === "send-text") {
     state.pending_ack = { sender, sequence, sessionPath };
   }
   save();
-  if (state.fail_after_enter === true) {
-    process.stderr.write("simulated interruption after Enter\\n");
+  if (state.fail_prompt === true) {
+    process.stderr.write("simulated interruption after prompt\\n");
     process.exit(1);
   }
   output({});
@@ -240,20 +239,20 @@ try {
   assert.equal(session.round, 1);
 
   state = JSON.parse(readFileSync(statePath, "utf8"));
-  state.fail_after_enter = true;
+  state.fail_prompt = true;
   state.panes["w1:p1"].agent_status = "idle";
   state.panes["w1:p2"].agent_status = "idle";
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   assert.throws(
     () => run("send", "--kind", "task", "--body-file", body, "--ack-timeout-ms", "50"),
-    /simulated interruption after Enter/u,
+    /simulated interruption after prompt/u,
   );
   const recoveredAfterEnter = JSON.parse(run("verify")).session;
   assert.equal(recoveredAfterEnter.delivery.pending.codex, null);
   assert.equal(recoveredAfterEnter.delivery.submitted.codex, 2);
   assert.equal(recoveredAfterEnter.last_status.codex, "task");
   state = JSON.parse(readFileSync(statePath, "utf8"));
-  state.fail_after_enter = false;
+  state.fail_prompt = false;
   state.panes["w1:p1"].agent_status = "idle";
   state.panes["w1:p2"].agent_status = "idle";
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
