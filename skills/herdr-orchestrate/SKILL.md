@@ -17,7 +17,10 @@ its diff before it ships; the user reviews and interjects per tab.
 For herdr CLI mechanics — command syntax, IDs, JSON output — follow the
 `herdr` skill installed alongside this one: print the relevant command group
 (`herdr tab`, `herdr agent`, `herdr pane`) instead of guessing flags, and
-read identifiers from command responses.
+read identifiers from command responses. The CLI auto-updates and can change
+mid-run — when a command errors with an unknown subcommand or flag, re-read
+the `herdr` skill and the CLI's own help instead of retrying remembered
+syntax.
 
 Talk to the user in their current language. Keep commands, paths, branch
 names, and issue references literal.
@@ -139,6 +142,15 @@ at that tab instead of creating a second unit for it.
    only: `git worktree add`. Resolve the resulting path with
    `git worktree list --porcelain`. If the pipeline fails (deps, env), the
    unit fails here — hand the agent a fully set-up worktree or none.
+
+   **Integration bases.** When the unit's PR base is not the default
+   branch (e.g. an `epic/...` branch), the orchestrator owns keeping that
+   base current — worktree pipelines typically branch from
+   `origin/main`, and a base that lags main makes the PR diff drag in
+   foreign commits. Before creating each unit: sync the base with main
+   (merge `origin/main` into it, push) and verify
+   `git merge-base <worktree branch> <base>` contains the worktree's
+   starting point. Repeat the sync whenever main advances during the run.
 3. **Tab and pair.** Create the unit's tab in the recorded workspace
    (`herdr tab create --workspace <id> --cwd <worktree> --label "#N <short
    title>" --no-focus`; multi-issue label: `#N+#M <theme>`). The new tab
@@ -168,26 +180,40 @@ at that tab instead of creating a second unit for it.
    [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
    is live when the lead reports working.
 5. **Watch.** Reports arrive by watching, not by delegates typing into your
-   pane. A lead that finishes a turn in a background tab lands on `done`,
-   in a focused one on `idle`; a stuck one on `blocked` — one wait covers
-   all three (`herdr agent wait` accepts several `--until` states):
+   pane. One background wait per lead covers every settled state — without
+   `--until`, `herdr agent wait` fires on the first of `idle`, `done`, or
+   `blocked` (a background tab lands on `done`, a focused one on `idle`):
 
    ```bash
-   herdr agent wait lead-<N> --until done --until idle --until blocked --timeout 3600000
+   herdr agent wait lead-<N> --timeout 3600000
    ```
 
-   Arm it as a background process, one per unit.
+   Arm it as a background process, one per unit. Reserve `--until <state>`
+   for state-specific checks, e.g. `--until working` to confirm a kickoff
+   actually started a turn.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
-   the unit is quiet. Treat every wake — a wait firing, a wait dying, a
+   the unit is quiet. Treat every wake — the wait firing, the wait dying, a
    user turn — the same way: read the lead's current status
    (`herdr agent get lead-<N>`) and pane tail
    (`herdr agent read lead-<N> --source recent-unwrapped --lines 120`)
    for the newest `[unit <label>]` line first, since the transition may
    have happened while unwatched; act per [Unit reports](#unit-reports) on
    any line newer than the last one handled; then re-arm the wait for any
-   unit still in flight whose wait fired or died.
+   unit still in flight whose wait fired or died. Re-arm by state, not
+   blindly: a default wait armed while the pane already sits on
+   `idle`/`done` fires immediately and loops. If the lead is already
+   settled and its newest milestone is handled, arm the chained form —
+   wait for the next turn to start, then for it to settle:
+
+   ```bash
+   herdr agent wait lead-<N> --until working --timeout 3600000 \
+     && herdr agent wait lead-<N> --timeout 3600000
+   ```
+
+   Only a pane currently `working` (or `blocked`) gets a bare default
+   wait.
 
 ### Sending a message to an agent
 
@@ -197,11 +223,16 @@ read-back verification are ever needed. Address the agent by the name given
 at `herdr agent start` (e.g. `lead-42`).
 
 1. Check the target's status (`herdr agent get <name>`). `idle`, `done`, or
-   `blocked` → ready to receive; `working` → wait for the turn to end
-   first: `herdr agent wait <name> --until idle --until done --timeout
-   120000` (a background pane lands on `done`, a focused one on `idle`).
-2. `herdr agent prompt <name> "<text>"`. A nonzero exit means the message
-   was not submitted — stop and report rather than retrying blindly.
+   `blocked` → ready to receive; `working` → wait for the turn to settle
+   first (`herdr agent wait <name> --timeout 120000`), then prompt.
+2. `herdr agent prompt <name> "<text>" --wait`. `--wait` returns when the
+   agent reaches the next settled state (`idle`/`done`/`blocked`); for a
+   kickoff you may drop it and rely on the phase 3 watch instead. A
+   nonzero exit means the message was not submitted — stop and report
+   rather than retrying blindly.
+3. On `agent_prompt_stalled` the submission produced no lifecycle change —
+   read the pane (`herdr agent read <name> --source visible`) to see what
+   actually landed, then stop and report; do not blind-retry.
 
 ### Kickoff message template
 
@@ -222,6 +253,13 @@ pane. Report a milestone by ending your reply with a single line:
 <kind> is ready (pair accepted), shipped (PR URL, CI state), or blocked (the
 decision you need). Then stop and wait; the orchestrator reads it here.
 
+Transport discipline: this pane's idle/working state IS the coordination
+channel — a pane held on working starves inbound messages. Between work
+steps do a single receive and return to the prompt; never poll in loops
+(no sleep-N + receive, no foreground `gh pr checks --watch`). Watch CI
+with `gh pr checks --watch` in a background terminal while this pane sits
+at the prompt.
+
 Suggested approach (from the orchestrator; deviate with reason):
 <approach, key files/areas, pitfalls, constraints — and for multi-issue
 units the suggested order and why>
@@ -230,9 +268,11 @@ units the suggested order and why>
    tab.
 2. Implement the issue(s) with the project's implement skill, coordinating
    through the pair protocol (write leases, review, ready/accepted).
-3. When the pair accepts the work, report ready and wait. The orchestrator
-   reviews the diff and either sends feedback (address it, report ready
-   again) or the go-ahead.
+3. When the pair accepts the work, report ready and wait. Report ready
+   only after all work is committed on the branch — clean `git status`,
+   nothing untracked or staged. The orchestrator reviews the diff and
+   either sends feedback (address it, report ready again) or the
+   go-ahead.
 4. On go-ahead, run the ship-it skill: its dual-review gate is a fresh
    review of the final diff — pair acceptance does not satisfy it — and
    must leave its `## Dual-review` receipt in the PR body. Open the PR
@@ -269,7 +309,9 @@ for the newest `[unit <label>]` line — or, rarely, as pasted `[unit` input.
 Confirm the label matches an in-flight unit in this workspace (run a fresh
 phase 0 survey if the map is stale or missing), then act by kind:
 
-- `ready` — the pair accepted the work. Review the unit's diff yourself
+- `ready` — the pair accepted the work. For a non-default PR base, first
+  re-sync the base with main (phase 3 step 2) so the review diff matches
+  what the PR will show. Review the unit's diff yourself
   (`git -C <worktree> diff <merge-base>`) against the issues' intent — this
   is where the orchestrator's intelligence pays: correctness, scope, missed
   requirements. Findings → [send](#sending-a-message-to-an-agent) them to

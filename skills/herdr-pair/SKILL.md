@@ -36,6 +36,11 @@ start (or update) Herdr.
    on that scope until handoff.
 4. A submitted user message overrides partner traffic. Surface any conflict in
    the next reply. One failed partner spawn ends the attempt.
+5. Between work steps return to the prompt; never hold the pane in long
+   foreground loops (sleep-and-poll receives, foreground CI watchers). A
+   permanently-working pane starves inbound partner traffic — run
+   long-running watchers in a background terminal and keep this pane
+   promptable.
 
 ## Protocol
 
