@@ -13,26 +13,39 @@ the PR exists — cloud auto-review is disabled by design. Do not re-enable it,
 request bot reviews, or wait for them.
 
 1. Read the repository instructions and inspect the current branch, diff, and
-   working tree. Preserve unrelated user changes.
+   working tree. Preserve unrelated user changes. Before review, mark each
+   intended untracked path with `git add --intent-to-add -- <path>` so the
+   complete diff includes its contents; never do this to unrelated files.
 2. **Local dual-review gate** (skip only for diffs touching exclusively
    docs/markdown/config with no runtime surface). This is a fresh adversarial
    review of the FINAL diff — reviews that happened while writing the code
    (pair acceptance, impeccable, in-flight feedback) are a different thing
    and leave this gate unrun:
    - Run your own NATIVE review harness against the merge base with the target
-     branch (Claude: the `code-review` skill; Codex: built-in `/review`).
-     These harnesses run their own verification machinery — an improvised
-     read-through of the diff is not the gate and does not count.
-     Model budget: run reviews on the standard tier (Claude: Opus, e.g.
-     `--model opus` or a code-reviewer subagent pinned to Opus — never Fable;
-     Codex: default model, no extra-high reasoning). Fable is advisor-only.
+     branch. Use each agent's native command surface, not an assumed repository
+     skill:
+     - Claude Code: run its native local-worktree `/code-review` command on
+       Opus. The headless form is
+       `claude -p --model opus --permission-mode plan --output-format text "/code-review"`.
+       This is a Claude command, not a repository skill.
+     - Codex: run `codex review "<final-diff review prompt>"`. Do not use
+       `--base` when the final diff also has staged or unstaged changes because
+       that mode omits them; do not use generic `codex exec` for this gate.
+     The Codex prompt must name the exact complete diff command:
+     `git diff "$(git merge-base HEAD <target-branch>)"`. With intended
+     untracked paths already marked intent-to-add, this covers committed,
+     staged, unstaged, and intended new-file changes from the true merge base.
+     Include the applicable spec sources and read-only output contract. Both
+     harnesses run their own verification machinery — an improvised
+     read-through of the diff does not count.
+     Model budget: Claude uses Opus (`--model opus`), never Fable; Codex uses
+     its default model with no extra-high reasoning. Fable is advisor-only.
    - In parallel, get a second independent review of the same diff from the
      other agent:
      - In a herdr-pair session, ask the peer (via `$ask-peer` / the pair
        channel) to run its native review harness and send back its findings.
-     - Solo fallback: run the counterpart CLI headlessly on the same diff
-       (`codex exec` in read-only mode, or `claude -p` with the code-review
-       skill) and collect its findings.
+     - Solo fallback: run the counterpart's headless command above on the same
+       diff and collect its findings.
    - Merge and deduplicate both findings lists. Review output is advisory: a
      finding is valid only after you verify it against the real code path.
      Fix valid, in-scope findings in ONE batch. Discard style nits and
