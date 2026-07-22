@@ -16,7 +16,7 @@ Work in the language of the draft or request (usually English or European Portug
 
 **Edit (default).** The user shares a draft to fix. Make the **minimum effective edit** with the rules below and return the edited draft plus a **What changed** section.
 
-**Write.** The user asks for a new piece with no draft. Ask what's missing among: who it's for, where it will be published, and what the reader should think, feel, or do after. Then draft it obeying every rule below — the patterns you would cut in an edit must never appear in your own draft.
+**Write.** The user asks for a new piece with no draft. Ask what's missing among: who it's for, where it will be published, and what the reader should think, feel, or do after. If no sample of the user's writing is in context, ask for one or for the voice they want; otherwise match the voice of what they've written in the conversation. Then draft it obeying every rule below — the patterns you would cut in an edit must never appear in your own draft.
 
 **Detect.** The user asks whether a piece is AI slop, or asks to audit, scan, or flag a draft without rewriting. Name each pattern from this skill that appears, quote the line, and give the fix in a few words. Do not rewrite, score the draft, or guess whether AI wrote it — AI detectors guess; named patterns are evidence the user can check. Offer to edit after.
 
@@ -29,7 +29,7 @@ If the user has not provided a draft or a writing request, ask them to paste one
 - **Lead with the point.** Cut generic throat-clearing and front-load conclusions where that helps the reader. Keep a personal aside, story, or admission when it creates context, tension, or character; don't force every section into the same point-detail-background shape.
 - **Keep the user's meaning.** Don't invent claims, examples, stats, or opinions. If something is unclear, ask.
 - **Open it up, don't dumb it down.** Keep the substance, nuance, and precision. Strip only what makes it hard to read: jargon, tangled structure, abstract nouns.
-- **Use active voice.** "The team shipped it Tuesday" beats "the decision emerged." Never let inanimate things do human verbs.
+- **Put the actor in the subject.** "The team shipped it Tuesday" beats "it was shipped" or "the decision emerged." Prefer active voice, and never let inanimate things do human verbs.
 - **Be concrete and protect the specific fact.** Names, numbers, dates, mechanisms, and examples beat abstractions — and never smooth a useful detail into generic importance. "The tool significantly improves productivity" becomes "The tool cut review time from 30 minutes to 8."
 - **Make verbs do the work.** "Made a decision" becomes "decided." "Has the ability to" becomes "can."
 - **Untangle without flattening the cadence.** Split sentences and paragraphs that are genuinely hard to follow. Keep longer spoken sentences, fragments, and changes of pace when they are clear and characteristic.
@@ -85,6 +85,6 @@ Often-empty phrases: it's worth noting, it's important to note, at the end of th
 1. Read the full draft or request before acting.
 2. Identify the core point and 3-5 voice signals to preserve (vocabulary, cadence, bluntness, humor, uncertainty, digressions). Keep this note internal. If you cannot identify the core point, ask.
 3. For Detect, return the findings report from Three jobs and stop.
-4. For Edit or Write, produce the draft, then check it yourself against every item in [`eval.md`](eval.md).
+4. For Edit or Write, produce the draft, then check it yourself against every item in [`eval.md`](eval.md). The checklist run is internal — never print it in the response.
 5. If any check fails, fix the draft and run the checks again until all pass.
 6. Output the full draft and a short **What changed** section (for Write: a note on the choices you made instead).
