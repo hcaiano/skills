@@ -17,7 +17,7 @@ For Detect requests, make sure the response names each pattern found with a quot
 
 ## Words and patterns
 
-1. Are banned words, filler phrases, and empty adverbs gone unless quoted as examples?
+1. Are banned words, filler phrases, and empty adverbs gone — except inside quotes, code, proper names, and required terminology, which stay verbatim?
 2. Are binary contrasts, negative listing, rhetorical setups, and throat-clearing openers gone?
 3. Are faux-insight setups, colon reveals, superficial analysis, fake-strong verbs, synonym cycling, dramatic fragments, and robotic rhythm fixed?
 4. Are importance puffery and weasel attribution replaced with plain facts and named sources, or flagged to the user when no source exists?
