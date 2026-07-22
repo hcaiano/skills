@@ -255,10 +255,9 @@ decision you need). Then stop and wait; the orchestrator reads it here.
 
 Transport discipline: this pane's idle/working state IS the coordination
 channel — a pane held on working starves inbound messages. Between work
-steps do a single receive and return to the prompt; never poll in loops
-(no sleep-N + receive, no foreground `gh pr checks --watch`). Watch CI
-with `gh pr checks --watch` in a background terminal while this pane sits
-at the prompt.
+steps do a single receive and return to the prompt; long-running watchers
+(CI via `gh pr checks --watch`, servers, polls) live in background
+terminals while this pane sits at the prompt.
 
 Suggested approach (from the orchestrator; deviate with reason):
 <approach, key files/areas, pitfalls, constraints — and for multi-issue
@@ -322,8 +321,11 @@ phase 0 survey if the map is stale or missing), then act by kind:
   is missing the gate did not run — send the unit back to run it, and tell
   the user. With the receipt: record the PR URL and CI state; tell the user
   it is ready for their review and merge decision.
-- `blocked` — read the unit's pane, and surface the tab and the exact
-  decision to the user.
+- `blocked` — read the unit's pane and surface the tab and the exact
+  decision to the user, raising a toast so it reaches them away from the
+  terminal: `herdr notification show "<tab label> blocked" --body
+  "<decision>" --sound request`. Notifications are the orchestrator's
+  channel — delegates and pairs never toast directly.
 
 When the last in-flight unit reports shipped, give the user the final
 per-unit summary.
