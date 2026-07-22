@@ -1,6 +1,6 @@
 {
   "name": "hcaiano",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Custom agent skills for debugging, QA loops, PR review workflows, shipping, log inspection, and Claude/Codex collaboration.",
   "author": {
     "name": "Henrique Caiano"
@@ -12,6 +12,7 @@
     "./skills/herdr-pair",
     "./skills/debug-mode",
     "./skills/goal-loop",
+    "./skills/no-slop",
     "./skills/review-pr-comments",
     "./skills/ship-it",
     "./skills/cyber-audit"

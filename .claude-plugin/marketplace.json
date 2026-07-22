@@ -10,8 +10,8 @@
     {
       "name": "hcaiano",
       "source": "./",
-      "description": "Agent workflow skills: ask-peer, herdr-pair, goal-loop, debug-mode, ship-it, review-pr-comments, check-logs, art-director, and cyber-audit.",
-      "version": "0.4.0"
+      "description": "Agent workflow skills: ask-peer, herdr-pair, goal-loop, debug-mode, ship-it, review-pr-comments, check-logs, art-director, cyber-audit, and no-slop.",
+      "version": "0.5.0"
     }
   ]
 }
