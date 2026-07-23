@@ -32,10 +32,12 @@ request bot reviews, or wait for them.
    - Run your own NATIVE review harness against the merge base with the target
      branch. Use each agent's native command surface, not an assumed repository
      skill:
-     - Claude Code: run its native local-worktree `/code-review` command on
-       Opus. The headless form is
+     - Claude Code: invoke the `/code-review` slash command itself on Opus —
+       in-session when Claude is driving (the same command the user would
+       type), or headless as
        `claude -p --model opus --permission-mode plan --output-format text "/code-review"`.
-       This is a Claude command, not a repository skill.
+       This gate is satisfied only by running the `/code-review` command in
+       full; nothing improvised stands in for it.
      - Codex: run `codex review "<final-diff review prompt>"`. Do not use
        `--base` when the final diff also has staged or unstaged changes because
        that mode omits them; do not use generic `codex exec` for this gate.
