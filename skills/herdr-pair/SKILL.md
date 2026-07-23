@@ -59,8 +59,8 @@ This line is the recovery anchor when model context has been compacted.
 
 Use these kinds:
 
-- `task`: assign or update work and the write lease. Begin a mid-flight stop
-  with `STOP — <reason>`.
+- `task`: propose or update the work split and its write leases. Begin a
+  mid-flight stop with `STOP — <reason>`.
 - `review`: request review with file paths and a short change summary.
 - `question`: ask for clarification before proceeding.
 - `ready`: report changed files, validation, and residual risk.
@@ -77,8 +77,13 @@ Use these kinds:
 2. Run `node "$PAIR_SCRIPT" init`. It creates a new tab-scoped session or
    idempotently resumes the exact live session. It also migrates supported
    legacy session shapes.
-3. Send the first `task` through the helper. State the write lease and include
-   enough task context for the partner to work independently.
+3. Send the first `task` through the helper. The partners are equals:
+   propose a scope split — one write lease per scope, each partner
+   implementing its own scopes and reviewing the other's `ready` — and
+   include enough context for independent work; the partner accepts or
+   counters before implementing. A task with no independent scopes takes one
+   lease: the holder drives while the partner reviews, and the lease
+   alternates across tasks.
 
 Done when the exact tab has one verified session and the first task has a
 recorded receipt. Skill reload and compaction always resume that session.
