@@ -101,7 +101,9 @@ Goal: a short list of issues with nothing blocking an agent from starting.
    maintainer is delegated only after the user explicitly confirms that
    issue — flag it instead of silently including it.
 5. If the invocation named issues or filters, that is the selection —
-   continue straight into phase 2. Only a bare invocation presents the
+   continue straight into phase 2. Filter matches still pass step 4:
+   naming a filter is not naming its third-party-authored issues, so those
+   wait for per-issue confirmation. Only a bare invocation presents the
    table — number, title, why it is free — and waits for the user to name
    issues; that is the run's sole stop.
 
@@ -149,10 +151,15 @@ is always cross-pool: one Claude + one Codex model.
 
 Grade each unit's **merge policy**: `auto` — the orchestrator merges on
 receipt plus green CI — unless any of these makes it `hold`: effort `high`
-or `xhigh`; a sensitive surface (auth, payments, data migrations, public
+or above; a sensitive surface (auth, payments, data migrations, public
 API contracts); or visible UI, which is always `hold` — agents never ship
 design unsupervised, the user gives design feedback personally. A `hold`
 unit stops at shipped for the user's OK.
+
+When the usage rules queue work (`references/models.md`: both pools
+exhausted), grade those units `queued (until <reset>)` instead of staffing
+them: report them in the split, skip their phase 3, and leave their issues
+free — any invocation after the reset triages and delegates them normally.
 
 Report the split — one line per unit: issues, one-line rationale, proposed
 branch name, effort, staffing, model(s), merge policy — and continue
@@ -198,16 +205,17 @@ at that tab instead of creating a second unit for it.
    the other pool's model (guardrail 4):
 
    ```bash
-   herdr agent start lead-<N> <graded model args> --pane <initial pane_id>
+   herdr agent start lead-<N> --pane <initial pane_id> <graded model args>
    # pair units only:
    herdr pane split <initial pane_id> --direction right --no-focus
-   herdr agent start peer-<N> <other pool model args> --pane <split pane_id>
+   herdr agent start peer-<N> --pane <split pane_id> <other pool model args>
    ```
 
    `<N>` is the unit's first issue number; the names `lead-<N>` / `peer-<N>`
    address these agents in every later `herdr agent` command, so pane IDs
    never need to be carried around. Arguments after `--` pass to the agent
-   executable. Always pin the model explicitly: a bare `claude` or `codex`
+   executable, so `--pane` must come before the model args' `--`. Always
+   pin the model explicitly: a bare `claude` or `codex`
    inherits the user's saved default instead of the graded model.
    `herdr agent start` returns only once its agent is up (and fails on
    timeout), so the unit is ready when every start succeeded and the tab
@@ -368,7 +376,10 @@ phase 0 survey if the map is stale or missing), then act by kind:
   what the PR will show. Review the unit's diff yourself
   (`git -C <worktree> diff <merge-base>`) against the issues' intent — this
   is where the orchestrator's intelligence pays: correctness, scope, missed
-  requirements. Findings → [send](#sending-a-message-to-an-agent) them to
+  requirements. Re-grade the merge policy from what the diff actually
+  touches: a unit whose work reached a hold surface (sensitive paths,
+  visible UI) the issue never mentioned flips to `hold` now, whatever
+  phase 2 graded. Findings → [send](#sending-a-message-to-an-agent) them to
   the lead as feedback and await the next ready. Clean → send the go-ahead
   (run the ship-it skill, then report shipped) and tell the user the unit is
   shipping.
@@ -378,16 +389,19 @@ phase 0 survey if the map is stale or missing), then act by kind:
   (`gh pr checks`); red or pending means not shipped — send the unit back
   per ship-it. Green, by the unit's merge policy:
   - `auto` → merge the PR in the repo's own merge style (recent `git log`
-    on the default branch shows it; pass the matching `gh pr merge` flag).
-    Skip `--delete-branch`: while the unit's worktree exists it fails on
-    the local branch and can leave the remote one behind too. Then
-    dismantle the unit in this order: remove its worktree (the project's
-    teardown script if one exists, else `git worktree remove <path>`),
-    delete the branch both sides (`git branch -d <branch>`;
-    `git push origin --delete <branch>`), and close its tab
-    (`herdr tab close <tab_id>`). Tell the user in one line: merged PR URL
-    and what shipped. Merge only PRs this run's units opened, into their
-    intended base.
+    on the default branch shows it; pass the matching `gh pr merge` flag),
+    pinned to the head you verified: `--match-head-commit <sha>` with the
+    SHA the receipt and checks were read from, so a push racing the merge
+    fails closed instead of merging unreviewed commits. Skip
+    `--delete-branch`: while the unit's worktree exists it fails on the
+    local branch and can leave the remote one behind too. Then dismantle
+    the unit in this order: remove its worktree (the project's teardown
+    script if one exists, else `git worktree remove <path>`), delete the
+    branch both sides (`git branch -D <branch>` — `-d` refuses under
+    squash/rebase merge styles; `git push origin --delete <branch>`), and
+    close its tab (`herdr tab close <tab_id>`). Tell the user in one line:
+    merged PR URL and what shipped. Merge only PRs this run's units
+    opened, into their intended base.
   - `hold` → for a UI unit first confirm the PR body carries before/after
     screenshots; missing ones go back to the lead. Then raise a toast with
     the PR URL and why it holds (risk surface, or UI awaiting design
