@@ -224,13 +224,10 @@ at that tab instead of creating a second unit for it.
    lead in the tab's original pane; pair: lead there, peer in the split. A
    leftover shell pane means the lead was split in instead — close it.
 4. **Kickoff.** Send the message below to the lead per
-   [Sending a message to an agent](#sending-a-message-to-an-agent), then
-   confirm it took: `herdr agent wait lead-<N> --until working --timeout
-   120000`. A freshly started agent can swallow the first submission behind
-   a startup notice (rate-limit warnings do this) while `herdr agent
-   prompt` still reports success — on timeout, read the pane; an empty
-   composer means exactly that, and one re-send is the fix. The unit is
-   live when the lead reports working.
+   [Sending a message to an agent](#sending-a-message-to-an-agent),
+   including its send-confirmation and recovery ladder — a kickoff does
+   not count as sent until the lead is `working`. The unit is live when
+   the lead reports working.
 5. **Watch.** Reports arrive by watching, not by delegates typing into your
    pane. One background wait per lead covers every settled state — without
    `--until`, `herdr agent wait` fires on the first of `idle`, `done`, or
@@ -270,21 +267,33 @@ at that tab instead of creating a second unit for it.
 ### Sending a message to an agent
 
 Use `herdr agent prompt` — it submits the text plus an encoded Enter in one
-operation and honors bracketed-paste mode, so no separate Enter and no
-read-back verification are ever needed. Address the agent by the name given
-at `herdr agent start` (e.g. `lead-42`).
+operation, honoring bracketed-paste mode. Address the agent by the name
+given at `herdr agent start` (e.g. `lead-42`). A large multi-line message
+(any kickoff) can still land in the composer without its Enter taking, so a
+send is done only when the agent's lifecycle proves it:
 
 1. Check the target's status (`herdr agent get <name>`). `idle`, `done`, or
    `blocked` → ready to receive; `working` → wait for the turn to settle
    first (`herdr agent wait <name> --timeout 120000`), then prompt.
-2. `herdr agent prompt <name> "<text>" --wait`. `--wait` returns when the
-   agent reaches the next settled state (`idle`/`done`/`blocked`); for a
-   kickoff you may drop it and rely on the phase 3 watch instead. A
-   nonzero exit means the message was not submitted — stop and report
-   rather than retrying blindly.
-3. On `agent_prompt_stalled` the submission produced no lifecycle change —
-   read the pane (`herdr agent read <name> --source visible`) to see what
-   actually landed, then stop and report; do not blind-retry.
+2. `herdr agent prompt <name> "<text>" --wait`. `--wait` returns at the
+   next settled state (`idle`/`done`/`blocked`). For a kickoff, drop
+   `--wait` and confirm the turn started instead:
+   `herdr agent wait <name> --until working --timeout 15000`.
+3. Recover by what the pane actually shows. On `agent_prompt_stalled`, a
+   nonzero exit, or a confirmation timeout, read the composer
+   (`herdr agent read <name> --source visible`):
+   - The message — or a `[Pasted text …]` placeholder — sits unsubmitted →
+     the paste landed without its Enter: `herdr agent send-keys <name>
+     enter`, then re-confirm `--until working`.
+   - The composer is empty → the submission never landed (startup notices
+     such as rate-limit warnings swallow it): re-send the same prompt
+     once, then re-confirm.
+   - One recovery per send: if the agent still is not working after it,
+     report the pane state to the user.
+
+For transport mechanics beyond this ladder — key names, pane-level input,
+wait semantics — read the `herdr` skill; it documents the current CLI's
+messaging surface.
 
 ### Kickoff message template
 
