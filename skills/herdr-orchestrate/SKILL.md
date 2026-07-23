@@ -291,6 +291,10 @@ send is done only when the agent's lifecycle proves it:
    - One recovery per send: if the agent still is not working after it,
      report the pane state to the user.
 
+For transport mechanics beyond this ladder — key names, pane-level input,
+wait semantics — read the `herdr` skill; it documents the current CLI's
+messaging surface.
+
 ### Kickoff message template
 
 Fill every placeholder; for a solo unit, drop the lines marked `(pair)` and
