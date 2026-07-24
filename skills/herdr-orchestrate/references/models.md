@@ -1,9 +1,10 @@
 # Model table and staffing rules
 
 Reference for phase 2 grading: which model(s) implement a unit, solo or
-paired. Last calibrated 2026-07-23 (SWE-bench Verified/Pro, Terminal-Bench
-2.1, Design Arena, LMArena, METR). Recalibrate when a model generation lands
-(e.g. Opus 5).
+paired. Last calibrated 2026-07-24, Opus 5 launch day (CursorBench 3.2,
+Frontier-Bench v0.1, OSWorld 2.0, Design Arena; Opus 5 numbers are
+launch-announcement claims — firm them up when independent benches land).
+Recalibrate when a model generation lands.
 
 ## Models
 
@@ -15,22 +16,22 @@ Taste = UI/UX, code quality, API design, copy.
 |---|---|---|---|---|---|
 | fable-5 | Claude | `--kind claude -- --model fable --effort <tier>` | 10 | 9 | Reserved. Orchestrator by default; implements only a unit that truly needs maximum intelligence (e.g. fable + sol pair on critical work). Delegates consult it as oracle instead: Claude via its `oracle` subagent, Codex via `ask-peer`. |
 | gpt-5.6-sol | Codex | `--kind codex -- -c model="gpt-5.6-sol" -c model_reasoning_effort="<tier>"` | 9.5 | 8.5 | Primary workhorse — closer to fable than to opus. Fastest terminal/agentic work and best visual design (#1 Design Arena); highest measured reward-hacking rate of any public model — its output ships only through review (orchestrator ready-review + ship-it gate). |
-| opus-4.8 | Claude | `--kind claude -- --model opus --effort <tier>` | 8.5 | 7.5 | Claude-pool workhorse; not frontier this generation (revisit at Opus 5). Best at deep multi-file repo work (SWE-bench Pro); most trustworthy on long unsupervised runs. |
+| opus-5 | Claude | `--kind claude -- --model opus --effort <tier>` | 9.5 | 8 | Claude-pool workhorse. Within 0.5% of fable's peak (CursorBench 3.2 at `max`) at half fable's price; early reports emphasize verify-and-iterate reliability on long unsupervised runs. No `medium` effort tier (low/high/xhigh/max) — run a `medium`-graded unit at `high`. Verify `--model opus` resolves to Opus 5 in the start banner; if it still points at 4.8, pin `--model claude-opus-5`. Taste provisional: no Design Arena data yet. |
 | sonnet-5 | Claude | `--kind claude -- --model sonnet --effort <tier>` | 7.5 | 7 | Fast lane; unusually strong on terminal loops. |
 | gpt-5.6-terra | Codex | `--kind codex -- -c model="gpt-5.6-terra" -c model_reasoning_effort="<tier>"` | 7 | 6.5 | Fast lane; best value for supervised mechanical work. |
 
 ## Selection rules
 
-- **Workhorses.** Nearly every unit gets sol or opus. Sol is the
-  intelligence pick: anything demanding — hard problems, ambiguous specs,
-  UI/visual work — defaults to it. Opus carries the unit when the Claude
-  pool has clearly more weekly headroom, when it is the pair's Claude half,
-  or when a long unsupervised run rewards its lower reward-hacking profile
-  over raw intelligence.
-- **Fable, sparingly.** A unit whose failure would be very expensive and
-  whose problem is genuinely at the intelligence ceiling may get fable as an
-  implementer (typically paired with sol). Everything below that ceiling
-  reaches fable through the oracle channel instead.
+- **Workhorses.** Nearly every unit gets opus-5 or sol — intelligence
+  peers, so pool balance breaks the tie. Sol keeps the edge on UI/visual
+  work (#1 Design Arena) and raw terminal speed; opus-5 is the pick for
+  long unsupervised runs (verify-and-iterate profile vs sol's
+  reward-hacking record) and deep multi-file repo work.
+- **Fable, sparingly — more than ever.** Opus-5 sits within 0.5% of
+  fable's peak at half the cost, so fable as implementer is reserved for
+  the rare unit where that last half-percent matters and failure is very
+  expensive (typically paired with sol). Everything else reaches fable
+  through the oracle channel instead.
 - **Fast lane (rare).** A trivial mechanical unit may go to terra or sonnet
   at `low`; sol or opus at `low`/`medium` are also fast — prefer them when in
   doubt.
@@ -42,7 +43,7 @@ Taste = UI/UX, code quality, API design, copy.
   scout and try things before the expensive model acts, never to under-staff
   shipping work.
 - **Pair composition.** A pair is always cross-pool — one Claude + one Codex
-  model, normally opus + sol — halving the load on each weekly pool and
+  model, normally opus-5 + sol — halving the load on each weekly pool and
   keeping two model families in play.
 
 ## Weekly usage state
@@ -96,7 +97,7 @@ degrade on evidence, not absence of signal:
   becomes `hold` — it stops at shipped for the user's own review.
 
 A degraded gate is a capacity decision, not a quality discount — the
-orchestrator's own ready-review and ship-delta review still run in full.
+orchestrator's scope checks (ready, ship delta) still run in full.
 Name the graded gate in the kickoff and in the phase 4 summary, and check
 the shipped receipt against it: a `codex-only` receipt with one review is
 complete for that unit.

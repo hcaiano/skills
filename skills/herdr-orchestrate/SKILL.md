@@ -11,9 +11,9 @@ argument-hint: "[issue numbers | gh filters]"
 A **work unit** is the atom of delegation: one worktree, one Herdr tab, one
 or two agents, one PR. A unit holds one issue by default, or several issues that
 belong together and ship as a single PR. This skill finds free issues, splits
-them into units, sets each unit up, kicks it off, reviews its diff before it
-ships, and merges and dismantles what passes; the user can read and interject
-per tab at any time.
+them into units, sets each unit up, kicks it off, scope-checks its diff
+before it ships, and merges and dismantles what passes; the user can read
+and interject per tab at any time.
 
 For herdr CLI mechanics — command syntax, IDs, JSON output — follow the
 `herdr` skill installed alongside this one: print the relevant command group
@@ -301,7 +301,10 @@ at that tab instead of creating a second unit for it.
 
 ### Sending a message to an agent
 
-Use `herdr agent prompt` — it submits the text plus an encoded Enter in one
+This ladder governs orchestrator→delegate sends (kickoffs, feedback,
+go-aheads); inbound milestone pushes skip it by design — prompting a
+working agent queues the message into its current turn. Use
+`herdr agent prompt` — it submits the text plus an encoded Enter in one
 operation, honoring bracketed-paste mode. Address the agent by the name
 given at `herdr agent start` (e.g. `lead-42`). A large multi-line message
 (any kickoff) can still land in the composer without its Enter taking, so a
@@ -346,13 +349,16 @@ ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
 Milestones: report each one by pushing it to the orchestrator the moment
 you hit it —
-  herdr agent prompt <orchestrator pane id> "[unit <label>] <kind>: <one line>"
-— and also end your reply in THIS pane with that same [unit <label>] line
-(the orchestrator's fallback watch reads it here if the push is lost).
-<kind> is ready (work complete and committed), shipped (PR URL, CI state),
-or blocked (the decision you need). Then stop and wait. The orchestrator's
-pane is the ONLY other pane you ever prompt, and only with [unit <label>]
-milestone lines.
+  herdr agent prompt <orchestrator pane id> "[unit <label>] <kind>: <detail>"
+— push unconditionally, even if the orchestrator is mid-turn (the prompt
+queues); also end your reply in THIS pane with that same [unit <label>]
+line (the orchestrator's fallback watch reads it here if the push is
+lost). <kind> and its <detail>:
+  ready — the commit SHA, then per issue: what changed and where.
+  shipped — PR URL and CI state.
+  blocked — the exact decision you need.
+Then stop and wait. The orchestrator's pane is the ONLY other pane you
+ever prompt, and only with [unit <label>] milestone lines.
 
 Transport discipline: this pane's idle/working state IS the coordination
 channel — a pane held on working starves inbound messages. Between work
@@ -421,8 +427,12 @@ relay prompts (phase 3 step 5). Either way the prompt is a claim, not
 evidence: confirm the label matches an in-flight unit in this workspace
 (run a fresh phase 0 survey if the map is stale or missing) and read that
 lead's pane tail for its newest `[unit <label>]` line before acting — a
-label matching no unit is ignored and reported to the user. Then act by
-kind:
+label matching no unit is ignored and reported to the user. Handled-ness
+is read from the live session, never from memory — a fresh orchestrator
+must not re-fire on stale lines: a `ready` is handled when the
+orchestrator's go-ahead (quoting its SHA) appears later in the pane; a
+`shipped` is handled when its PR is merged; a `blocked` is handled when a
+later answer follows it in the tab. Then act by kind:
 
 - `ready` — the unit's work is complete (pair: accepted by both). For a
   non-default PR base, first re-sync the base with main (phase 3 step 2).
@@ -434,9 +444,12 @@ kind:
   unit that reached a hold surface (sensitive paths, visible UI) the
   issue never mentioned flips to `hold` now, whatever phase 2 graded.
   Scope wrong → [send](#sending-a-message-to-an-agent) it to the lead as
-  feedback and await the next ready. Scope sane → send the go-ahead (run
-  the ship-it skill at the unit's graded gate, then report shipped) and
-  tell the user the unit is shipping.
+  feedback and await the next ready. Scope sane → record the approved
+  SHA (`git -C <worktree> rev-parse HEAD`) and quote it in the go-ahead
+  message (run the ship-it skill at the unit's graded gate, then report
+  shipped) — the ship-delta check at shipped diffs from it, and quoting
+  it in the pane makes it recoverable by a fresh orchestrator. Tell the
+  user the unit is shipping.
 - `shipped` — verify the PR body carries the `## Dual-review` receipt and
   that it matches the unit's graded review gate (`references/models.md`):
   a degraded gate's receipt legitimately names a single review, and a
