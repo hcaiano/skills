@@ -46,9 +46,12 @@ names, and issue references literal.
 2. One work unit per tab; address only panes this run created.
 3. The unit's agents implement and ship-it's gate reviews quality; the
    orchestrator aims (kickoff pointers) and holds **scope authority** — it
-   never edits the unit's code and never runs its own cold review: a
-   second review before the gate only adds latency and burns orchestrator
-   context, so its checkpoints are `--stat`-level scope scans. Final
+   never edits the unit's code and never reviews it: no invoking review
+   harnesses (`/code-review`, `codex review`, `/simplify`), no
+   standards/spec passes — a second review before the gate only adds
+   latency and burns orchestrator context. Its checkpoints are scope
+   scans: the issues, the lead's milestone summary, and the `--stat`
+   diff. Final
    approval and the merge are the orchestrator's, by standing user
    authorization, and only for a unit PR carrying the dual-review receipt
    with green required checks. When the gate receipt, CI, or a scope scan
@@ -424,9 +427,10 @@ kind:
 - `ready` — the unit's work is complete (pair: accepted by both). For a
   non-default PR base, first re-sync the base with main (phase 3 step 2).
   Scope-scan, don't review — quality is ship-it's gate (guardrail 3):
-  read `git -C <worktree> diff --stat <merge-base>` against the issues'
-  intent — files where the issues point, no unexplained surfaces, nothing
-  obviously missing. Re-grade the merge policy from the paths touched: a
+  from the issues, the lead's ready summary, and
+  `git -C <worktree> diff --stat <merge-base>`, confirm the solution
+  points in the right direction and covers the scope — files where the
+  issues point, no unexplained surfaces, nothing obviously missing. Re-grade the merge policy from the paths touched: a
   unit that reached a hold surface (sensitive paths, visible UI) the
   issue never mentioned flips to `hold` now, whatever phase 2 graded.
   Scope wrong → [send](#sending-a-message-to-an-agent) it to the lead as
