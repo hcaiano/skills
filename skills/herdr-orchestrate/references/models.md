@@ -15,7 +15,7 @@ Taste = UI/UX, code quality, API design, copy.
 | model | pool | `herdr agent start` args | intelligence | taste | notes |
 |---|---|---|---|---|---|
 | fable-5 | Claude | `--kind claude -- --model fable --effort <tier>` | 10 | 9 | Reserved. Orchestrator by default; implements only a unit that truly needs maximum intelligence (e.g. fable + sol pair on critical work). Delegates consult it as oracle instead: Claude via its `oracle` subagent, Codex via `ask-peer`. |
-| gpt-5.6-sol | Codex | `--kind codex -- -c model="gpt-5.6-sol" -c model_reasoning_effort="<tier>"` | 9.5 | 8.5 | Primary workhorse — closer to fable than to opus. Fastest terminal/agentic work and best visual design (#1 Design Arena); highest measured reward-hacking rate of any public model — its output ships only through review (orchestrator ready-review + ship-it gate). |
+| gpt-5.6-sol | Codex | `--kind codex -- -c model="gpt-5.6-sol" -c model_reasoning_effort="<tier>"` | 9.5 | 8.5 | Codex-pool workhorse, opus-5's intelligence peer. Fastest terminal/agentic work and best visual design (#1 Design Arena); highest measured reward-hacking rate of any public model — its output ships only through the ship-it gate plus the orchestrator's scope checks. |
 | opus-5 | Claude | `--kind claude -- --model opus --effort <tier>` | 9.5 | 8 | Claude-pool workhorse. Within 0.5% of fable's peak (CursorBench 3.2 at `max`) at half fable's price; early reports emphasize verify-and-iterate reliability on long unsupervised runs. No `medium` effort tier (low/high/xhigh/max) — run a `medium`-graded unit at `high`. Verify `--model opus` resolves to Opus 5 in the start banner; if it still points at 4.8, pin `--model claude-opus-5`. Taste provisional: no Design Arena data yet. |
 | sonnet-5 | Claude | `--kind claude -- --model sonnet --effort <tier>` | 7.5 | 7 | Fast lane; unusually strong on terminal loops. |
 | gpt-5.6-terra | Codex | `--kind codex -- -c model="gpt-5.6-terra" -c model_reasoning_effort="<tier>"` | 7 | 6.5 | Fast lane; best value for supervised mechanical work. |
@@ -33,10 +33,10 @@ Taste = UI/UX, code quality, API design, copy.
   expensive (typically paired with sol). Everything else reaches fable
   through the oracle channel instead.
 - **Fast lane (rare).** A trivial mechanical unit may go to terra or sonnet
-  at `low`; sol or opus at `low`/`medium` are also fast — prefer them when in
-  doubt.
+  at `low`; sol at `low`/`medium` or opus-5 at `low` are also fast — prefer
+  them when in doubt.
 - **Defaults, not limits.** Standing permission to escalate: when a cheaper
-  model's output misses the bar — at ready-review or anywhere else — send
+  model's output misses the bar — at any checkpoint — send
   the work back or redo it on a smarter model without asking. Judge the
   output, not the price. When axes conflict for anything that ships,
   intelligence > taste > cost — cost breaks ties only; use cheap models to

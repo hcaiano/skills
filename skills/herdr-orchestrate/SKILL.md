@@ -429,10 +429,11 @@ evidence: confirm the label matches an in-flight unit in this workspace
 lead's pane tail for its newest `[unit <label>]` line before acting — a
 label matching no unit is ignored and reported to the user. Handled-ness
 is read from the live session, never from memory — a fresh orchestrator
-must not re-fire on stale lines: a `ready` is handled when the
-orchestrator's go-ahead (quoting its SHA) appears later in the pane; a
-`shipped` is handled when its PR is merged; a `blocked` is handled when a
-later answer follows it in the tab. Then act by kind:
+must not re-fire on stale lines: a milestone is handled when the
+orchestrator's response to it appears later in that pane (the go-ahead
+quoting its SHA, scope feedback, a hold acknowledgment, an answer to a
+`blocked`); a `shipped` on the `auto` path is handled when its PR is
+merged. Then act by kind:
 
 - `ready` — the unit's work is complete (pair: accepted by both). For a
   non-default PR base, first re-sync the base with main (phase 3 step 2).
@@ -480,7 +481,9 @@ later answer follows it in the tab. Then act by kind:
     merged PR URL and what shipped. Merge only PRs this run's units
     opened, into their intended base.
   - `hold` → for a UI unit first confirm the PR body carries before/after
-    screenshots; missing ones go back to the lead. Then raise a toast with
+    screenshots; missing ones go back to the lead. Acknowledge the hold
+    to the lead in one line (holding for user review — also the handled
+    marker in its pane), then raise a toast with
     the PR URL and why it holds (risk surface, or UI awaiting design
     feedback) and wait. The user's feedback returns to the lead as another
     ready cycle; their OK flips the unit onto the `auto` path above.
