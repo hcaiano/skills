@@ -90,8 +90,10 @@ degrade on evidence, not absence of signal:
 - `claude-only` — the Codex pool is out of headroom: run Claude simplify,
   then a single Claude code review.
 - Both pools out → the both-pools-exhausted rule above: queue the unit. A
-  genuinely urgent unit that runs anyway takes the single-review gate of
-  the pool opposite its implementer, keeping the review cross-pool.
+  genuinely urgent unit that runs anyway takes a single review on
+  whichever harness still responds when tried (prefer the pool its lead
+  did not implement on); if neither responds, the unit's merge policy
+  becomes `hold` — it stops at shipped for the user's own review.
 
 A degraded gate is a capacity decision, not a quality discount — the
 orchestrator's own ready-review and ship-delta review still run in full.
