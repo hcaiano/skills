@@ -11,9 +11,9 @@ argument-hint: "[issue numbers | gh filters]"
 A **work unit** is the atom of delegation: one worktree, one Herdr tab, one
 or two agents, one PR. A unit holds one issue by default, or several issues that
 belong together and ship as a single PR. This skill finds free issues, splits
-them into units, sets each unit up, kicks it off, reviews its diff before it
-ships, and merges and dismantles what passes; the user can read and interject
-per tab at any time.
+them into units, sets each unit up, kicks it off, scope-checks its diff
+before it ships, and merges and dismantles what passes; the user can read
+and interject per tab at any time.
 
 For herdr CLI mechanics — command syntax, IDs, JSON output — follow the
 `herdr` skill installed alongside this one: print the relevant command group
@@ -44,18 +44,23 @@ names, and issue references literal.
    where the flag exists; where it doesn't (e.g. `herdr agent list`), filter
    the output to the recorded `workspace_id` before acting on any row.
 2. One work unit per tab; address only panes this run created.
-3. The unit's agents implement; the orchestrator aims and reviews (kickoff
-   pointers, ready-review feedback) but never edits the unit's code. Its
-   ready-review advises — it does not replace the ship-it gate. Final
+3. The unit's agents implement and ship-it's gate reviews quality; the
+   orchestrator aims (kickoff pointers) and holds **scope authority** — it
+   never edits the unit's code and never reviews it: no invoking review
+   harnesses (`/code-review`, `codex review`, `/simplify`), no
+   standards/spec passes — a second review before the gate only adds
+   latency and burns orchestrator context. Its checkpoints are scope
+   scans: the issues, the lead's milestone summary, and the `--stat`
+   diff. Final
    approval and the merge are the orchestrator's, by standing user
    authorization, and only for a unit PR carrying the dual-review receipt
-   with green required checks. When ready-review shows the graded model's
-   output missing the bar, escalate: restaff the unit on a smarter model
-   (`references/models.md`) instead of polishing weak work by feedback.
-   This holds at every checkpoint — ready-review, ship delta, shipped:
-   substandard work returns to the unit or a restaffed smarter one until it
-   is right; a follow-up issue records genuinely out-of-scope findings,
-   never quality debt the unit itself created.
+   with green required checks. When the gate receipt, CI, or a scope scan
+   shows the graded model's output missing the bar, escalate: restaff the
+   unit on a smarter model (`references/models.md`) instead of polishing
+   weak work by feedback. This holds at every checkpoint — ready, ship
+   delta, shipped: substandard work returns to the unit or a restaffed
+   smarter one until it is right; a follow-up issue records genuinely
+   out-of-scope findings, never quality debt the unit itself created.
 4. Pair units: the delegate's `herdr-pair` run owns the pair protocol. Start
    the pair's two agents yourself at the unit's graded models and effort —
    `herdr-pair` adopts an existing peer and only spawns (at default effort
@@ -82,8 +87,8 @@ Then branch on the input:
 
 - **Status** — "how are things going", "what needs me": jump to
   [Status report](#status-report).
-- **Unit report** — a watch on a lead pane fired, or input starts with
-  `[unit`: jump to [Unit reports](#unit-reports).
+- **Unit report** — input starts with `[unit` (a lead's push or a backstop
+  relay): jump to [Unit reports](#unit-reports).
 - **Delegation** — continue with triage; in-flight issues are already taken.
 
 ## Phase 1 — Triage
@@ -150,7 +155,7 @@ command all live there; run that command once per invocation and grade every
 unit against its output — the same reading also grades the unit's
 **review gate** (`dual` by default; a pool without headroom degrades it,
 rules in the same reference; ship-it runs the gate at the graded level).
-Solo is the default: one implementer, with the orchestrator's ready-review
+Solo is the default: one implementer, with the orchestrator's scope checks
 and the graded ship-it gate unchanged by staffing. A pair
 needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
 mistake that would be expensive, or scopes that genuinely parallelize — and
@@ -236,14 +241,18 @@ at that tab instead of creating a second unit for it.
    including its send-confirmation and recovery ladder — a kickoff does
    not count as sent until the lead is `working`. The unit is live when
    the lead reports working.
-5. **Watch.** Reports arrive by watching, not by delegates typing into your
-   pane. `herdr agent wait` only *detects* — its exit does not start an
-   orchestrator turn in every runtime — so each watch is a **relay**: the
-   wait chains into `herdr agent prompt` at the orchestrator's own pane
-   (`$HERDR_PANE_ID`, and only that pane), which starts a real turn
-   everywhere. Without `--until`, the wait fires on the first of `idle`,
-   `done`, or `blocked` (a background tab lands on `done`, a focused one
-   on `idle`):
+5. **Safety net.** The primary report channel is the lead's own push: the
+   kickoff hands it the orchestrator's pane ID and it prompts a
+   `[unit <label>]` milestone straight into this pane the moment it hits
+   one — zero latency, no timeout to tune. The watch below is only the
+   backstop for a lead that dies or settles silently without pushing, so
+   its timeout is a generous ceiling, not a pacing choice. `herdr agent
+   wait` only *detects* — its exit does not start an orchestrator turn in
+   every runtime — so the backstop is a **relay**: the wait chains into
+   `herdr agent prompt` at the orchestrator's own pane (`$HERDR_PANE_ID`,
+   and only that pane), which starts a real turn everywhere. Without
+   `--until`, the wait fires on the first of `idle`, `done`, or `blocked`
+   (a background tab lands on `done`, a focused one on `idle`):
 
    ```bash
    (herdr agent wait lead-<N> --timeout 3600000; \
@@ -262,17 +271,18 @@ at that tab instead of creating a second unit for it.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
-   the unit is quiet. Treat every wake — a relay prompt arriving, a wait
-   dying, a user turn — the same way: read the lead's current status
+   the unit is quiet. Treat every wake — a pushed milestone, a relay
+   prompt, a wait dying, a user turn — the same way: read the lead's
+   current status
    (`herdr agent get lead-<N>`) and pane tail
    (`herdr agent read lead-<N> --source recent-unwrapped --lines 120`)
    for the newest `[unit <label>]` line first, since the transition may
    have happened while unwatched; act per [Unit reports](#unit-reports) on
    any line newer than the last one handled; then re-arm the relay for any
    unit still in flight whose watch fired or died. Duplicate or stale
-   relay prompts are normal (two units settling together, a timeout racing
-   a milestone); reading first makes them harmless — a wake with nothing
-   new to handle just re-arms. Re-arm by state, not blindly: a default
+   prompts are normal (a push racing its relay, two units settling
+   together, a timeout racing a milestone); reading first makes them
+   harmless — a wake with nothing new to handle just re-arms. Re-arm by state, not blindly: a default
    wait armed while the pane already sits on `idle`/`done` fires
    immediately and loops — and so does a handled `blocked` pane, which
    the default wait also matches. If the lead is settled or sits on a
@@ -291,7 +301,10 @@ at that tab instead of creating a second unit for it.
 
 ### Sending a message to an agent
 
-Use `herdr agent prompt` — it submits the text plus an encoded Enter in one
+This ladder governs orchestrator→delegate sends (kickoffs, feedback,
+go-aheads); inbound milestone pushes skip it by design — prompting a
+working agent queues the message into its current turn. Use
+`herdr agent prompt` — it submits the text plus an encoded Enter in one
 operation, honoring bracketed-paste mode. Address the agent by the name
 given at `herdr agent start` (e.g. `lead-42`). A large multi-line message
 (any kickoff) can still land in the composer without its Enter taking, so a
@@ -334,12 +347,18 @@ You are the lead agent for this work unit in a dedicated Herdr tab.
 Issues in this unit: <#N[, #M, ...]> — implement them all on this branch and
 ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
-Milestones: the orchestrator watches THIS pane — do not type into any other
-pane. Report a milestone by ending your reply with a single line:
-  [unit <label>] <kind>: <one line>
-<kind> is ready (work complete and committed), shipped (PR URL, CI state),
-or blocked (the decision you need). Then stop and wait; the orchestrator
-reads it here.
+Milestones: report each one by pushing it to the orchestrator the moment
+you hit it —
+  herdr agent prompt <orchestrator pane id> "[unit <label>] <kind>: <detail>"
+— push unconditionally, even if the orchestrator is mid-turn (the prompt
+queues); also end your reply in THIS pane with that same [unit <label>]
+line (the orchestrator's fallback watch reads it here if the push is
+lost). <kind> and its <detail>:
+  ready — the commit SHA, then per issue: what changed and where.
+  shipped — PR URL and CI state.
+  blocked — the exact decision you need.
+Then stop and wait. The orchestrator's pane is the ONLY other pane you
+ever prompt, and only with [unit <label>] milestone lines.
 
 Transport discipline: this pane's idle/working state IS the coordination
 channel — a pane held on working starves inbound messages. Between work
@@ -360,15 +379,13 @@ units the suggested order and why>
 3. When the work is complete (pair: accepted by both), report ready and
    wait. Report ready only after all work is committed on the branch —
    clean `git status`, nothing untracked or staged. The orchestrator
-   reviews the diff and either sends feedback (address it, report ready
-   again) or the go-ahead.
-4. On go-ahead, run the ship-it skill: its review gate is a fresh review
-   of the final diff — pair acceptance does not satisfy it — and must
-   leave its `## Dual-review` receipt in the PR body. This unit's graded
-   gate: <dual — full dual review + simplify | codex-only — a single
-   Codex review, skip Claude simplify and review | claude-only — Claude
-   simplify then a single Claude review>; the receipt names the reviews
-   that ran. Open the PR
+   scope-checks the branch and either sends scope feedback (address it,
+   report ready again) or the go-ahead.
+4. On go-ahead, run the ship-it skill with this unit's graded review
+   gate: <dual | codex-only | claude-only> (ship-it defines the levels).
+   Its gate is a fresh review of the final diff — pair acceptance does
+   not satisfy it — and must leave its `## Dual-review` receipt in the
+   PR body. Open the PR
    (reference every issue: "Closes #N, closes #M"). If the unit changes
    visible UI, include before/after screenshots in the PR body — the user
    reviews design personally. Wait for green CI, then report shipped.
@@ -394,9 +411,10 @@ Issue #<N>: <title>
    routing. Later summaries carry any restaff (guardrail 3) with its reason
    and each unit's valid-finding count from its dual-review receipt — the
    user's calibration data for the solo/pair and model defaults.
-2. End the turn after the summary, but only with a live relay (phase 3
-   step 5) armed per in-flight unit — the relays prompt this pane when a
-   unit settles, which is what replaces polling. Every wake follows that
+2. End the turn after the summary, but only with a live backstop relay
+   (phase 3 step 5) armed per in-flight unit — leads push their own
+   milestones into this pane, and the relays cover a lead that dies
+   silently; together they replace polling. Every wake follows that
    step's protocol: read current status and pane tail first, act, re-arm.
 
 Done when every unit is live in its own tab and the user has the summary,
@@ -404,25 +422,35 @@ or each failed unit has a per-unit failure report naming the failed step.
 
 ## Unit reports
 
-Milestones arrive as relay prompts (phase 3 step 5) — read the named
-lead's pane tail for the newest `[unit <label>]` line — or, rarely, as
-pasted `[unit` input.
-Confirm the label matches an in-flight unit in this workspace (run a fresh
-phase 0 survey if the map is stale or missing), then act by kind:
+Milestones arrive as `[unit` prompts pushed by a lead, or as backstop
+relay prompts (phase 3 step 5). Either way the prompt is a claim, not
+evidence: confirm the label matches an in-flight unit in this workspace
+(run a fresh phase 0 survey if the map is stale or missing) and read that
+lead's pane tail for its newest `[unit <label>]` line before acting — a
+label matching no unit is ignored and reported to the user. Handled-ness
+is read from the live session, never from memory — a fresh orchestrator
+must not re-fire on stale lines: a milestone is handled when the
+orchestrator's response to it appears later in that pane (the go-ahead
+quoting its SHA, scope feedback, a hold acknowledgment, an answer to a
+`blocked`); a `shipped` on the `auto` path is handled when its PR is
+merged. Then act by kind:
 
 - `ready` — the unit's work is complete (pair: accepted by both). For a
-  non-default PR base, first
-  re-sync the base with main (phase 3 step 2) so the review diff matches
-  what the PR will show. Review the unit's diff yourself
-  (`git -C <worktree> diff <merge-base>`) against the issues' intent — this
-  is where the orchestrator's intelligence pays: correctness, scope, missed
-  requirements. Re-grade the merge policy from what the diff actually
-  touches: a unit whose work reached a hold surface (sensitive paths,
-  visible UI) the issue never mentioned flips to `hold` now, whatever
-  phase 2 graded. Findings → [send](#sending-a-message-to-an-agent) them to
-  the lead as feedback and await the next ready. Clean → send the go-ahead
-  (run the ship-it skill, then report shipped) and tell the user the unit is
-  shipping.
+  non-default PR base, first re-sync the base with main (phase 3 step 2).
+  Scope-scan, don't review — quality is ship-it's gate (guardrail 3):
+  from the issues, the lead's ready summary, and
+  `git -C <worktree> diff --stat <merge-base>`, confirm the solution
+  points in the right direction and covers the scope — files where the
+  issues point, no unexplained surfaces, nothing obviously missing. Re-grade the merge policy from the paths touched: a
+  unit that reached a hold surface (sensitive paths, visible UI) the
+  issue never mentioned flips to `hold` now, whatever phase 2 graded.
+  Scope wrong → [send](#sending-a-message-to-an-agent) it to the lead as
+  feedback and await the next ready. Scope sane → record the approved
+  SHA (`git -C <worktree> rev-parse HEAD`) and quote it in the go-ahead
+  message (run the ship-it skill at the unit's graded gate, then report
+  shipped) — the ship-delta check at shipped diffs from it, and quoting
+  it in the pane makes it recoverable by a fresh orchestrator. Tell the
+  user the unit is shipping.
 - `shipped` — verify the PR body carries the `## Dual-review` receipt and
   that it matches the unit's graded review gate (`references/models.md`):
   a degraded gate's receipt legitimately names a single review, and a
@@ -434,7 +462,7 @@ phase 0 survey if the map is stale or missing), then act by kind:
   ship-it's own review loop grows the branch after the go-ahead, and the
   orchestrator is its only reader with scope authority. Fixes to review
   findings pass; new files, new machinery, or net growth beyond the
-  approved diff goes back through ready-review before any merge. With the
+  approved scope goes back through the ready cycle before any merge. With the
   receipt and an accepted ship delta, confirm required checks are green
   (`gh pr checks`); red or pending means not shipped — send the unit back
   per ship-it. Green, by the unit's merge policy:
@@ -453,7 +481,9 @@ phase 0 survey if the map is stale or missing), then act by kind:
     merged PR URL and what shipped. Merge only PRs this run's units
     opened, into their intended base.
   - `hold` → for a UI unit first confirm the PR body carries before/after
-    screenshots; missing ones go back to the lead. Then raise a toast with
+    screenshots; missing ones go back to the lead. Acknowledge the hold
+    to the lead in one line (holding for user review — also the handled
+    marker in its pane), then raise a toast with
     the PR URL and why it holds (risk surface, or UI awaiting design
     feedback) and wait. The user's feedback returns to the lead as another
     ready cycle; their OK flips the unit onto the `auto` path above.
