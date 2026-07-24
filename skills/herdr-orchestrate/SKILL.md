@@ -44,18 +44,20 @@ names, and issue references literal.
    where the flag exists; where it doesn't (e.g. `herdr agent list`), filter
    the output to the recorded `workspace_id` before acting on any row.
 2. One work unit per tab; address only panes this run created.
-3. The unit's agents implement; the orchestrator aims and reviews (kickoff
-   pointers, ready-review feedback) but never edits the unit's code. Its
-   ready-review advises — it does not replace the ship-it gate. Final
+3. The unit's agents implement and ship-it's gate reviews quality; the
+   orchestrator aims (kickoff pointers) and holds **scope authority** — it
+   never edits the unit's code and never runs its own cold review: a
+   second review before the gate only adds latency and burns orchestrator
+   context, so its checkpoints are `--stat`-level scope scans. Final
    approval and the merge are the orchestrator's, by standing user
    authorization, and only for a unit PR carrying the dual-review receipt
-   with green required checks. When ready-review shows the graded model's
-   output missing the bar, escalate: restaff the unit on a smarter model
-   (`references/models.md`) instead of polishing weak work by feedback.
-   This holds at every checkpoint — ready-review, ship delta, shipped:
-   substandard work returns to the unit or a restaffed smarter one until it
-   is right; a follow-up issue records genuinely out-of-scope findings,
-   never quality debt the unit itself created.
+   with green required checks. When the gate receipt, CI, or a scope scan
+   shows the graded model's output missing the bar, escalate: restaff the
+   unit on a smarter model (`references/models.md`) instead of polishing
+   weak work by feedback. This holds at every checkpoint — ready, ship
+   delta, shipped: substandard work returns to the unit or a restaffed
+   smarter one until it is right; a follow-up issue records genuinely
+   out-of-scope findings, never quality debt the unit itself created.
 4. Pair units: the delegate's `herdr-pair` run owns the pair protocol. Start
    the pair's two agents yourself at the unit's graded models and effort —
    `herdr-pair` adopts an existing peer and only spawns (at default effort
@@ -82,8 +84,8 @@ Then branch on the input:
 
 - **Status** — "how are things going", "what needs me": jump to
   [Status report](#status-report).
-- **Unit report** — a watch on a lead pane fired, or input starts with
-  `[unit`: jump to [Unit reports](#unit-reports).
+- **Unit report** — input starts with `[unit` (a lead's push or a backstop
+  relay): jump to [Unit reports](#unit-reports).
 - **Delegation** — continue with triage; in-flight issues are already taken.
 
 ## Phase 1 — Triage
@@ -150,7 +152,7 @@ command all live there; run that command once per invocation and grade every
 unit against its output — the same reading also grades the unit's
 **review gate** (`dual` by default; a pool without headroom degrades it,
 rules in the same reference; ship-it runs the gate at the graded level).
-Solo is the default: one implementer, with the orchestrator's ready-review
+Solo is the default: one implementer, with the orchestrator's scope checks
 and the graded ship-it gate unchanged by staffing. A pair
 needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
 mistake that would be expensive, or scopes that genuinely parallelize — and
@@ -260,10 +262,9 @@ at that tab instead of creating a second unit for it.
    leaves the hour-long wait in the foreground (your shell tool's own
    background mode also works on the grouped command). The `;` is
    deliberate: timeout and death relay too, so a dead watch wakes you
-   instead of going quiet. A push and its relay double-firing is the
-   design working, not a bug — reading first dedupes. Reserve a bare
-   `--until <state>` wait (no relay) for in-turn checks, e.g.
-   `--until working` to confirm a kickoff actually started.
+   instead of going quiet. Reserve a bare `--until <state>` wait (no
+   relay) for in-turn checks, e.g. `--until working` to confirm a kickoff
+   actually started.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
@@ -276,9 +277,9 @@ at that tab instead of creating a second unit for it.
    have happened while unwatched; act per [Unit reports](#unit-reports) on
    any line newer than the last one handled; then re-arm the relay for any
    unit still in flight whose watch fired or died. Duplicate or stale
-   relay prompts are normal (two units settling together, a timeout racing
-   a milestone); reading first makes them harmless — a wake with nothing
-   new to handle just re-arms. Re-arm by state, not blindly: a default
+   prompts are normal (a push racing its relay, two units settling
+   together, a timeout racing a milestone); reading first makes them
+   harmless — a wake with nothing new to handle just re-arms. Re-arm by state, not blindly: a default
    wait armed while the pane already sits on `idle`/`done` fires
    immediately and loops — and so does a handled `blocked` pane, which
    the default wait also matches. If the lead is settled or sits on a
@@ -369,15 +370,13 @@ units the suggested order and why>
 3. When the work is complete (pair: accepted by both), report ready and
    wait. Report ready only after all work is committed on the branch —
    clean `git status`, nothing untracked or staged. The orchestrator
-   reviews the diff and either sends feedback (address it, report ready
-   again) or the go-ahead.
-4. On go-ahead, run the ship-it skill: its review gate is a fresh review
-   of the final diff — pair acceptance does not satisfy it — and must
-   leave its `## Dual-review` receipt in the PR body. This unit's graded
-   gate: <dual — full dual review + simplify | codex-only — a single
-   Codex review, skip Claude simplify and review | claude-only — Claude
-   simplify then a single Claude review>; the receipt names the reviews
-   that ran. Open the PR
+   scope-checks the branch and either sends scope feedback (address it,
+   report ready again) or the go-ahead.
+4. On go-ahead, run the ship-it skill with this unit's graded review
+   gate: <dual | codex-only | claude-only> (ship-it defines the levels).
+   Its gate is a fresh review of the final diff — pair acceptance does
+   not satisfy it — and must leave its `## Dual-review` receipt in the
+   PR body. Open the PR
    (reference every issue: "Closes #N, closes #M"). If the unit changes
    visible UI, include before/after screenshots in the PR body — the user
    reviews design personally. Wait for green CI, then report shipped.
@@ -423,18 +422,17 @@ label matching no unit is ignored and reported to the user. Then act by
 kind:
 
 - `ready` — the unit's work is complete (pair: accepted by both). For a
-  non-default PR base, first
-  re-sync the base with main (phase 3 step 2) so the review diff matches
-  what the PR will show. Review the unit's diff yourself
-  (`git -C <worktree> diff <merge-base>`) against the issues' intent — this
-  is where the orchestrator's intelligence pays: correctness, scope, missed
-  requirements. Re-grade the merge policy from what the diff actually
-  touches: a unit whose work reached a hold surface (sensitive paths,
-  visible UI) the issue never mentioned flips to `hold` now, whatever
-  phase 2 graded. Findings → [send](#sending-a-message-to-an-agent) them to
-  the lead as feedback and await the next ready. Clean → send the go-ahead
-  (run the ship-it skill, then report shipped) and tell the user the unit is
-  shipping.
+  non-default PR base, first re-sync the base with main (phase 3 step 2).
+  Scope-scan, don't review — quality is ship-it's gate (guardrail 3):
+  read `git -C <worktree> diff --stat <merge-base>` against the issues'
+  intent — files where the issues point, no unexplained surfaces, nothing
+  obviously missing. Re-grade the merge policy from the paths touched: a
+  unit that reached a hold surface (sensitive paths, visible UI) the
+  issue never mentioned flips to `hold` now, whatever phase 2 graded.
+  Scope wrong → [send](#sending-a-message-to-an-agent) it to the lead as
+  feedback and await the next ready. Scope sane → send the go-ahead (run
+  the ship-it skill at the unit's graded gate, then report shipped) and
+  tell the user the unit is shipping.
 - `shipped` — verify the PR body carries the `## Dual-review` receipt and
   that it matches the unit's graded review gate (`references/models.md`):
   a degraded gate's receipt legitimately names a single review, and a
@@ -446,7 +444,7 @@ kind:
   ship-it's own review loop grows the branch after the go-ahead, and the
   orchestrator is its only reader with scope authority. Fixes to review
   findings pass; new files, new machinery, or net growth beyond the
-  approved diff goes back through ready-review before any merge. With the
+  approved scope goes back through the ready cycle before any merge. With the
   receipt and an accepted ship delta, confirm required checks are green
   (`gh pr checks`); red or pending means not shipped — send the unit back
   per ship-it. Green, by the unit's merge policy:
