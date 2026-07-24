@@ -236,14 +236,18 @@ at that tab instead of creating a second unit for it.
    including its send-confirmation and recovery ladder — a kickoff does
    not count as sent until the lead is `working`. The unit is live when
    the lead reports working.
-5. **Watch.** Reports arrive by watching, not by delegates typing into your
-   pane. `herdr agent wait` only *detects* — its exit does not start an
-   orchestrator turn in every runtime — so each watch is a **relay**: the
-   wait chains into `herdr agent prompt` at the orchestrator's own pane
-   (`$HERDR_PANE_ID`, and only that pane), which starts a real turn
-   everywhere. Without `--until`, the wait fires on the first of `idle`,
-   `done`, or `blocked` (a background tab lands on `done`, a focused one
-   on `idle`):
+5. **Safety net.** The primary report channel is the lead's own push: the
+   kickoff hands it the orchestrator's pane ID and it prompts a
+   `[unit <label>]` milestone straight into this pane the moment it hits
+   one — zero latency, no timeout to tune. The watch below is only the
+   backstop for a lead that dies or settles silently without pushing, so
+   its timeout is a generous ceiling, not a pacing choice. `herdr agent
+   wait` only *detects* — its exit does not start an orchestrator turn in
+   every runtime — so the backstop is a **relay**: the wait chains into
+   `herdr agent prompt` at the orchestrator's own pane (`$HERDR_PANE_ID`,
+   and only that pane), which starts a real turn everywhere. Without
+   `--until`, the wait fires on the first of `idle`, `done`, or `blocked`
+   (a background tab lands on `done`, a focused one on `idle`):
 
    ```bash
    (herdr agent wait lead-<N> --timeout 3600000; \
@@ -256,14 +260,16 @@ at that tab instead of creating a second unit for it.
    leaves the hour-long wait in the foreground (your shell tool's own
    background mode also works on the grouped command). The `;` is
    deliberate: timeout and death relay too, so a dead watch wakes you
-   instead of going quiet. Reserve a bare `--until <state>` wait (no
-   relay) for in-turn checks, e.g. `--until working` to confirm a kickoff
-   actually started.
+   instead of going quiet. A push and its relay double-firing is the
+   design working, not a bug — reading first dedupes. Reserve a bare
+   `--until <state>` wait (no relay) for in-turn checks, e.g.
+   `--until working` to confirm a kickoff actually started.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
-   the unit is quiet. Treat every wake — a relay prompt arriving, a wait
-   dying, a user turn — the same way: read the lead's current status
+   the unit is quiet. Treat every wake — a pushed milestone, a relay
+   prompt, a wait dying, a user turn — the same way: read the lead's
+   current status
    (`herdr agent get lead-<N>`) and pane tail
    (`herdr agent read lead-<N> --source recent-unwrapped --lines 120`)
    for the newest `[unit <label>]` line first, since the transition may
@@ -334,12 +340,15 @@ You are the lead agent for this work unit in a dedicated Herdr tab.
 Issues in this unit: <#N[, #M, ...]> — implement them all on this branch and
 ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
-Milestones: the orchestrator watches THIS pane — do not type into any other
-pane. Report a milestone by ending your reply with a single line:
-  [unit <label>] <kind>: <one line>
+Milestones: report each one by pushing it to the orchestrator the moment
+you hit it —
+  herdr agent prompt <orchestrator pane id> "[unit <label>] <kind>: <one line>"
+— and also end your reply in THIS pane with that same [unit <label>] line
+(the orchestrator's fallback watch reads it here if the push is lost).
 <kind> is ready (work complete and committed), shipped (PR URL, CI state),
-or blocked (the decision you need). Then stop and wait; the orchestrator
-reads it here.
+or blocked (the decision you need). Then stop and wait. The orchestrator's
+pane is the ONLY other pane you ever prompt, and only with [unit <label>]
+milestone lines.
 
 Transport discipline: this pane's idle/working state IS the coordination
 channel — a pane held on working starves inbound messages. Between work
@@ -394,9 +403,10 @@ Issue #<N>: <title>
    routing. Later summaries carry any restaff (guardrail 3) with its reason
    and each unit's valid-finding count from its dual-review receipt — the
    user's calibration data for the solo/pair and model defaults.
-2. End the turn after the summary, but only with a live relay (phase 3
-   step 5) armed per in-flight unit — the relays prompt this pane when a
-   unit settles, which is what replaces polling. Every wake follows that
+2. End the turn after the summary, but only with a live backstop relay
+   (phase 3 step 5) armed per in-flight unit — leads push their own
+   milestones into this pane, and the relays cover a lead that dies
+   silently; together they replace polling. Every wake follows that
    step's protocol: read current status and pane tail first, act, re-arm.
 
 Done when every unit is live in its own tab and the user has the summary,
@@ -404,11 +414,13 @@ or each failed unit has a per-unit failure report naming the failed step.
 
 ## Unit reports
 
-Milestones arrive as relay prompts (phase 3 step 5) — read the named
-lead's pane tail for the newest `[unit <label>]` line — or, rarely, as
-pasted `[unit` input.
-Confirm the label matches an in-flight unit in this workspace (run a fresh
-phase 0 survey if the map is stale or missing), then act by kind:
+Milestones arrive as `[unit` prompts pushed by a lead, or as backstop
+relay prompts (phase 3 step 5). Either way the prompt is a claim, not
+evidence: confirm the label matches an in-flight unit in this workspace
+(run a fresh phase 0 survey if the map is stale or missing) and read that
+lead's pane tail for its newest `[unit <label>]` line before acting — a
+label matching no unit is ignored and reported to the user. Then act by
+kind:
 
 - `ready` — the unit's work is complete (pair: accepted by both). For a
   non-default PR base, first
