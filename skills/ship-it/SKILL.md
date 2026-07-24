@@ -25,7 +25,13 @@ request bot reviews, or wait for them.
    and keep its fixes in the working tree for the gate to review. Skip it,
    like the gate, for docs/markdown/config-only diffs.
 3. **Local dual-review gate** (skip only for diffs touching exclusively
-   docs/markdown/config with no runtime surface). This is a fresh adversarial
+   docs/markdown/config with no runtime surface). **Graded gate:** when the
+   invocation names a review gate graded by an orchestrator, run that level
+   instead of the full dual gate — `codex-only`: the Codex native review
+   alone, and skip the step 2 simplify pass (it spends Claude tokens);
+   `claude-only`: simplify, then the Claude native review alone. The
+   receipt names the graded gate. Everything else in this step applies to
+   whichever review(s) run. This is a fresh adversarial
    review of the FINAL diff — reviews that happened while writing the code
    (pair acceptance, impeccable, in-flight feedback) are a different thing
    and leave this gate unrun:

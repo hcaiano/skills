@@ -78,7 +78,10 @@ snapshot's age; both windows are 7 days (168 h).
 
 Ship-it's full gate spends both pools — a Claude review plus simplify, and
 a Codex review — so grade each unit's **review gate** from the same
-usage-state reading as its models:
+usage-state reading as its models. A pool is **out of headroom** when its
+`used_percent` is 90 or higher, or its CLI is observed refusing or
+rate-limiting at start; a null pool never degrades the gate by itself —
+degrade on evidence, not absence of signal:
 
 - `dual` (default) — both pools have headroom: dual review + simplify,
   unchanged.
@@ -86,8 +89,9 @@ usage-state reading as its models:
   satisfies the gate; Claude simplify and review are skipped.
 - `claude-only` — the Codex pool is out of headroom: run Claude simplify,
   then a single Claude code review.
-- The one pool a degraded gate leans on is also out → that is the
-  both-pools-exhausted case above: queue the unit.
+- Both pools out → the both-pools-exhausted rule above: queue the unit. A
+  genuinely urgent unit that runs anyway takes the single-review gate of
+  the pool opposite its implementer, keeping the review cross-pool.
 
 A degraded gate is a capacity decision, not a quality discount — the
 orchestrator's own ready-review and ship-delta review still run in full.

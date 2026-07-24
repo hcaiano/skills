@@ -149,8 +149,9 @@ Then grade each unit's **staffing and model(s)** from
 command all live there; run that command once per invocation and grade every
 unit against its output — the same reading also grades the unit's
 **review gate** (`dual` by default; a pool without headroom degrades it,
-rules in the same reference). Solo is the default: one implementer, with the
-orchestrator's ready-review and ship-it's dual-review gate unchanged. A pair
+rules in the same reference; ship-it runs the gate at the graded level).
+Solo is the default: one implementer, with the orchestrator's ready-review
+and the graded ship-it gate unchanged by staffing. A pair
 needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
 mistake that would be expensive, or scopes that genuinely parallelize — and
 is always cross-pool: one Claude + one Codex model.
@@ -245,15 +246,19 @@ at that tab instead of creating a second unit for it.
    on `idle`):
 
    ```bash
-   herdr agent wait lead-<N> --timeout 3600000; \
+   (herdr agent wait lead-<N> --timeout 3600000; \
      herdr agent prompt "$HERDR_PANE_ID" \
-       "[unit <label>] watch fired for lead-<N> — read its pane and act"
+       "[unit <label>] watch fired for lead-<N> — read its pane and act") &
    ```
 
-   Arm one relay per unit as a background process. The `;` is deliberate:
-   timeout and death relay too, so a dead watch wakes you instead of going
-   quiet. Reserve a bare `--until <state>` wait (no relay) for in-turn
-   checks, e.g. `--until working` to confirm a kickoff actually started.
+   Arm one relay per unit, backgrounding the grouped whole — the
+   parentheses matter: a bare trailing `&` backgrounds only the prompt and
+   leaves the hour-long wait in the foreground (your shell tool's own
+   background mode also works on the grouped command). The `;` is
+   deliberate: timeout and death relay too, so a dead watch wakes you
+   instead of going quiet. Reserve a bare `--until <state>` wait (no
+   relay) for in-turn checks, e.g. `--until working` to confirm a kickoff
+   actually started.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
@@ -269,19 +274,20 @@ at that tab instead of creating a second unit for it.
    a milestone); reading first makes them harmless — a wake with nothing
    new to handle just re-arms. Re-arm by state, not blindly: a default
    wait armed while the pane already sits on `idle`/`done` fires
-   immediately and loops. If the lead is already settled and its newest
-   milestone is handled, arm the chained form — wait for the next turn to
-   start, then for it to settle, then relay:
+   immediately and loops — and so does a handled `blocked` pane, which
+   the default wait also matches. If the lead is settled or sits on a
+   handled `blocked`, arm the chained form — wait for the next turn to
+   start (a `blocked` pane's next turn starts when the user answers in
+   the tab), then for it to settle, then relay:
 
    ```bash
    (herdr agent wait lead-<N> --until working --timeout 3600000 \
-     && herdr agent wait lead-<N> --timeout 3600000); \
+     && herdr agent wait lead-<N> --timeout 3600000; \
      herdr agent prompt "$HERDR_PANE_ID" \
-       "[unit <label>] watch fired for lead-<N> — read its pane and act"
+       "[unit <label>] watch fired for lead-<N> — read its pane and act") &
    ```
 
-   Only a pane currently `working` (or `blocked`) gets the default-wait
-   relay.
+   Only a pane currently `working` gets the default-wait relay.
 
 ### Sending a message to an agent
 
@@ -419,9 +425,11 @@ phase 0 survey if the map is stale or missing), then act by kind:
   shipping.
 - `shipped` — verify the PR body carries the `## Dual-review` receipt and
   that it matches the unit's graded review gate (`references/models.md`):
-  a degraded gate's receipt legitimately names a single review. A missing
-  receipt, or one thinner than the graded gate, means the gate did not
-  run — send the unit back to run it, and tell the user. Then review the **ship delta** — the commits between the SHA
+  a degraded gate's receipt legitimately names a single review, and a
+  receipt recording ship-it's own docs-only skip is complete for a diff
+  that really is docs/markdown/config-only. A missing receipt, or one
+  thinner than the graded gate without such a recorded reason, means the
+  gate did not run — send the unit back to run it, and tell the user. Then review the **ship delta** — the commits between the SHA
   approved at ready and the PR head (`git diff <approved>..<head> --stat`):
   ship-it's own review loop grows the branch after the go-ahead, and the
   orchestrator is its only reader with scope authority. Fixes to review
