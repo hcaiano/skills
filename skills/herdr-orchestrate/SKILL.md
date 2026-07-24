@@ -394,7 +394,13 @@ phase 0 survey if the map is stale or missing), then act by kind:
   shipping.
 - `shipped` — verify the PR body carries the `## Dual-review` receipt; if it
   is missing the gate did not run — send the unit back to run it, and tell
-  the user. With the receipt, confirm required checks are green
+  the user. Then review the **ship delta** — the commits between the SHA
+  approved at ready and the PR head (`git diff <approved>..<head> --stat`):
+  ship-it's own review loop grows the branch after the go-ahead, and the
+  orchestrator is its only reader with scope authority. Fixes to review
+  findings pass; new files, new machinery, or net growth beyond the
+  approved diff goes back through ready-review before any merge. With the
+  receipt and an accepted ship delta, confirm required checks are green
   (`gh pr checks`); red or pending means not shipped — send the unit back
   per ship-it. Green, by the unit's merge policy:
   - `auto` → merge the PR in the repo's own merge style (recent `git log`
