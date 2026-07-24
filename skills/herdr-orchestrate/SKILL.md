@@ -147,7 +147,9 @@ from what the issues demand:
 Then grade each unit's **staffing and model(s)** from
 `references/models.md` — model table, selection rules, and the usage-state
 command all live there; run that command once per invocation and grade every
-unit against its output. Solo is the default: one implementer, with the
+unit against its output — the same reading also grades the unit's
+**review gate** (`dual` by default; a pool without headroom degrades it,
+rules in the same reference). Solo is the default: one implementer, with the
 orchestrator's ready-review and ship-it's dual-review gate unchanged. A pair
 needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
 mistake that would be expensive, or scopes that genuinely parallelize — and
@@ -166,7 +168,8 @@ them: report them in the split, skip their phase 3, and leave their issues
 free — any invocation after the reset triages and delegates them normally.
 
 Report the split — one line per unit: issues, one-line rationale, proposed
-branch name, effort, staffing, model(s), merge policy — and continue
+branch name, effort, staffing, model(s), merge policy, review gate — and
+continue
 straight into phase 3: the split informs, it does not gate. A user message
 contradicting it at any point wins — regroup or restaff the affected units
 and carry on.
@@ -233,40 +236,52 @@ at that tab instead of creating a second unit for it.
    not count as sent until the lead is `working`. The unit is live when
    the lead reports working.
 5. **Watch.** Reports arrive by watching, not by delegates typing into your
-   pane. One background wait per lead covers every settled state — without
-   `--until`, `herdr agent wait` fires on the first of `idle`, `done`, or
-   `blocked` (a background tab lands on `done`, a focused one on `idle`):
+   pane. `herdr agent wait` only *detects* — its exit does not start an
+   orchestrator turn in every runtime — so each watch is a **relay**: the
+   wait chains into `herdr agent prompt` at the orchestrator's own pane
+   (`$HERDR_PANE_ID`, and only that pane), which starts a real turn
+   everywhere. Without `--until`, the wait fires on the first of `idle`,
+   `done`, or `blocked` (a background tab lands on `done`, a focused one
+   on `idle`):
 
    ```bash
-   herdr agent wait lead-<N> --timeout 3600000
+   herdr agent wait lead-<N> --timeout 3600000; \
+     herdr agent prompt "$HERDR_PANE_ID" \
+       "[unit <label>] watch fired for lead-<N> — read its pane and act"
    ```
 
-   Arm it as a background process, one per unit. Reserve `--until <state>`
-   for state-specific checks, e.g. `--until working` to confirm a kickoff
-   actually started a turn.
+   Arm one relay per unit as a background process. The `;` is deliberate:
+   timeout and death relay too, so a dead watch wakes you instead of going
+   quiet. Reserve a bare `--until <state>` wait (no relay) for in-turn
+   checks, e.g. `--until working` to confirm a kickoff actually started.
 
    Watches are mortal, and dying is their normal case on units that run
    for hours: a timeout exits 1, session events kill them — neither means
-   the unit is quiet. Treat every wake — the wait firing, the wait dying, a
-   user turn — the same way: read the lead's current status
+   the unit is quiet. Treat every wake — a relay prompt arriving, a wait
+   dying, a user turn — the same way: read the lead's current status
    (`herdr agent get lead-<N>`) and pane tail
    (`herdr agent read lead-<N> --source recent-unwrapped --lines 120`)
    for the newest `[unit <label>]` line first, since the transition may
    have happened while unwatched; act per [Unit reports](#unit-reports) on
-   any line newer than the last one handled; then re-arm the wait for any
-   unit still in flight whose wait fired or died. Re-arm by state, not
-   blindly: a default wait armed while the pane already sits on
-   `idle`/`done` fires immediately and loops. If the lead is already
-   settled and its newest milestone is handled, arm the chained form —
-   wait for the next turn to start, then for it to settle:
+   any line newer than the last one handled; then re-arm the relay for any
+   unit still in flight whose watch fired or died. Duplicate or stale
+   relay prompts are normal (two units settling together, a timeout racing
+   a milestone); reading first makes them harmless — a wake with nothing
+   new to handle just re-arms. Re-arm by state, not blindly: a default
+   wait armed while the pane already sits on `idle`/`done` fires
+   immediately and loops. If the lead is already settled and its newest
+   milestone is handled, arm the chained form — wait for the next turn to
+   start, then for it to settle, then relay:
 
    ```bash
-   herdr agent wait lead-<N> --until working --timeout 3600000 \
-     && herdr agent wait lead-<N> --timeout 3600000
+   (herdr agent wait lead-<N> --until working --timeout 3600000 \
+     && herdr agent wait lead-<N> --timeout 3600000); \
+     herdr agent prompt "$HERDR_PANE_ID" \
+       "[unit <label>] watch fired for lead-<N> — read its pane and act"
    ```
 
-   Only a pane currently `working` (or `blocked`) gets a bare default
-   wait.
+   Only a pane currently `working` (or `blocked`) gets the default-wait
+   relay.
 
 ### Sending a message to an agent
 
@@ -341,9 +356,13 @@ units the suggested order and why>
    clean `git status`, nothing untracked or staged. The orchestrator
    reviews the diff and either sends feedback (address it, report ready
    again) or the go-ahead.
-4. On go-ahead, run the ship-it skill: its dual-review gate is a fresh
-   review of the final diff — pair acceptance does not satisfy it — and
-   must leave its `## Dual-review` receipt in the PR body. Open the PR
+4. On go-ahead, run the ship-it skill: its review gate is a fresh review
+   of the final diff — pair acceptance does not satisfy it — and must
+   leave its `## Dual-review` receipt in the PR body. This unit's graded
+   gate: <dual — full dual review + simplify | codex-only — a single
+   Codex review, skip Claude simplify and review | claude-only — Claude
+   simplify then a single Claude review>; the receipt names the reviews
+   that ran. Open the PR
    (reference every issue: "Closes #N, closes #M"). If the unit changes
    visible UI, include before/after screenshots in the PR body — the user
    reviews design personally. Wait for green CI, then report shipped.
@@ -363,23 +382,25 @@ Issue #<N>: <title>
 
 1. After the last kickoff, summarize for the user: one line per unit — tab
    label, issues, branch, worktree path, effort, staffing, model(s), merge
-   policy, status — plus the usage-state JSON the grading used, verbatim: a
+   policy, review gate, status — plus the usage-state JSON the grading used,
+   verbatim: a
    nonsense reading must be visible to the user, never silently steering
    routing. Later summaries carry any restaff (guardrail 3) with its reason
    and each unit's valid-finding count from its dual-review receipt — the
    user's calibration data for the solo/pair and model defaults.
-2. End the turn after the summary: the background watches from phase 3
-   step 5 wake you when a unit reports — there is nothing to poll. Every
-   wake follows that step's protocol: read current status and pane tail
-   first, act, re-arm.
+2. End the turn after the summary, but only with a live relay (phase 3
+   step 5) armed per in-flight unit — the relays prompt this pane when a
+   unit settles, which is what replaces polling. Every wake follows that
+   step's protocol: read current status and pane tail first, act, re-arm.
 
 Done when every unit is live in its own tab and the user has the summary,
 or each failed unit has a per-unit failure report naming the failed step.
 
 ## Unit reports
 
-Milestones arrive when a watch on a lead pane fires — read that pane's tail
-for the newest `[unit <label>]` line — or, rarely, as pasted `[unit` input.
+Milestones arrive as relay prompts (phase 3 step 5) — read the named
+lead's pane tail for the newest `[unit <label>]` line — or, rarely, as
+pasted `[unit` input.
 Confirm the label matches an in-flight unit in this workspace (run a fresh
 phase 0 survey if the map is stale or missing), then act by kind:
 
@@ -396,9 +417,11 @@ phase 0 survey if the map is stale or missing), then act by kind:
   the lead as feedback and await the next ready. Clean → send the go-ahead
   (run the ship-it skill, then report shipped) and tell the user the unit is
   shipping.
-- `shipped` — verify the PR body carries the `## Dual-review` receipt; if it
-  is missing the gate did not run — send the unit back to run it, and tell
-  the user. Then review the **ship delta** — the commits between the SHA
+- `shipped` — verify the PR body carries the `## Dual-review` receipt and
+  that it matches the unit's graded review gate (`references/models.md`):
+  a degraded gate's receipt legitimately names a single review. A missing
+  receipt, or one thinner than the graded gate, means the gate did not
+  run — send the unit back to run it, and tell the user. Then review the **ship delta** — the commits between the SHA
   approved at ready and the PR head (`git diff <approved>..<head> --stat`):
   ship-it's own review loop grows the branch after the go-ahead, and the
   orchestrator is its only reader with scope authority. Fixes to review
