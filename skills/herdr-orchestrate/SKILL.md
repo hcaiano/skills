@@ -52,6 +52,10 @@ names, and issue references literal.
    with green required checks. When ready-review shows the graded model's
    output missing the bar, escalate: restaff the unit on a smarter model
    (`references/models.md`) instead of polishing weak work by feedback.
+   This holds at every checkpoint — ready-review, ship delta, shipped:
+   substandard work returns to the unit or a restaffed smarter one until it
+   is right; a follow-up issue records genuinely out-of-scope findings,
+   never quality debt the unit itself created.
 4. Pair units: the delegate's `herdr-pair` run owns the pair protocol. Start
    the pair's two agents yourself at the unit's graded models and effort —
    `herdr-pair` adopts an existing peer and only spawns (at default effort
