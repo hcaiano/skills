@@ -33,8 +33,10 @@ names, and issue references literal.
   `HERDR_ENV=1`, and `HERDR_PANE_ID` set (the orchestrator must run inside
   Herdr). If any is missing, stop and say so.
 - Run from the project repository (or `cd` to the repo the user names).
-- Record the orchestrator's own location once (`herdr pane current`): its
-  `workspace_id` scopes everything this skill touches.
+- Before any other Herdr command, capture `herdr api snapshot`. Its focused
+  pane must contain an agent and its `foreground_cwd` must resolve to the
+  current repository root. Record that pane's `workspace_id` as the sole
+  workspace for this run; if any check fails, stop.
 
 ## Guardrails
 
