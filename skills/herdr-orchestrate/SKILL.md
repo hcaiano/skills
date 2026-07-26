@@ -87,8 +87,8 @@ Then branch on the input:
 
 - **Status** — "how are things going", "what needs me": jump to
   [Status report](#status-report).
-- **Unit report** — input starts with `[unit` (a lead's push or a backstop
-  relay): jump to [Unit reports](#unit-reports).
+- **Unit report** — input starts with `[unit` from a lead's push: jump to
+  [Unit reports](#unit-reports).
 - **Delegation** — continue with triage; in-flight issues are already taken.
 
 ## Phase 1 — Triage
@@ -241,63 +241,6 @@ at that tab instead of creating a second unit for it.
    including its send-confirmation and recovery ladder — a kickoff does
    not count as sent until the lead is `working`. The unit is live when
    the lead reports working.
-5. **Safety net.** The primary report channel is the lead's own push: the
-   kickoff hands it the orchestrator's pane ID and it prompts a
-   `[unit <label>]` milestone straight into this pane the moment it hits
-   one — zero latency, no timeout to tune. The watch below is only the
-   backstop for a lead that dies or settles silently without pushing, so
-   its timeout is a generous ceiling, not a pacing choice. `herdr agent
-   wait` only *detects* — its exit does not start an orchestrator turn in
-   every runtime — so the backstop is a **relay**: the wait chains into
-   `herdr agent prompt` at the orchestrator's own pane (`$HERDR_PANE_ID`,
-   and only that pane), which starts a real turn everywhere. Without
-   `--until`, the wait fires on the first of `idle`, `done`, or `blocked`
-   (a background tab lands on `done`, a focused one on `idle`):
-
-   ```bash
-   (herdr agent wait lead-<N> --timeout 3600000; \
-     herdr agent prompt "$HERDR_PANE_ID" \
-       "[unit <label>] watch fired for lead-<N> — read its pane and act") &
-   ```
-
-   Arm one relay per unit, backgrounding the grouped whole — the
-   parentheses matter: a bare trailing `&` backgrounds only the prompt and
-   leaves the hour-long wait in the foreground (your shell tool's own
-   background mode also works on the grouped command). The `;` is
-   deliberate: timeout and death relay too, so a dead watch wakes you
-   instead of going quiet. Reserve a bare `--until <state>` wait (no
-   relay) for in-turn checks, e.g. `--until working` to confirm a kickoff
-   actually started.
-
-   Watches are mortal, and dying is their normal case on units that run
-   for hours: a timeout exits 1, session events kill them — neither means
-   the unit is quiet. Treat every wake — a pushed milestone, a relay
-   prompt, a wait dying, a user turn — the same way: read the lead's
-   current status
-   (`herdr agent get lead-<N>`) and pane tail
-   (`herdr agent read lead-<N> --source recent-unwrapped --lines 120`)
-   for the newest `[unit <label>]` line first, since the transition may
-   have happened while unwatched; act per [Unit reports](#unit-reports) on
-   any line newer than the last one handled; then re-arm the relay for any
-   unit still in flight whose watch fired or died. Duplicate or stale
-   prompts are normal (a push racing its relay, two units settling
-   together, a timeout racing a milestone); reading first makes them
-   harmless — a wake with nothing new to handle just re-arms. Re-arm by state, not blindly: a default
-   wait armed while the pane already sits on `idle`/`done` fires
-   immediately and loops — and so does a handled `blocked` pane, which
-   the default wait also matches. If the lead is settled or sits on a
-   handled `blocked`, arm the chained form — wait for the next turn to
-   start (a `blocked` pane's next turn starts when the user answers in
-   the tab), then for it to settle, then relay:
-
-   ```bash
-   (herdr agent wait lead-<N> --until working --timeout 3600000 \
-     && herdr agent wait lead-<N> --timeout 3600000; \
-     herdr agent prompt "$HERDR_PANE_ID" \
-       "[unit <label>] watch fired for lead-<N> — read its pane and act") &
-   ```
-
-   Only a pane currently `working` gets the default-wait relay.
 
 ### Sending a message to an agent
 
@@ -351,9 +294,7 @@ Milestones: report each one by pushing it to the orchestrator the moment
 you hit it —
   herdr agent prompt <orchestrator pane id> "[unit <label>] <kind>: <detail>"
 — push unconditionally, even if the orchestrator is mid-turn (the prompt
-queues); also end your reply in THIS pane with that same [unit <label>]
-line (the orchestrator's fallback watch reads it here if the push is
-lost). <kind> and its <detail>:
+queues). <kind> and its <detail>:
   ready — the commit SHA, then per issue: what changed and where.
   shipped — PR URL and CI state.
   blocked — the exact decision you need.
@@ -401,7 +342,7 @@ Issue #<N>: <title>
 <repeat the block above for each additional issue in the unit>
 ```
 
-## Phase 4 — Report and monitor
+## Phase 4 — Report
 
 1. After the last kickoff, summarize for the user: one line per unit — tab
    label, issues, branch, worktree path, effort, staffing, model(s), merge
@@ -411,20 +352,13 @@ Issue #<N>: <title>
    routing. Later summaries carry any restaff (guardrail 3) with its reason
    and each unit's valid-finding count from its dual-review receipt — the
    user's calibration data for the solo/pair and model defaults.
-2. End the turn after the summary, but only with a live backstop relay
-   (phase 3 step 5) armed per in-flight unit — leads push their own
-   milestones into this pane, and the relays cover a lead that dies
-   silently; together they replace polling. Every wake follows that
-   step's protocol: read current status and pane tail first, act, re-arm.
-
 Done when every unit is live in its own tab and the user has the summary,
 or each failed unit has a per-unit failure report naming the failed step.
 
 ## Unit reports
 
-Milestones arrive as `[unit` prompts pushed by a lead, or as backstop
-relay prompts (phase 3 step 5). Either way the prompt is a claim, not
-evidence: confirm the label matches an in-flight unit in this workspace
+Milestones arrive only as `[unit` prompts pushed by a lead. The prompt is a
+claim, not evidence: confirm the label matches an in-flight unit in this workspace
 (run a fresh phase 0 survey if the map is stale or missing) and read that
 lead's pane tail for its newest `[unit <label>]` line before acting — a
 label matching no unit is ignored and reported to the user. Handled-ness
