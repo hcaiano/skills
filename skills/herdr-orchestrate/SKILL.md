@@ -28,24 +28,31 @@ names, and issue references literal.
 
 - `herdr` with the agent automation commands (`herdr agent start`,
   `herdr agent prompt`) and `gh` on `PATH`, `HERDR_ENV=1`, and
-  `HERDR_PANE_ID` set (the orchestrator must run inside Herdr). If any is
-  missing, stop and say so.
-- Run from the project repository (or `cd` to the repo the user names).
-- Before any other Herdr command, resolve the orchestrator's injected pane
-  explicitly with `herdr pane get "$HERDR_PANE_ID"`. Record the returned
-  `pane_id` as the report channel and its `workspace_id` as the sole workspace
-  for this run; if it fails, stop. Never discover or override this workspace
-  from UI focus, `herdr api snapshot`, `herdr pane current`, or
-  `herdr workspace list`.
+  `HERDR_PANE_ID` set. If any is missing, stop and say so.
+- Run from the task repository (or `cd` to the repo the user names).
+- For a new run, resolve the injected caller pane with
+  `herdr pane get "$HERDR_PANE_ID"`. If that syntax is unavailable, retry once
+  with `herdr pane current --current`. Both commands must resolve the caller,
+  never the pane focused in the UI.
+- Read only `herdr workspace get <workspace_id>` for its metadata and validate
+  the caller workspace against the task repository. A worktree uses its
+  `repo_root`; otherwise use the Git repository containing the returned pane
+  cwd. Then pin the returned `workspace_id` and `pane_id` for the whole run.
+- A unit milestone carries the pinned `workspace_id`; use it to resume the
+  run. User navigation never changes the pin and existing runs never resolve
+  focus again. A continuation without the pin stops.
+- Stop before any GitHub, Project, branch, worktree, tab, pane, agent, or
+  message mutation when caller resolution fails, repositories differ, or the
+  caller pane has no agent.
 
 ## Guardrails
 
-1. The recorded `workspace_id` is this skill's entire world. Other Herdr
-   workspaces belong to unrelated projects: never list, read, wait on, send
-   to, or create anything in them. Scope every command with `--workspace`
-   where the flag exists; where it doesn't (e.g. `herdr agent list`), filter
-   the output to the recorded `workspace_id` before acting on any row.
-2. One work unit per tab; address only panes this run created.
+1. The pinned `workspace_id` is this run's entire Herdr world. Use only
+   `workspace get <id>`, `tab list --workspace <id>`, and
+   `pane list --workspace <id>` for discovery. Every other tab, pane, and
+   agent command targets a workspace-qualified ID returned by those calls;
+   receiving another workspace's row is already an isolation failure.
+2. One work unit per tab; address only panes that unit created.
 3. The unit's agents implement and ship-it's gate reviews quality; the
    orchestrator aims (kickoff pointers) and holds **scope authority** — it
    never edits the unit's code and never reviews it: no invoking review
@@ -68,9 +75,15 @@ names, and issue references literal.
    `herdr-pair` adopts an existing peer and only spawns (at default effort
    and model) when one is missing.
 5. The project's own tooling (worktree script, triage skill, implement skill)
-   outranks any generic fallback in this file.
-6. A failed unit stops at the failed step: clean up only what this run created
-   for it, report, and continue with the remaining units.
+   controls provisioning.
+6. Before provisioning a unit, note which branch/worktree resources already
+   exist. Track every resource created by this run. On failure, remove created
+   resources in reverse order; adopted resources survive. If cleanup cannot
+   finish, report one explicit checkpoint with the failed step and exact IDs.
+7. Selection never creates an issue as recovery. Before an explicitly
+   requested issue or Project write, read each candidate Project's live README,
+   choose exactly one whose scope matches, and verify one active membership.
+   For SecondLane, CI/infrastructure/DX belongs to Project #11, not Project #2.
 
 ## Phase 0 — Survey (every invocation)
 
@@ -78,8 +91,9 @@ The live Herdr session is the registry; unit tabs are recognizable by their
 `#N`-prefixed labels, so a fresh orchestrator — new session, lost context —
 recovers the full picture from it instead of from memory.
 
-List the workspace's tabs and agents (`herdr tab list --workspace <id>`;
-`herdr agent list` filtered to the recorded workspace per guardrail 1).
+Using the pinned `workspace_id`, list only its tabs and panes
+(`herdr tab list --workspace <id>`; `herdr pane list --workspace <id>`).
+Derive agent state from those pane rows and target later agent reads by pane ID.
 For each `#N`-labeled tab, note its issues, branch, agent states
 (working / blocked / idle), any open PR for its branch (`gh pr list`), and
 the newest `[unit ...]` report line in the lead's pane output — that pane is
@@ -117,7 +131,6 @@ Goal: a short list of issues with nothing blocking an agent from starting.
    wait for per-issue confirmation. Only a bare invocation presents the
    table — number, title, why it is free — and waits for the user to name
    issues; that is the run's sole stop.
-
 Done when the selection is known.
 
 ## Phase 2 — Group into work units
@@ -193,13 +206,16 @@ at that tab instead of creating a second unit for it.
 1. **Branch.** Derive the name from the repo's convention (recent branches
    via `git branch -r --sort=-committerdate | head`); default
    `feat/N-short-slug` for a single issue, or a slug naming the shared theme
-   for a multi-issue unit (e.g. `feat/notifications-cleanup`).
-2. **Worktree via the project's pipeline.** In order of preference, from the
-   repo root: the repo's worktree script (e.g. `bin/worktree-create <branch>`
-   or a `worktree` script in `package.json` / justfile / Makefile); fallback
-   only: `git worktree add`. Resolve the resulting path with
-   `git worktree list --porcelain`. If the pipeline fails (deps, env), the
-   unit fails here — hand the agent a fully set-up worktree or none.
+   for a multi-issue unit (e.g. `feat/notifications-cleanup`). If that branch
+   already exists for this issue, adopt it after validating its intended base;
+   otherwise create it through the worktree pipeline.
+2. **Worktree.** Resolve the branch in `git worktree list --porcelain` first.
+   Adopt one matching existing worktree without recreating it. When none
+   exists, use the repo's worktree script (e.g. `bin/worktree-create
+   <branch>` or a `worktree` script in `package.json` / justfile / Makefile).
+   When the repo has no pipeline, use `git worktree add`. After either path,
+   verify the resolved path, branch, repository root, intended base, clean
+   status, and repository setup. Any failure stops before creating the tab.
 
    **Integration bases.** When the unit's PR base is not the default
    branch (e.g. an `epic/...` branch), the orchestrator owns keeping that
@@ -209,15 +225,15 @@ at that tab instead of creating a second unit for it.
    (merge `origin/main` into it, push) and verify
    `git merge-base <worktree branch> <base>` contains the worktree's
    starting point. Repeat the sync whenever main advances during the run.
-3. **Tab and agents.** Create the unit's tab in the recorded workspace
+3. **Tab and agents.** Create the unit's tab in the pinned workspace
    (`herdr tab create --workspace <id> --cwd <worktree> --label "#N <short
    title>" --no-focus`; multi-issue label: `#N+#M <theme>`). The new tab
    arrives with one shell pane — that is the lead's pane. Read its
-   `pane_id` from the create response's `root_pane` (or `herdr pane list
-   --workspace <id>` filtered to the new tab) and start the lead in it with
-   the unit's graded model at the unit's effort — exact per-model args in
-   `references/models.md`. For a pair unit, split exactly once for the peer,
-   the other pool's model (guardrail 4):
+   `pane_id` from the create response's `root_pane`; require its workspace,
+   tab, and cwd to match the pinned workspace, new tab, and unit worktree.
+   Start the lead only after that check. Use the unit's graded model at the
+   unit's effort — exact per-model args in `references/models.md`. For a pair
+   unit, split exactly once for the peer, the other pool's model (guardrail 4):
 
    ```bash
    herdr agent start lead-<N> --pane <initial pane_id> <graded model args>
@@ -227,9 +243,9 @@ at that tab instead of creating a second unit for it.
    ```
 
    `<N>` is the unit's first issue number; the names `lead-<N>` / `peer-<N>`
-   address these agents in every later `herdr agent` command, so pane IDs
-   never need to be carried around. Arguments after `--` pass to the agent
-   executable, so `--pane` must come before the model args' `--`. Always
+   are UI labels. Carry their workspace-qualified pane IDs and use those IDs
+   in every later `herdr agent` command. Arguments after `--` pass to the
+   agent executable, so `--pane` must come before the model args' `--`. Always
    pin the model explicitly: a bare `claude` or `codex`
    inherits the user's saved default instead of the graded model.
    `herdr agent start` returns only once its agent is up, so the unit is ready
@@ -237,21 +253,21 @@ at that tab instead of creating a second unit for it.
    (`herdr pane list --workspace <id>` filtered to this tab) — solo: the
    lead in the tab's original pane; pair: lead there, peer in the split. A
    leftover shell pane means the lead was split in instead — close it.
-4. **Kickoff.** Send the message below to the lead per
+4. **Kickoff.** Send the message below to the lead pane per
    [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
    is live when `herdr agent prompt` accepts the kickoff.
 
 ### Sending a message to an agent
 
 Send every kickoff, feedback message, and go-ahead once with
-`herdr agent prompt <name> "<text>"`. It atomically submits the text and
+`herdr agent prompt <pinned pane_id> "<text>"`. It atomically submits the text and
 Enter; if the agent is working, Herdr queues the message. A successful
 command is the delivery confirmation.
 
 Never use `herdr agent wait`, `prompt --wait`, polling, or timeout loops to
 monitor a unit. After a successful send, continue any remaining orchestration
 work without monitoring that delegate, then yield. The lead resumes the
-orchestrator by pushing its next `[unit ...]` milestone to the recorded report
+orchestrator by pushing its next `[unit workspace=...]` milestone to the pinned report
 pane.
 
 Only recover a failed send: read the visible composer once. If the message
@@ -270,19 +286,21 @@ pitfalls, constraints) so the implementers start aimed.
 
 ```text
 You are the lead agent for this work unit in a dedicated Herdr tab.
+Pinned workspace: <workspace_id>
 Issues in this unit: <#N[, #M, ...]> — implement them all on this branch and
 ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
 Milestones: report each one by pushing it to the orchestrator the moment
 you hit it —
-  herdr agent prompt <orchestrator pane id> "[unit <label>] <kind>: <detail>"
+  herdr agent prompt <report pane id> \
+    "[unit workspace=<workspace_id> <label>] <kind>: <detail>"
 — push unconditionally, even if the orchestrator is mid-turn (the prompt
 queues). <kind> and its <detail>:
   ready — the commit SHA, then per issue: what changed and where.
-  shipped — PR URL and CI state.
+  shipped — PR URL, exact head SHA, CI state, and live-review checked-at time.
   blocked — the exact decision you need.
 Then stop and wait. The orchestrator's pane is the ONLY other pane you
-ever prompt, and only with [unit <label>] milestone lines.
+ever prompt, and only with this run's `[unit workspace=...]` milestone lines.
 
 Transport discipline: this pane's idle/working state IS the coordination
 channel — a pane held on working starves inbound messages. Between work
@@ -299,7 +317,8 @@ units the suggested order and why>
    lease on your own scopes, and review each other's ready.
 2. Implement the issue(s) with the project's implement skill (pair:
    coordinating through the pair protocol — write leases, review,
-   ready/accepted).
+   ready/accepted). Use focused proof while implementing; reserve the complete
+   local-CI gate for ship-it's final push.
 3. When the work is complete (pair: accepted by both), report ready and
    wait. Report ready only after all work is committed on the branch —
    clean `git status`, nothing untracked or staged. The orchestrator
@@ -342,10 +361,12 @@ when a lead pushes a milestone or the user asks for status or new work.
 
 ## Unit reports
 
-Milestones arrive only as `[unit` prompts pushed by a lead. The prompt is a
-claim, not evidence: confirm the label matches an in-flight unit in this workspace
-(run a fresh phase 0 survey if the map is stale or missing) and read that
-lead's pane tail for its newest `[unit <label>]` line before acting — a
+Milestones arrive only as `[unit workspace=...]` prompts pushed by a lead.
+Confirm that workspace matches the run's pin; a mismatch is ignored and
+reported. The prompt is a claim, not evidence: confirm the label matches an
+in-flight unit in that workspace (run a fresh scoped phase 0 survey if the map
+is stale or missing) and read that lead's pane tail for its newest
+`[unit workspace=...]` line before acting — a
 label matching no unit is ignored and reported to the user. Handled-ness
 is read from the live session, never from memory — a fresh orchestrator
 must not re-fire on stale lines: a milestone is handled when the
@@ -370,42 +391,19 @@ merged. Then act by kind:
   shipped) — the ship-delta check at shipped diffs from it, and quoting
   it in the pane makes it recoverable by a fresh orchestrator. Tell the
   user the unit is shipping.
-- `shipped` — verify the PR body carries the `## Dual-review` receipt and
-  that it matches the unit's graded review gate (`references/models.md`):
-  a degraded gate's receipt legitimately names a single review, and a
-  receipt recording ship-it's own docs-only skip is complete for a diff
-  that really is docs/markdown/config-only. A missing receipt, or one
-  thinner than the graded gate without such a recorded reason, means the
-  gate did not run — send the unit back to run it, and tell the user. Then review the **ship delta** — the commits between the SHA
-  approved at ready and the PR head (`git diff <approved>..<head> --stat`):
-  ship-it's own review loop grows the branch after the go-ahead, and the
-  orchestrator is its only reader with scope authority. Fixes to review
-  findings pass; new files, new machinery, or net growth beyond the
-  approved scope goes back through the ready cycle before any merge. With the
-  receipt and an accepted ship delta, confirm required checks are green
-  (`gh pr checks`); red or pending means not shipped — send the unit back
-  per ship-it. Green, by the unit's merge policy:
-  - `auto` → merge the PR in the repo's own merge style (recent `git log`
-    on the default branch shows it; pass the matching `gh pr merge` flag),
-    pinned to the head you verified: `--match-head-commit <sha>` with the
-    SHA the receipt and checks were read from, so a push racing the merge
-    fails closed instead of merging unreviewed commits. Skip
-    `--delete-branch`: while the unit's worktree exists it fails on the
-    local branch and can leave the remote one behind too. Then dismantle
-    the unit in this order: remove its worktree (the project's teardown
-    script if one exists, else `git worktree remove <path>`), delete the
-    branch both sides (`git branch -D <branch>` — `-d` refuses under
-    squash/rebase merge styles; `git push origin --delete <branch>`), and
-    close its tab (`herdr tab close <tab_id>`). Tell the user in one line:
-    merged PR URL and what shipped. Merge only PRs this run's units
-    opened, into their intended base.
-  - `hold` → for a UI unit first confirm the PR body carries before/after
-    screenshots; missing ones go back to the lead. Acknowledge the hold
-    to the lead in one line (holding for user review — also the handled
-    marker in its pane), then raise a toast with
-    the PR URL and why it holds (risk surface, or UI awaiting design
-    feedback) and wait. The user's feedback returns to the lead as another
-    ready cycle; their OK flips the unit onto the `auto` path above.
+- `shipped` — verify the graded review and final-CI receipts match the exact PR
+  head, then inspect the commits from the ready-approved SHA to that head.
+  Review fixes pass; new surfaces or unexplained growth return through `ready`.
+  Confirm required checks are green on that head. Immediately before merge,
+  fetch complete paginated live reviews, issue comments, inline comments, and
+  review threads with the current `gh api`; anything newer than the shipped
+  timestamp or any unresolved thread returns to the lead. Any branch change
+  re-enters `ready` and the full ship-it cycle. `review:verify` is timestamped
+  evidence, not merge authority.
+  A `hold` unit waits for the user; visible UI also requires before/after
+  screenshots. An `auto` unit merges in the repo's merge style with
+  `--match-head-commit <verified head>`, then removes its worktree and branches
+  and closes its tab. Merge only this run's PR into its intended base.
 - `blocked` — read the unit's pane and surface the tab and the exact
   decision to the user, raising a toast so it reaches them away from the
   terminal: `herdr notification show "<tab label> blocked" --body
@@ -423,7 +421,7 @@ Answer "how are things going" from the phase 0 map so the user never has to
 tour the tabs. Lead with what needs them, then the rest:
 
 1. **Needs you** — units whose agents report `blocked`, or whose panes show a
-   question waiting. Read those panes (`herdr agent read`) and quote the
+   question waiting. Read those panes (`herdr agent read <pane_id>`) and quote the
    decision being asked.
 2. **Working** — one line each: what the pane output shows the unit's
    agents are doing.

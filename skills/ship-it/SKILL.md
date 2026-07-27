@@ -60,16 +60,17 @@ the PR exists.
      untracked paths already marked intent-to-add, this covers committed,
      staged, unstaged, and intended new-file changes from the true merge base.
      Include the applicable spec sources and read-only output contract. Both
-     harnesses run their own verification machinery — an improvised
-     read-through of the diff does not count.
+     harnesses may run focused verification; step 6 owns the complete
+     repository local-CI gate. An improvised read-through of the diff does not
+     count.
      Model budget: Claude uses Opus (`--model opus`), never Fable; Codex uses
      its default model with no extra-high reasoning. Fable is advisor-only.
    - `dual` only — in parallel, get a second independent review of the same
      diff from the other agent:
      - In a herdr-pair session, ask the peer (via `$ask-peer` / the pair
        channel) to run its native review harness and send back its findings.
-     - Solo fallback: run the counterpart's headless command above on the same
-       diff and collect its findings.
+     - Outside a pair, run the counterpart's headless command above on the
+       same diff and collect its findings.
    - Merge and deduplicate the findings lists. Review output is advisory: a
      finding is valid only after you verify it against the real code path.
      Fix valid, in-scope findings in ONE batch. Discard style nits and
@@ -87,19 +88,36 @@ the PR exists.
      and each valid finding's disposition (fixed in `<sha>` / deferred to
      `#N`). A skipped
      gate still leaves one stating the skip reason (e.g. docs-only diff).
-5. Create clear, intentional commits using the repository conventions.
-6. Push safely and open or update one accurate, ready-for-review PR whose body
-   carries the gate receipt — no receipt, no PR: if you cannot point at a
-   completed gate on this final diff, you are still at step 4. Create new
-   PRs as non-draft; verify after creation that the draft/ready state on GitHub
-   matches what you intended (tooling has silently dropped draft state before).
-7. Wait for required CI checks on the PR head (poll at 60–120 s intervals,
-   never tight loops). Fix a red check with one batched commit and push; after
-   two red rounds, stop and report.
-8. Report the outcome to the user: PR link, CI status, the receipt summary,
-   and any findings you discarded or deferred.
+5. Create clear, intentional commits and reach a clean final HEAD. Use focused
+   proof before this point; reserve the complete local-CI gate for the push.
+6. Push normally. When pre-push runs the complete local CI (for example
+   `bun run ci:local`), require it to pass and use it as the only complete gate
+   on this HEAD — do not run it manually first. Use the repo's queued/coalesced
+   CI entrypoint without a manual lease when present; otherwise use its
+   documented `global-ci` lease. If pre-push has no complete gate, run the
+   repo's full command once before pushing and require it to pass. Put the exact
+   HEAD and successful result in the receipt.
+7. Open or update one accurate, ready-for-review PR whose body carries the
+   gate and final-CI receipt — no receipt, no PR. Create new PRs as non-draft;
+   verify after creation that GitHub preserved the intended ready state.
+   Handle current reviews, comments, and unresolved threads. If that changes
+   the branch, return to steps 4–7 before recording the clean live-review
+   baseline time.
+8. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
+   never tight loops). Fix a red check with one batched commit and return to
+   steps 4–7; after two red rounds, stop and report.
+9. Immediately before reporting shipped, re-fetch complete paginated reviews,
+   issue comments, inline comments, and review threads, and capture the live
+   `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
+   whose required checks passed; any mismatch returns to steps 4–8. Handle
+   every item newer than the baseline and every unresolved thread. If that
+   changes the branch, return to steps 4–8. `review:verify` proves only its
+   timestamp. Record the clean check timestamp and head.
+10. Report the outcome to the user: PR link, exact head, CI status, live-review
+   timestamp, receipt summary, and any findings discarded or deferred.
 
 Do not force-push, merge, modify `main`, broaden scope, or change the target
 branch without explicit authorization. Done when the PR is open with the
-dual-review receipt in its body, green required checks, and the user has the
+dual-review and passing final-CI receipt in its body, green required checks, a
+clean timestamped live-review check on the exact head, and the user has the
 report.
