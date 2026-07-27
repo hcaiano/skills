@@ -105,10 +105,12 @@ the PR exists.
    never tight loops). Fix a red check with one batched commit and return to
    steps 4–7; after two red rounds, stop and report.
 9. Immediately before reporting shipped, re-fetch complete paginated reviews,
-   issue comments, inline comments, and review threads on the exact head.
-   Handle every item newer than the baseline and every unresolved thread. If
-   that changes the branch, return to steps 4–8. `review:verify` proves only
-   its timestamp. Record the clean check timestamp and head.
+   issue comments, inline comments, and review threads, and capture the live
+   `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
+   whose required checks passed; any mismatch returns to steps 4–8. Handle
+   every item newer than the baseline and every unresolved thread. If that
+   changes the branch, return to steps 4–8. `review:verify` proves only its
+   timestamp. Record the clean check timestamp and head.
 10. Report the outcome to the user: PR link, exact head, CI status, live-review
    timestamp, receipt summary, and any findings discarded or deferred.
 

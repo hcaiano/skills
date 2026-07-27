@@ -210,14 +210,12 @@ at that tab instead of creating a second unit for it.
    already exists for this issue, adopt it after validating its intended base;
    otherwise create it through the worktree pipeline.
 2. **Worktree.** Resolve the branch in `git worktree list --porcelain` first.
-   Adopt one matching existing worktree without recreating it only after
-   validating its branch, base, clean status, and repository setup. Otherwise
-   stop before creating the tab. When none exists, use the repo's worktree
-   script (e.g. `bin/worktree-create
+   Adopt one matching existing worktree without recreating it. When none
+   exists, use the repo's worktree script (e.g. `bin/worktree-create
    <branch>` or a `worktree` script in `package.json` / justfile / Makefile).
-   When the repo has no pipeline, use `git worktree add`. Resolve the path with
-   `git worktree list --porcelain`. If the pipeline fails (deps, env), the
-   unit fails here — hand the agent a fully set-up worktree or none.
+   When the repo has no pipeline, use `git worktree add`. After either path,
+   verify the resolved path, branch, repository root, intended base, clean
+   status, and repository setup. Any failure stops before creating the tab.
 
    **Integration bases.** When the unit's PR base is not the default
    branch (e.g. an `epic/...` branch), the orchestrator owns keeping that
@@ -231,10 +229,11 @@ at that tab instead of creating a second unit for it.
    (`herdr tab create --workspace <id> --cwd <worktree> --label "#N <short
    title>" --no-focus`; multi-issue label: `#N+#M <theme>`). The new tab
    arrives with one shell pane — that is the lead's pane. Read its
-   `pane_id` from the create response's `root_pane`. Start the lead in it with
-   the unit's graded model at the unit's effort — exact per-model args in
-   `references/models.md`. For a pair unit, split exactly once for the peer,
-   the other pool's model (guardrail 4):
+   `pane_id` from the create response's `root_pane`; require its workspace,
+   tab, and cwd to match the pinned workspace, new tab, and unit worktree.
+   Start the lead only after that check. Use the unit's graded model at the
+   unit's effort — exact per-model args in `references/models.md`. For a pair
+   unit, split exactly once for the peer, the other pool's model (guardrail 4):
 
    ```bash
    herdr agent start lead-<N> --pane <initial pane_id> <graded model args>
