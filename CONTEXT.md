@@ -12,6 +12,6 @@ Active skills should have names that include the runtime they bind to when ambig
 
 `herdr-pair` has an external runtime dependency on the `herdr` CLI and the separate `herdr` skill. Do not copy herdr primitives into this skill unless the upstream skill becomes unavailable; document the dependency instead.
 
-Deprecated skills stay under `_deprecated/` and should not be listed in plugin manifests or linked by default. Keep them in the repo for reference, migration, and recovery.
+Deprecated skills stay under `_deprecated/` and are not installed by default. Keep them in the repo for reference, migration, and recovery.
 
-When adding an active skill, place it directly under `skills/`, update both plugin manifests, and keep the installed runtime copy as a symlink back to this repo when practical.
+When adding an active skill, place it directly under `skills/` and install or update the runtime copies through the Vercel Skills CLI.

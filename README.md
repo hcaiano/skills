@@ -8,47 +8,14 @@ This repo keeps metadata at the root, distributable skills under `skills/`, and 
 
 ## Install
 
-Three paths — pick by your runtime. Claude Code users should take the plugin.
-
-### Option A — Claude Code plugin (recommended)
-
-One install gets every active skill — no extra setup:
-
-```text
-/plugin marketplace add hcaiano/skills
-/plugin install hcaiano@hcaiano
-```
-
-Restart, then verify the plugin is installed and current:
-
 ```bash
-claude plugin list | grep hcaiano
+npx skills@latest add hcaiano/skills --global --agent claude-code codex --skill '*' --yes
 ```
 
-If it's missing or behind, run `claude plugin update hcaiano` and restart the
-session.
+This installs every active skill directly for Claude Code and Codex. Skills keep
+their names, without a plugin namespace such as `hcaiano:`.
 
-### Option B — Codex via skills CLI
-
-```bash
-npx skills@latest add hcaiano/skills --global --agent codex --copy --yes
-```
-
-This installs a stable copied snapshot rather than linking the development
-checkout. Codex reads each skill's invocation policy from its
-`agents/openai.yaml` — manual by default, though some skills (`ask-peer`,
-`debug-mode`, `cyber-audit`) opt into implicit invocation so Codex can reach
-for them autonomously; model selection remains in `~/.codex/config.toml`.
-
-### Option C — skills.sh CLI (other agent runtimes)
-
-```bash
-npx skills@latest add hcaiano/skills
-```
-
-The CLI scans this repo, prompts which skills + which agent runtimes (Claude,
-Codex, etc.) to install into, and copies them into the right local skill
-directories.
+Run the same command to update the installed copies after changing this repo.
 
 ## Skills
 
@@ -83,49 +50,19 @@ None are bundled in this repo — `art-director` documents the dependency rather
 
 - `cmux-pair` — older cmux-based Claude/Codex pair programming bootstrap, preserved for reference but not installed by default. Superseded by `herdr-pair`.
 
-## Local linking (development)
+## Development
 
-For working on the skills themselves, link them into local agent skill directories so edits in the repo are live for installed runtimes.
-
-List active bundled skills:
+List active skills:
 
 ```bash
 ./scripts/list-skills.sh
 ```
 
-Link them into `~/.agents/skills`, `~/.claude/skills`, and `~/.codex/skills`:
-
-```bash
-./scripts/link-skills.sh
-```
-
-By default, the linker skips deprecated skills and any existing non-symlink skill directory. To include deprecated skills:
-
-```bash
-./scripts/link-skills.sh --include-deprecated
-```
-
-To migrate an existing real directory to a symlink after confirming the repo copy is correct:
-
-```bash
-./scripts/link-skills.sh --replace
-```
-
-`--replace` uses `trash`, not `rm`, for existing non-symlink directories.
-
 ## Publishing
 
-The Claude plugin manifest intentionally lists only active skills; `_deprecated/*`
-is kept for history and recovery, not normal installs.
-`.claude-plugin/marketplace.json` registers the repo as the single-plugin
-`hcaiano` marketplace. Both supported install paths — the Claude
-plugin and `npx skills@latest add hcaiano/skills` for Codex or other runtimes —
-pick up the same active set.
-
-Claude Code always scans the root `skills/` directory for plugin skills, so any
-skill kept directly under `skills/` must be active and listed in the Claude
-manifest. Move non-shipping skills under `_deprecated/` or out of the plugin
-root.
+Active skills live directly under `skills/`; `_deprecated/*` is kept for history
+and recovery and is not part of normal installs. Publish and update them through
+the Vercel Skills CLI command above.
 
 ## License
 
