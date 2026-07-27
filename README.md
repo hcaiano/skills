@@ -27,12 +27,14 @@ Run the same command to update the installed copies after changing this repo.
 `herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
 `ask-peer` needs both local CLIs installed and authenticated. It explicitly selects Fable through `claude -p` but leaves the Codex model unset so Codex configuration owns it.
 
-`art-director` composes several external skills instead of vendoring them; install the ones your run needs (it degrades gracefully when an optional one is absent):
+`art-director` composes external skills instead of vendoring them:
 
-- **Required:** `herdr-pair` (and thus the `herdr` CLI) for the live generator loop, `grill-me` for brief intake, and `imagegen-frontend-web` for website generation.
-- **Conditional:** `imagegen-frontend-mobile` (app-screen surfaces), `impeccable` (taste/quality bar and the build handoff), `brandkit` (identity/system-proof boards), and `image-to-code` / `web-design-guidelines` (build handoff + audit).
+- **Required:** `imagegen` for visual concepts.
+- **Conditional:** `brandkit` for identity-system proof and `herdr-pair` only
+  when the current runtime needs a Codex peer to generate images.
 
-None are bundled in this repo — `art-director` documents the dependency rather than copying their internals.
+None are bundled in this repo. The skill owns the exploration and curation
+workflow while those dependencies own their specialist work.
 
 ### Engineering
 
@@ -40,15 +42,11 @@ None are bundled in this repo — `art-director` documents the dependency rather
 
 ### Workflow
 
-- `art-director` — run a long design-exploration loop: you act as art director and Codex generates many mockups per batch; you curate, wipe its context, and redirect on a fresh axis until the gallery converges on a winning direction. Works for blank-slate (new/rebrand) and established-brand (creative-within-guardrails) projects. Composes `herdr-pair` (generator transport), `grill-me` (brief intake), `imagegen-frontend-web` (generation), and `impeccable` (taste + build handoff).
-- `check-logs` — read an existing herdr/turbo dev TUI's app logs without starting or stopping servers.
-- `goal-loop` — name one target and what "better" means; Claude and Codex keep improving that one thing with real testing until the goal's quality bar and the peer both pass. (Formerly `test-fix-loop`.)
+- `art-director` — explore distinct visual premises with `imagegen`, curate
+  them with the user, refine the winner, and use `brandkit` when an identity
+  direction needs system proof.
 - `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
 - `ship-it` — commit, push, open/update a PR, then invoke `review-pr-comments`.
-
-### Deprecated
-
-- `cmux-pair` — older cmux-based Claude/Codex pair programming bootstrap, preserved for reference but not installed by default. Superseded by `herdr-pair`.
 
 ## Development
 
@@ -60,9 +58,8 @@ List active skills:
 
 ## Publishing
 
-Active skills live directly under `skills/`; `_deprecated/*` is kept for history
-and recovery and is not part of normal installs. Publish and update them through
-the Vercel Skills CLI command above.
+Active skills live directly under `skills/`. Publish and update them through
+the Vercel Skills CLI command above; Git history preserves removed skills.
 
 ## License
 

@@ -1,7 +1,7 @@
 interface:
   display_name: "Art Director"
-  short_description: "Direct a long Codex design exploration"
-  default_prompt: "Use $art-director to explore many visual directions for one surface."
+  short_description: "Explore and choose a visual direction"
+  default_prompt: "Use $art-director to explore, curate, and prove a visual direction before implementation."
 
 policy:
   allow_implicit_invocation: false

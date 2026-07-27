@@ -1,210 +1,61 @@
 ---
 name: art-director
-description: "Manual-only long design-exploration loop. Use only when the user explicitly invokes art-director: direct Codex image batches, curate and wipe between axes, and converge on a winning direction before handing it to impeccable or image-to-code."
-user-invocable: true
+description: "Manual-only visual exploration for choosing a strong direction before implementation. Use only when the user explicitly invokes art-director to explore interface, product, campaign, or brand ideas; compose imagegen for concepts, brandkit for identity-system proof, and a one-question-at-a-time intake."
 disable-model-invocation: true
-argument-hint: "<surface to explore> [free-form intent / constraints]"
 ---
 
 # Art Director
 
-You are the **art director** — any capable model can hold this role. A peer **generator**
-makes the pictures, and the generator is **always Codex** (the strongest image model). You
-never generate; you direct, curate, and decide. Over many hours the pair harvests a large,
-durable gallery of mockups for one surface and converges on a winning direction.
+Explore visual directions, curate them with the user, and converge on one
+defensible choice. Do not implement the product while this skill is active.
 
-The roles are asymmetric: the director curates with visual judgment; the generator runs the
-image tool. Only the generator is host-bound — it must be Codex — so the turnkey transport is
-**Claude directs → Codex generates**, which `herdr-pair` bootstraps natively (it pairs
-opposite agents). A non-Claude director can't auto-spawn a Codex generator that way, so it
-opens the generator pane by hand. Either transport lands in the same place: a live Codex
-generator pane the loop drives directly with `herdr pane` primitives — send `/goal`, poll,
-`/new` to **wipe**. `herdr-pair` is just the Claude-director bootstrap, not a requirement for
-reaching a manually-opened pane.
+## Compose, do not copy
 
-## The central invariant
+- Read and use `imagegen` for every generated concept. Its generation, editing,
+  validation, and save-path rules own the image work.
+- For a brand or identity exploration, read `brandkit` only after a direction
+  has earned a system proof. Do not generate a brand board for every early idea.
+- Run intake as a grilling conversation: investigate facts yourself, ask
+  decisions one at a time, include your recommended answer, and wait for the
+  user's reply. No separate intake skill is required.
+- If the current runtime cannot generate images, use `herdr-pair` to give a
+  Codex peer the generation brief. When image generation is available directly,
+  Herdr is unnecessary.
+- Obey the current project's agent, product, brand, and design-system
+  instructions.
 
-> **Stateless generator, stateful art director.** The generator carries no gallery
-> between batches — you carry the taste, the memory, the rejects, and the direction, in
-> the **brief** and the **curation index**. **Wipe** the generator (`/new`) each batch so
-> it never just mutates recent winners; it should act like a fresh studio handed a sharp
-> new premise. Everything below serves this.
+## Workflow
 
-The loop, once set up: **direct → generate → curate → wipe → redirect**, a new exploration
-**axis** each turn until the gallery converges.
+1. **Inspect.** Determine whether this is blank-slate or constrained by an
+   existing brand. Read available references, product context, design tokens,
+   and existing surfaces before asking questions.
+2. **Intake.** Resolve the audience, surface, communication goal, required
+   content, format, references, anti-references, hard brand constraints, and
+   decision deadline. Ask only what materially changes the exploration.
+3. **Frame directions.** Name three to five concrete visual premises. Each
+   direction needs a different underlying rule for composition, hierarchy,
+   imagery, and mood. "More options" is not a direction.
+4. **Generate breadth.** Use one `imagegen` call per direction. Keep the
+   functional content and format constant so the visual ideas are comparable.
+   Preserve an established identity; for blank-slate work, explore a genuine
+   range. Keep the exact prompt for every output.
+5. **Curate.** Inspect every image. Identify it by filename or stable ID and
+   explain what works, what fails, and which reusable trait it contributes.
+   Maintain a shortlist and a rejected-pattern list. Ask the user for the next
+   decision one question at a time.
+6. **Refine.** Generate two or three variants of the strongest direction.
+   Change one named trait at a time instead of remixing everything.
+7. **Prove the system.** Stress-test the winner on an adjacent page, state, or
+   asset. For identity work, use `brandkit` to create one coherent system board
+   from the selected direction.
+8. **Hand off.** Return the selected asset paths, exact prompts, visual rules,
+   rejected patterns, and remaining trade-offs. Save project-bound outputs in
+   the workspace according to `imagegen`; preview-only outputs may remain
+   inline.
 
-## Required reading (before acting — compose, don't rewrite)
+## Stop condition
 
-- **`herdr-pair`** — the live-pane transport: `/goal`, poll status, `/new` to wipe,
-  double-ESC to interrupt a spin. Don't re-implement pane mechanics.
-- **`grill-me`** — the relentless intake interrogation that builds the brief (Phase 1).
-- **`imagegen-frontend-web`** / **`imagegen-frontend-mobile`** — how the generator
-  produces premium mockups (one image per section/screen, composition variety, one
-  consistent palette). The generator loads the one matching the surface; you cite it in
-  the `/goal`.
-- **`impeccable`** — its register refs (`reference/brand.md`, `reference/product.md`),
-  anti-slop bans, and **identity-preservation** rule ground your quality bar and your
-  established-brand guardrails; its `shape`/`craft` build the winner at handoff.
-- **`brandkit`** — brand-guidelines boards, logo systems, identity decks; reach for it at
-  the system-proof step and at handoff to turn a winning direction into an identity system.
-- **Style-lens skills** (optional axis seeds) — `minimalist-ui`,
-  `industrial-brutalist-ui`, `high-end-visual-design`, `design-taste-frontend`,
-  `redesign-existing-projects`. Use one to *seed a batch's axis* or sharpen the quality
-  bar; never let a single lens quietly become the whole exploration.
-- Repo `CLAUDE.md` + nearest `AGENTS.md` — hard rules (branch safety, never commit to
-  `main` unbidden, never auto-merge).
-
-## Phase 0 — Preflight (is the project set up to run for hours?)
-
-Fix what's missing; don't start Phase 1 until all five pass.
-
-1. **Transport.** `command -v herdr`, `HERDR_ENV=1` and `HERDR_PANE_ID` set, and a live
-   **Codex generator pane** in this tab — obtained per the transport note above
-   (`herdr-pair` for a Claude director, opened by hand otherwise). Else stop and tell the
-   user to run inside herdr.
-2. **Generation access.** Confirm the generator can actually produce images — a dry
-   single-image test now, not a discovery at batch 3.
-3. **Durable output folder.** Pick/create one that persists, e.g.
-   `docs/design-inspiration/explorations/<surface>/`. Mockups live here forever.
-4. **Mode.** Detect whether an **established brand** exists — a live site, design tokens, a
-   brand guide, a `DESIGN.md`, an existing component library. This picks the Phase 1
-   branch. When unsure, ask.
-5. **Git hygiene** (only if you'll commit later): fresh branch off `origin/main`, never
-   `main` directly, never absorb unrelated dirty files.
-
-## Phase 1 — Grill-me, then write the brief (the persistent anchor)
-
-Run **`grill-me`** to interrogate the user until you can write the brief without guessing.
-Adapt the questioning to the mode:
-
-- **Both modes:** the surface, the audience, what it must communicate, required content
-  blocks, hard format (aspect ratio, page type, viewport), north-star references,
-  anti-references, how many directions they want, the decision deadline.
-- **Blank-slate (new project / rebrand):** the brand is **not** locked — explore a genuine
-  RANGE and define the brand around the winner. Frame the exploration with `impeccable`'s
-  color-strategy / register thinking, but commit to nothing yet.
-- **Established brand:** the brand **is** the guardrail. Derive the existing visual
-  contract (tokens, type, voice, motifs, radius, imagery rules) from the site / design
-  system first. Creativity goes into **concept, layout, composition, information
-  hierarchy** — never into violating the brand. This is `impeccable`'s
-  **identity-preservation wins**.
-
-Write **`BRIEF.md`** in the output folder — the anchor the generator re-reads **every**
-batch. It holds only what stays constant:
-
-- **Project truth** — what it is, who it's for, what it must communicate.
-- **Hard format** — surface, aspect ratio, page type, viewport, required content.
-- **Visual contract** — palette, type stance, density, radius, imagery rules. *Open* in
-  blank-slate mode; *fixed from the brand* in established mode.
-- **North stars as principles** — "steal the compression and restraint," not "copy this."
-  One short principle-list file per reference; never ship raw links as inspiration.
-- **Quality bar** — acceptable vs. dead-on-arrival, leaning on `impeccable`'s anti-slop bans.
-- **Anti-goals** — tropes to avoid, brand violations, forbidden content.
-- **Output contract** — folder, filename scheme (`NN-short-name.png`, numbers only in
-  filenames), count per batch, prompt log (`<folder>/prompts.md`, kept beside the images).
-
-Phase 1 is done when `BRIEF.md` is written and the user has confirmed it; don't start the
-loop before that.
-
-## Phase 2 — The batch loop (direct → generate → curate → wipe → redirect)
-
-Each **batch** is ~8–12 mockups on **one exploration axis**. The diversity comes from
-changing the *underlying rule*, not from stacking adjectives.
-
-1. **Direct.** Send the Codex generator pane a `/goal` (first token literally
-   `/goal `), using the template below. The **axis** must be a concrete *new premise*
-   ("the page behaves like a lab report / transit board / filing system / field guide"),
-   not "more options." Force internal diversity (each of the N differs in composition,
-   hierarchy, motif, density) and ban the motifs prior curation already ruled out.
-2. **Generate.** Generation takes minutes; poll the generator pane's status, don't block
-   the turn. For unattended multi-hour runs, drive the polling/redirect cadence with a
-   scheduled loop (e.g. `goal-loop`'s machinery).
-3. **Curate.** View **every** image. Judge against the brief with **ID-first critique**:
-   "203 works because its compression…", "204 rejected: decorative frame" — never "the
-   clean one." Flag standouts and name the reject patterns.
-4. **Index.** Update **`CURATION.md`** (schema below) — shortlist, per-axis notes, rejected
-   motifs, running recommendation.
-5. **Wipe + redirect.** `/new` to clear the generator, then send the next `/goal` on a
-   **new axis** with **sharp deltas**, not the whole log: "preserve the discipline of 199
-   and the compression of 202; reject 204's frame." Feed only the distilled signal — the
-   full history re-anchors the generator on recent winners.
-
-A batch is done when every image is curated into `CURATION.md` and the generator is
-wiped; then repeat on the next axis.
-
-## Phase 3 — Escalation arc (how batches sequence over the session)
-
-1. **Breadth** — many genuinely different premises; each batch a new axis.
-2. **Refine finalists** — by *trait*, not whole-image imitation ("keep 202's hierarchy,
-   drop its texture").
-3. **Controlled comparison** — hold content constant, vary **only** direction, so
-   directions compare with everything else equal. (Breadth changes many variables;
-   comparison changes one.)
-4. **Contrary batch** — once a favorite emerges, run one batch *designed to beat it*, to
-   guard against premature convergence and a lazy "safe winner."
-5. **Winner stress test** — the chosen direction across other pages, states, and assets.
-6. **System proof** — a winning mockup is **not a system until it survives extension.** If
-   it does, produce a system board (tokens, type, rules); `brandkit` generates the
-   brand-guidelines board / logo / identity deck.
-7. **Recommendation** — the curation index converges on a call, with the honest trade-off.
-
-## Phase 4 — Handoff (build the winner)
-
-The mockups + curation index + system board are the brief for the build. Hand off to
-**`impeccable`** (`shape` then `craft`) to build the chosen direction as production code,
-or to **`image-to-code`** (Codex) to implement directly from the mockups; use **`brandkit`**
-for identity deliverables (logo system, brand board) and audit the build with
-**`web-design-guidelines`**. Don't let the exploration folder itself become the product.
-
-## The `/goal` template (fill per batch)
-
-```
-/goal Generate design-exploration mockups — use imagegen-frontend-web for website surfaces
-or imagegen-frontend-mobile for app screens.
-Re-read <output-folder>/BRIEF.md and the north-star principle files first — they are the
-constant. Then generate <N> distinct mockups of <surface> on ONE axis:
-  AXIS: <the new premise / rule for THIS batch — concrete, e.g. "the page behaves like a
-  <lab report | transit board | field guide | filing system | ...>">.
-The <N> outputs MUST differ from each other in composition, hierarchy, motif, and density.
-Do NOT repeat: <banned motifs from prior curation>.
-Hold to the visual contract in BRIEF.md (palette, type, format, anti-goals).
-Save each as <folder>/<NN>-<short-name>.png (numbers only in filenames), append the exact
-prompt for each to <folder>/prompts.md, never overwrite earlier images, and NEVER render a
-batch or number label as page content.
-Stop as soon as files + <folder>/prompts.md are saved; your final message = the filenames
-saved and any slots that failed. Do not re-verify in a loop.
-```
-
-## `CURATION.md` schema (the stateful memory)
-
-- **Top:** a 30-second summary + the current recommendation (update every batch).
-- **Shortlist:** the best IDs with one line of *why* each earns its place.
-- **By-axis sections:** what each batch's premise produced; standouts flagged.
-- **Rejected patterns:** motifs already explored and ruled out — so you never re-spend a
-  batch on them.
-- **Open questions / the trade-off:** what the user must still decide.
-
-Never delete mockups — the gallery's value is that it persists.
-
-## Failure modes / guards
-
-- **Rendered batch labels.** Numbers belong in filenames and metadata only; a "BATCH 3"
-  printed as page content is a leak — the `/goal` must forbid it explicitly.
-- **Self-verify spin.** The generator must stop once files + `prompts.md` are saved and
-  report filenames + failures only. If it spins after the images exist, interrupt via
-  `herdr-pair` (double-ESC → "Goal paused"), then `/new`.
-- **API flakiness / rate limits.** Resumable numbering, never overwrite completed images,
-  record failed slots, shrink the batch, stop cleanly rather than spin — a partial batch
-  curated beats a stalled one.
-- **Garbled text in mockups.** Treat generated text as *compositional*, not final copy;
-  for exact wording use short, large words or rebuild in code at handoff. Don't chase
-  pixel-perfect type in a mockup.
-- **Samey output.** Change the *premise* and ban prior motifs; never ask for "more
-  different." A batch that converges on recent winners means you forgot to wipe or fed
-  back too much history.
-- **Over-safe generator.** Require controlled risk / wildcards — the most ownable ideas
-  come from the batches that took a swing.
-- **Established-brand drift.** Identity-preservation wins: a mockup that breaks the
-  brand's tokens or voice is a **reject**, however beautiful.
-- **Vague brief.** If two batches in you're still clarifying what "good" means, stop and
-  re-grill; a sharp brief is cheaper than ten wasted batches.
+Stop when the user has selected a direction and it survives one relevant system
+proof. Do not start an unattended loop, create arbitrary batches of dozens of
+images, or create persistent `BRIEF.md` or curation files unless the user asks
+for them or the exploration belongs in the project.
