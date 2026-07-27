@@ -91,11 +91,12 @@ the PR exists.
 5. Create clear, intentional commits and reach a clean final HEAD. Use focused
    proof before this point; reserve the complete local-CI gate for the push.
 6. Push normally. When pre-push runs the complete local CI (for example
-   `bun run ci:local`), that is the only complete gate on this HEAD — do not
-   run it manually first. Use the repo's queued/coalesced CI entrypoint without
-   a manual lease when present; otherwise use its documented `global-ci`
-   lease. If pre-push has no complete gate, run the repo's full command once
-   before pushing and record why. Put the exact HEAD and result in the receipt.
+   `bun run ci:local`), require it to pass and use it as the only complete gate
+   on this HEAD — do not run it manually first. Use the repo's queued/coalesced
+   CI entrypoint without a manual lease when present; otherwise use its
+   documented `global-ci` lease. If pre-push has no complete gate, run the
+   repo's full command once before pushing and require it to pass. Put the exact
+   HEAD and successful result in the receipt.
 7. Open or update one accurate, ready-for-review PR whose body carries the
    gate and final-CI receipt — no receipt, no PR. Create new PRs as non-draft;
    verify after creation that GitHub preserved the intended ready state.
@@ -117,5 +118,6 @@ the PR exists.
 
 Do not force-push, merge, modify `main`, broaden scope, or change the target
 branch without explicit authorization. Done when the PR is open with the
-dual-review and final-CI receipt in its body, green required checks, a clean
-timestamped live-review check on the exact head, and the user has the report.
+dual-review and passing final-CI receipt in its body, green required checks, a
+clean timestamped live-review check on the exact head, and the user has the
+report.
