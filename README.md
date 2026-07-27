@@ -1,10 +1,11 @@
-# Agent Workflow Skills
+# Agent Skills
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Agent skills maintained locally and shared across Claude, Codex, and other agent runtimes.
+Personal agent skills shared across Claude Code and Codex.
 
-This repo keeps metadata at the root, distributable skills under `skills/`, and small local maintenance scripts under `scripts/`.
+The repository contains nine active skills under `skills/` and small maintenance
+scripts under `scripts/`.
 
 ## Install
 
@@ -12,41 +13,57 @@ This repo keeps metadata at the root, distributable skills under `skills/`, and 
 npx skills@latest add hcaiano/skills --global --agent claude-code codex --skill '*' --yes
 ```
 
-This installs every active skill directly for Claude Code and Codex. Skills keep
-their names, without a plugin namespace such as `hcaiano:`.
+This installs every active skill for Claude Code and Codex. Skills keep their
+plain names, without a plugin namespace such as `hcaiano:`.
 
 Run the same command to update the installed copies after changing this repo.
 
 ## Skills
 
-### Collaboration
+### Orchestration and collaboration
 
-- `ask-peer` — ask the opposite primary model for one focused review, second opinion, or scoped work pass: Codex → Fable through `claude -p`, Claude → Codex through `codex exec`. In Codex it can invoke automatically to escalate to Fable; in Claude Code it stays manual (user-invoked only).
-- `herdr-pair` — pair Claude and Codex as collaborating peer agents inside herdr.
-
-`herdr-pair` depends on the `herdr` CLI and the separate `herdr` skill for pane primitives. This repo intentionally does not vendor that upstream skill; install it separately before sharing `herdr-pair` with teammates.
-`ask-peer` needs both local CLIs installed and authenticated. It explicitly selects Fable through `claude -p` but leaves the Codex model unset so Codex configuration owns it.
-
-`art-director` composes external skills instead of vendoring them:
-
-- **Required:** `imagegen` for visual concepts.
-- **Conditional:** `brandkit` for identity-system proof and `herdr-pair` only
-  when the current runtime needs a Codex peer to generate images.
-
-None are bundled in this repo. The skill owns the exploration and curation
-workflow while those dependencies own their specialist work.
+- `herdr-orchestrate` — manually orchestrate GitHub issues through dedicated
+  Herdr work units, from triage and delegation through shipping, merging, and
+  teardown.
+- `herdr-pair` — keep Claude and Codex collaborating inside one Herdr tab with
+  durable, workspace-scoped transport.
+- `ask-peer` — request one focused opinion, review, or bounded work pass from
+  the opposite model without starting a persistent pair.
 
 ### Engineering
 
-- `debug-mode` — hypothesis-driven debugging with runtime evidence.
+- `debug-mode` — diagnose unresolved, flaky, environment-specific, or
+  production-only bugs through an evidence loop.
+- `cyber-audit` — audit this machine read-only against a named CVE, malicious
+  package, or supply-chain advisory and leave a written report.
 
-### Workflow
+### Creative work
 
-- `art-director` — explore distinct visual premises with `imagegen`, curate
-  them with the user, refine the winner, and use `brandkit` when an identity
-  direction needs system proof.
-- `review-pr-comments` — fetch, triage, fix, reply to, and recheck PR review comments.
-- `ship-it` — commit, push, open/update a PR, then invoke `review-pr-comments`.
+- `art-director` — manually explore and choose a visual direction before
+  implementation, using generated concepts and optional identity-system proof.
+- `no-slop` — draft or edit writing in Henrique's voice, or identify concrete
+  AI-slop patterns without rewriting.
+
+### Delivery
+
+- `ship-it` — run the graded local review gate, commit and push intentional
+  changes, open or update one PR, and wait for green CI.
+- `review-pr-comments` — handle feedback that actually appears on an existing
+  PR, batching valid fixes and leaving the PR merge-ready.
+
+## Dependencies
+
+- `herdr-orchestrate` and `herdr-pair` require the `herdr` CLI and the separate
+  upstream `herdr` skill. This repository does not vendor either one.
+- `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
+  through Claude; Claude Code consults Codex.
+- `art-director` composes the external `imagegen` skill. It uses `brandkit`
+  only when a selected identity direction needs system proof, and `herdr-pair`
+  only when the current runtime cannot generate images directly.
+- `ship-it` reads the usage-state helper bundled with `herdr-orchestrate` when
+  grading its local review gate.
+
+These dependencies are not bundled here and must be installed separately.
 
 ## Development
 
@@ -58,8 +75,8 @@ List active skills:
 
 ## Publishing
 
-Active skills live directly under `skills/`. Publish and update them through
-the Vercel Skills CLI command above; Git history preserves removed skills.
+Active skills live under `skills/`. Publish and update them through the Vercel
+Skills CLI command above; Git history preserves removed skills.
 
 ## License
 
