@@ -1,6 +1,6 @@
 ---
 name: ask-peer
-description: "Opposite-model request for one focused pass. In Codex, reach for this autonomously to escalate to Fable (through `claude -p`) when you need stronger reasoning, a second opinion, or a scoped review; in Claude Code it stays manual — Claude asks Codex through `codex exec` only when the user invokes it. Use for a focused pass without a live Herdr pair."
+description: "Ask the opposite model for one focused opinion, review, or scoped pass without a live Herdr pair. Codex may consult Fable autonomously; Claude Code consults Codex only when explicitly invoked."
 user-invocable: true
 disable-model-invocation: true
 argument-hint: "<question, review, or scoped task for the other agent>"

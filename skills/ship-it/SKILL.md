@@ -1,6 +1,6 @@
 ---
 name: ship-it
-description: "Manual-only PR creation for current work: grade the review gate from usage pools, run it locally, commit and push intentional changes, open the PR, and wait for green CI. Use only when the user explicitly invokes ship-it."
+description: "Manual-only delivery of current work: run the graded local review gate, commit and push intentional changes, open or update one PR, and wait for green CI."
 disable-model-invocation: true
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: art-director
-description: "Manual-only visual exploration for choosing a strong direction before implementation. Use only when the user explicitly invokes art-director to explore interface, product, campaign, or brand ideas; compose imagegen for concepts, brandkit for identity-system proof, and a one-question-at-a-time intake."
+description: "Manual-only visual exploration before implementation. Invoke explicitly to explore and choose interface, product, campaign, or brand directions using imagegen, optional brandkit proof, and one-question-at-a-time intake."
 disable-model-invocation: true
 ---
 

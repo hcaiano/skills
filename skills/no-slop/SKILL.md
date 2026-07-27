@@ -1,6 +1,6 @@
 ---
 name: no-slop
-description: "Sharp human editor for Henrique's writing: draft new pieces, edit drafts into clearer more alive prose while preserving his voice, or detect AI-slop patterns without rewriting."
+description: "Draft or edit Henrique's writing in his voice, or flag concrete AI-slop patterns without rewriting. Use for English or European Portuguese."
 user-invocable: true
 disable-model-invocation: true
 argument-hint: "[draft or writing request] [optional: detect]"

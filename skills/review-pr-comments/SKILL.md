@@ -1,6 +1,6 @@
 ---
 name: review-pr-comments
-description: "On-demand review cleanup for an existing PR that has actual feedback: verify each comment, apply valid in-scope fixes in one batched round, respond where useful, and leave the PR merge-ready. Only runs when the user explicitly invokes review-pr-comments."
+description: "Manual-only cleanup of actual feedback on an existing PR: verify comments, batch valid in-scope fixes, respond, and leave the PR merge-ready."
 user-invocable: true
 disable-model-invocation: true
 argument-hint: "[PR number, URL, or 'all' for all open PRs]"

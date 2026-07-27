@@ -1,6 +1,6 @@
 ---
 name: herdr-orchestrate
-description: "Manual-only orchestrator for delegating GitHub issues to staffed agents in dedicated Herdr tabs: triage → work units → implement → ship-it → merge and dismantle, with model routing and solo/pair staffing per unit; the user owns blocked decisions and holds (high-risk surfaces, all UI)."
+description: "Manual-only orchestration of GitHub issues in dedicated Herdr work units: triage, delegate, scope-check, ship, merge, and dismantle. The user owns blocked decisions and holds for high-risk or visible UI work."
 disable-model-invocation: true
 ---
 

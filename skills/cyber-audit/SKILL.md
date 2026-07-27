@@ -1,6 +1,6 @@
 ---
 name: cyber-audit
-description: Read-only exposure audit of THIS MACHINE against a specific external advisory — a named CVE, malicious package, or supply-chain advisory — then write a report. Invoke only when the user explicitly asks whether THIS MACHINE is affected by a named CVE/package/advisory ("am I affected by X", "is this package/CVE on my system", "scan my machine for Y"). Do not invoke merely because an advisory/CVE/package is mentioned, for an explanation or news summary, for code/repo/appsec review, or for account/credential-breach response.
+description: "Read-only audit of this machine against a named CVE, malicious package, or supply-chain advisory. Use only when explicitly asked whether this machine is affected; not for general security review, news, breach response, or remediation."
 user-invocable: true
 argument-hint: "<CVE / advisory / package>"
 ---

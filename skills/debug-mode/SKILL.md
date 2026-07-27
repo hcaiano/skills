@@ -1,6 +1,6 @@
 ---
 name: debug-mode
-description: "Evidence debugging for unresolved bugs. Use when the user says 'diagnose' or 'debug this', or when a bug is flaky, environment-specific, production-only, or its root cause survived a normal reproduction/inspection. Build a feedback loop, collect runtime evidence, and fix only after evidence identifies the cause. Do not use for a compiler/type/lint/test error whose cause is in the output, a review finding that already names cause and fix, an already-proven root cause, or from inside an active debug-mode run."
+description: "Evidence-driven debugging for unresolved, flaky, environment-specific, or production-only bugs. Use when asked to diagnose or when normal inspection cannot prove the cause; skip obvious errors and already-proven causes."
 user-invocable: true
 argument-hint: "[description of the bug]"
 ---

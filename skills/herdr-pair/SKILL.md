@@ -1,6 +1,6 @@
 ---
 name: herdr-pair
-description: "Persistent Claude and Codex coworking inside one Herdr tab. Use when the user asks for Herdr pairing, another workflow needs a live peer, or input begins with `[agent` or includes `[herdr-pair control`. For inbound traffic, including after context compaction, run receive and reply through the bundled sender instead of local output."
+description: "Persistent Claude-Codex pairing inside one Herdr tab. Use for live peer work, workflows requesting a pair, or inbound agent/control messages; resume the exact session and reply through the bundled transport."
 ---
 
 # Herdr Pair
