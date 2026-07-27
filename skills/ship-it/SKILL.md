@@ -2,15 +2,12 @@
 name: ship-it
 description: "Manual-only PR creation for current work: grade the review gate from usage pools, run it locally, commit and push intentional changes, open the PR, and wait for green CI. Use only when the user explicitly invokes ship-it."
 disable-model-invocation: true
-user-invocable: true
-argument-hint: "[branch name]"
 ---
 
 # Ship It
 
-Open or update a PR for the current work. Quality is enforced locally, BEFORE
-the PR exists — cloud auto-review is disabled by design. Do not re-enable it,
-request bot reviews, or wait for them.
+Open or update a PR for the current work. Quality is enforced locally, before
+the PR exists.
 
 1. Read the repository instructions and inspect the current branch, diff, and
    working tree. Preserve unrelated user changes. Before review, mark each
@@ -98,11 +95,9 @@ request bot reviews, or wait for them.
    matches what you intended (tooling has silently dropped draft state before).
 7. Wait for required CI checks on the PR head (poll at 60–120 s intervals,
    never tight loops). Fix a red check with one batched commit and push; after
-   two red rounds, stop and report. Do not wait for or solicit bot reviews.
+   two red rounds, stop and report.
 8. Report the outcome to the user: PR link, CI status, the receipt summary,
-   and any findings you discarded or deferred. If actionable review comments appear later (humans,
-   or a manually triggered CodeRabbit), the user can invoke
-   `$review-pr-comments` to handle them — do not invoke it yourself.
+   and any findings you discarded or deferred.
 
 Do not force-push, merge, modify `main`, broaden scope, or change the target
 branch without explicit authorization. Done when the PR is open with the

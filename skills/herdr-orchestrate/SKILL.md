@@ -2,8 +2,6 @@
 name: herdr-orchestrate
 description: "Manual-only orchestrator for delegating GitHub issues to staffed agents in dedicated Herdr tabs: triage → work units → implement → ship-it → merge and dismantle, with model routing and solo/pair staffing per unit; the user owns blocked decisions and holds (high-risk surfaces, all UI)."
 disable-model-invocation: true
-user-invocable: true
-argument-hint: "[issue numbers | gh filters]"
 ---
 
 # Herdr Orchestrate
@@ -29,14 +27,16 @@ names, and issue references literal.
 ## Preconditions
 
 - `herdr` with the agent automation commands (`herdr agent start`,
-  `herdr agent prompt`, `herdr agent wait`) and `gh` on `PATH`,
-  `HERDR_ENV=1`, and `HERDR_PANE_ID` set (the orchestrator must run inside
-  Herdr). If any is missing, stop and say so.
+  `herdr agent prompt`) and `gh` on `PATH`, `HERDR_ENV=1`, and
+  `HERDR_PANE_ID` set (the orchestrator must run inside Herdr). If any is
+  missing, stop and say so.
 - Run from the project repository (or `cd` to the repo the user names).
-- Before any other Herdr command, capture `herdr api snapshot`. Its focused
-  pane must contain an agent and its `foreground_cwd` must resolve to the
-  current repository root. Record that pane's `workspace_id` as the sole
-  workspace for this run; if any check fails, stop.
+- Before any other Herdr command, resolve the orchestrator's injected pane
+  explicitly with `herdr pane get "$HERDR_PANE_ID"`. Record the returned
+  `pane_id` as the report channel and its `workspace_id` as the sole workspace
+  for this run; if it fails, stop. Never discover or override this workspace
+  from UI focus, `herdr api snapshot`, `herdr pane current`, or
+  `herdr workspace list`.
 
 ## Guardrails
 
@@ -232,51 +232,32 @@ at that tab instead of creating a second unit for it.
    executable, so `--pane` must come before the model args' `--`. Always
    pin the model explicitly: a bare `claude` or `codex`
    inherits the user's saved default instead of the graded model.
-   `herdr agent start` returns only once its agent is up (and fails on
-   timeout), so the unit is ready when every start succeeded and the tab
-   holds exactly one pane per agent
+   `herdr agent start` returns only once its agent is up, so the unit is ready
+   when every start succeeded and the tab holds exactly one pane per agent
    (`herdr pane list --workspace <id>` filtered to this tab) — solo: the
    lead in the tab's original pane; pair: lead there, peer in the split. A
    leftover shell pane means the lead was split in instead — close it.
 4. **Kickoff.** Send the message below to the lead per
-   [Sending a message to an agent](#sending-a-message-to-an-agent),
-   including its send-confirmation and recovery ladder — a kickoff does
-   not count as sent until the lead is `working`. The unit is live when
-   the lead reports working.
+   [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
+   is live when `herdr agent prompt` accepts the kickoff.
 
 ### Sending a message to an agent
 
-This ladder governs orchestrator→delegate sends (kickoffs, feedback,
-go-aheads); inbound milestone pushes skip it by design — prompting a
-working agent queues the message into its current turn. Use
-`herdr agent prompt` — it submits the text plus an encoded Enter in one
-operation, honoring bracketed-paste mode. Address the agent by the name
-given at `herdr agent start` (e.g. `lead-42`). A large multi-line message
-(any kickoff) can still land in the composer without its Enter taking, so a
-send is done only when the agent's lifecycle proves it:
+Send every kickoff, feedback message, and go-ahead once with
+`herdr agent prompt <name> "<text>"`. It atomically submits the text and
+Enter; if the agent is working, Herdr queues the message. A successful
+command is the delivery confirmation.
 
-1. Check the target's status (`herdr agent get <name>`). `idle`, `done`, or
-   `blocked` → ready to receive; `working` → wait for the turn to settle
-   first (`herdr agent wait <name> --timeout 120000`), then prompt.
-2. `herdr agent prompt <name> "<text>" --wait`. `--wait` returns at the
-   next settled state (`idle`/`done`/`blocked`). For a kickoff, drop
-   `--wait` and confirm the turn started instead:
-   `herdr agent wait <name> --until working --timeout 15000`.
-3. Recover by what the pane actually shows. On `agent_prompt_stalled`, a
-   nonzero exit, or a confirmation timeout, read the composer
-   (`herdr agent read <name> --source visible`):
-   - The message — or a `[Pasted text …]` placeholder — sits unsubmitted →
-     the paste landed without its Enter: `herdr agent send-keys <name>
-     enter`, then re-confirm `--until working`.
-   - The composer is empty → the submission never landed (startup notices
-     such as rate-limit warnings swallow it): re-send the same prompt
-     once, then re-confirm.
-   - One recovery per send: if the agent still is not working after it,
-     report the pane state to the user.
+Never use `herdr agent wait`, `prompt --wait`, polling, or timeout loops to
+monitor a unit. After a successful send, continue any remaining orchestration
+work without monitoring that delegate, then yield. The lead resumes the
+orchestrator by pushing its next `[unit ...]` milestone to the recorded report
+pane.
 
-For transport mechanics beyond this ladder — key names, pane-level input,
-wait semantics — read the `herdr` skill; it documents the current CLI's
-messaging surface.
+Only recover a failed send: read the visible composer once. If the message
+is present but unsubmitted, send `enter` once; if it is absent, resend the
+prompt once. If that recovery fails, report the pane state to the user.
+Read the `herdr` skill for current transport mechanics.
 
 ### Kickoff message template
 
@@ -356,6 +337,8 @@ Issue #<N>: <title>
    user's calibration data for the solo/pair and model defaults.
 Done when every unit is live in its own tab and the user has the summary,
 or each failed unit has a per-unit failure report naming the failed step.
+End the turn here. Do not wait, poll, or run status sweeps; continue only
+when a lead pushes a milestone or the user asks for status or new work.
 
 ## Unit reports
 
