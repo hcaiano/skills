@@ -99,8 +99,9 @@ the PR exists.
 7. Open or update one accurate, ready-for-review PR whose body carries the
    gate and final-CI receipt — no receipt, no PR. Create new PRs as non-draft;
    verify after creation that GitHub preserved the intended ready state.
-   Handle current reviews, comments, and unresolved threads, then record the
-   clean live-review baseline time.
+   Handle current reviews, comments, and unresolved threads. If that changes
+   the branch, return to steps 4–7 before recording the clean live-review
+   baseline time.
 8. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
    never tight loops). Fix a red check with one batched commit and return to
    steps 4–7; after two red rounds, stop and report.
