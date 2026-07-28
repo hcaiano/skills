@@ -12,10 +12,14 @@ the PR exists.
    working tree. Preserve unrelated user changes. Before review, mark each
    intended untracked path with `git add --intent-to-add -- <path>` so the
    complete diff includes its contents; never do this to unrelated files.
-2. **Grade the gate.** The gate spends both usage pools — Claude
-   (simplify + review) and Codex (review) — so fix its level before
-   anything runs. An orchestrator-graded gate named in the invocation
-   wins. Otherwise read the pools yourself: run
+2. **Grade the gate.** A reproduced, localized, reversible production hotfix
+   with a focused regression and no migration, auth or permission, payment,
+   destructive-infrastructure, or public-API change uses `single`: skip pool
+   grading and run only the current agent's native review. Otherwise the gate
+   spends both usage pools — Claude (simplify + review) and Codex (review) — so
+   fix its level before anything runs. When an orchestrator names a graded gate,
+   ship-it still owns this hotfix check: `single` overrides that grade; otherwise
+   the orchestrator's grade wins. Without one, read the pools yourself: run
    `node scripts/usage-state.mjs` from the herdr-orchestrate skill
    installed alongside this one; a pool is out of headroom at
    `used_percent` ≥ 90 or when its CLI is observed refusing — a null
@@ -25,8 +29,8 @@ the PR exists.
    responds or wait for a reset. Tell the user the graded level when it
    is anything but `dual`.
 3. **Simplify pass** — once per PR, always before the review gate so the
-   reviewers see the simplified diff; a `codex-only` gate skips it (it
-   spends Claude tokens). Skip an existing receipt only when its
+   reviewers see the simplified diff; a `single` or `codex-only` gate skips it.
+   Skip an existing receipt only when its
    `Simplify:` line proves a successful prior run or an applicable
    docs-only skip; a failed/aborted attempt is not success. Otherwise have
    Claude run its native `/simplify` command on this same final diff:
@@ -47,12 +51,14 @@ the PR exists.
    On success, keep Claude's fixes in the working tree and run focused proof
    before the review gate. Skip simplify, like the gate, for
    docs/markdown/config-only diffs.
-4. **Local review gate** at the graded level — `dual`: both native
-   reviews below; `codex-only`: the Codex review alone; `claude-only`:
-   the Claude review alone. Skip only for diffs touching exclusively
+4. **Local review gate** at the graded level — `single`: the current agent's
+   native review alone; `dual`: both native reviews below; `codex-only`: the
+   Codex review alone; `claude-only`: the Claude review alone. Skip only for
+   diffs touching exclusively
    docs/markdown/config with no runtime surface; the receipt names the
-   graded level. Everything else in this step applies to whichever
-   review(s) run. This is a fresh adversarial
+   graded level. A `single` gate stops if its native review cannot complete; it
+   never regrades to another agent. Everything else in this step applies to
+   whichever review(s) run. This is a fresh adversarial
    review of the FINAL diff — reviews that happened while writing the code
    (pair acceptance, impeccable, in-flight feedback) are a different thing
    and leave this gate unrun:
@@ -64,9 +70,10 @@ the PR exists.
        type), or from Codex/headless as
        `node <ship-it-dir>/scripts/run-claude-native.mjs review`.
        The same structured-result, heartbeat, timeout, MCP-isolation, and
-       transactional rollback rules from simplify apply. A nonzero result
-       makes Claude unavailable for this gate and regrades it; do not improvise
-       a replacement Claude prompt.
+       transactional rollback rules from simplify apply. For non-`single`
+       gates, a nonzero result makes Claude unavailable and regrades only when
+       the other harness remains available; otherwise stop. `single` always
+       stops. Do not improvise a replacement Claude prompt.
        This gate is satisfied only by running the `/code-review` command in
        full; nothing improvised stands in for it.
      - Codex: run `codex review "<final-diff review prompt>"`. Do not use
@@ -98,7 +105,8 @@ the PR exists.
      is clean — never a third full pass; surface any leftovers to the user
      instead.
    - The gate leaves a **receipt**: a `## Dual-review` section for the PR body
-     opening with a `Gate:` line (`dual` / the degraded level and why) and a
+     opening with a `Gate:` line (`single — hotfix` / `dual` / the degraded
+     level and why) and a
      `Simplify:` line (`applied in <sha>` / `already run` /
      `skipped — <reason>` / `failed — workspace restored, partial stash
      <sha>`), then naming the exact harness command each
