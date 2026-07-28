@@ -71,8 +71,9 @@ the PR exists.
        `node <ship-it-dir>/scripts/run-claude-native.mjs review`.
        The same structured-result, heartbeat, timeout, MCP-isolation, and
        transactional rollback rules from simplify apply. For non-`single`
-       gates, a nonzero result makes Claude unavailable and regrades the gate;
-       `single` stops instead. Do not improvise a replacement Claude prompt.
+       gates, a nonzero result makes Claude unavailable and regrades only when
+       the other harness remains available; otherwise stop. `single` always
+       stops. Do not improvise a replacement Claude prompt.
        This gate is satisfied only by running the `/code-review` command in
        full; nothing improvised stands in for it.
      - Codex: run `codex review "<final-diff review prompt>"`. Do not use
