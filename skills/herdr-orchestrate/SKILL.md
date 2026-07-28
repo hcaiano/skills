@@ -255,7 +255,7 @@ at that tab instead of creating a second unit for it.
    leftover shell pane means the lead was split in instead — close it.
 4. **Kickoff.** Send the message below to the lead pane per
    [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
-   is live when `herdr agent prompt` accepts the kickoff.
+   is live when the kickoff lands.
 
 ### Sending a message to an agent
 
