@@ -255,25 +255,25 @@ at that tab instead of creating a second unit for it.
    leftover shell pane means the lead was split in instead — close it.
 4. **Kickoff.** Send the message below to the lead pane per
    [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
-   is live when `herdr agent prompt` accepts the kickoff.
+   is live when the kickoff lands.
 
 ### Sending a message to an agent
 
 Send every kickoff, feedback message, and go-ahead once with
-`herdr agent prompt <pinned pane_id> "<text>"`. It atomically submits the text and
-Enter; if the agent is working, Herdr queues the message. A successful
-command is the delivery confirmation.
+`herdr agent prompt <pinned pane_id> "<text>"`; if the agent is working,
+Herdr queues the message.
 
-Never use `herdr agent wait`, `prompt --wait`, polling, or timeout loops to
-monitor a unit. After a successful send, continue any remaining orchestration
-work without monitoring that delegate, then yield. The lead resumes the
-orchestrator by pushing its next `[unit workspace=...]` milestone to the pinned report
-pane.
+`agent prompt` returns before it sends the message's Enter, so its success
+is not delivery: a message is **landed** only once the target's composer is
+clear. Land every send — read that composer; `herdr agent send-keys
+<pinned pane_id> enter` if your message sits there, resend once if it never
+arrived, and report the pane state to the user if it will not land.
 
-Only recover a failed send: read the visible composer once. If the message
-is present but unsubmitted, send `enter` once; if it is absent, resend the
-prompt once. If that recovery fails, report the pane state to the user.
-Read the `herdr` skill for current transport mechanics.
+Landing is the only read you owe a delegate. Never use `herdr agent wait`,
+`prompt --wait`, polling, or timeout loops to monitor a unit: continue any
+remaining orchestration work, then yield. The lead resumes the orchestrator
+by pushing its next `[unit workspace=...]` milestone to the pinned report
+pane. Read the `herdr` skill for current transport mechanics.
 
 ### Kickoff message template
 
@@ -295,7 +295,10 @@ you hit it —
   herdr agent prompt <report pane id> \
     "[unit workspace=<workspace_id> <label>] <kind>: <detail>"
 — push unconditionally, even if the orchestrator is mid-turn (the prompt
-queues). <kind> and its <detail>:
+queues), then land it: `agent prompt` returns before it sends the Enter, so
+read that pane's composer and `herdr agent send-keys <report pane id> enter`
+if your message is sitting there unsubmitted. An unlanded milestone stalls
+the unit in silence. <kind> and its <detail>:
   ready — the commit SHA, then per issue: what changed and where.
   shipped — PR URL, exact head SHA, CI state, and live-review checked-at time.
   blocked — the exact decision you need.
