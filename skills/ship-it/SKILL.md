@@ -1,7 +1,6 @@
 ---
 name: ship-it
-description: "Manual-only delivery of current work: run the graded local review gate, commit and push intentional changes, open or update one PR, and wait for green CI."
-disable-model-invocation: true
+description: "Ship finished work: the graded local review gate, then one PR carried to green CI. Use when the user wants to ship, open, or update a PR, or when another skill needs that graded gate."
 ---
 
 # Ship It
@@ -27,13 +26,27 @@ the PR exists.
    is anything but `dual`.
 3. **Simplify pass** — once per PR, always before the review gate so the
    reviewers see the simplified diff; a `codex-only` gate skips it (it
-   spends Claude tokens). If the open PR for this branch already
-   carries a `Simplify:` line in its receipt, the pass has run: skip it.
-   Otherwise have Claude run its native `/simplify` command on this same
-   final diff (in-session when Claude is driving; headless form:
-   `claude -p --model opus --permission-mode acceptEdits --output-format text "/simplify"`)
-   and keep its fixes in the working tree for the gate to review. Skip it,
-   like the gate, for docs/markdown/config-only diffs.
+   spends Claude tokens). Skip an existing receipt only when its
+   `Simplify:` line proves a successful prior run or an applicable
+   docs-only skip; a failed/aborted attempt is not success. Otherwise have
+   Claude run its native `/simplify` command on this same final diff:
+   - In-session when Claude is driving, invoke `/simplify` directly.
+   - From Codex/headless, run the bundled transactional wrapper from the
+     target worktree:
+     `node <ship-it-dir>/scripts/run-claude-native.mjs simplify`.
+     The wrapper owns the 60-minute total deadline and 20-minute
+     no-progress deadline, streams structured progress, disables Chrome and
+     unrelated MCP startup, requires Claude's successful final result event,
+     and restores the exact pre-run Git-visible working tree on every
+     incomplete result.
+     Do not wrap it in a shorter timeout, interrupt it while its heartbeats
+     continue, or replace it with the old buffered `--output-format text`
+     command. A failed run leaves Claude's partial work in a named recoverable
+     stash and exits nonzero; report the stash, mark Claude unavailable for
+     this gate, regrade to `codex-only`, and continue without those edits.
+   On success, keep Claude's fixes in the working tree and run focused proof
+   before the review gate. Skip simplify, like the gate, for
+   docs/markdown/config-only diffs.
 4. **Local review gate** at the graded level — `dual`: both native
    reviews below; `codex-only`: the Codex review alone; `claude-only`:
    the Claude review alone. Skip only for diffs touching exclusively
@@ -48,8 +61,12 @@ the PR exists.
      skill:
      - Claude Code: invoke the `/code-review` slash command itself on Opus —
        in-session when Claude is driving (the same command the user would
-       type), or headless as
-       `claude -p --model opus --permission-mode plan --output-format text "/code-review"`.
+       type), or from Codex/headless as
+       `node <ship-it-dir>/scripts/run-claude-native.mjs review`.
+       The same structured-result, heartbeat, timeout, MCP-isolation, and
+       transactional rollback rules from simplify apply. A nonzero result
+       makes Claude unavailable for this gate and regrades it; do not improvise
+       a replacement Claude prompt.
        This gate is satisfied only by running the `/code-review` command in
        full; nothing improvised stands in for it.
      - Codex: run `codex review "<final-diff review prompt>"`. Do not use
@@ -83,7 +100,8 @@ the PR exists.
    - The gate leaves a **receipt**: a `## Dual-review` section for the PR body
      opening with a `Gate:` line (`dual` / the degraded level and why) and a
      `Simplify:` line (`applied in <sha>` / `already run` /
-     `skipped — <reason>`), then naming the exact harness command each
+     `skipped — <reason>` / `failed — workspace restored, partial stash
+     <sha>`), then naming the exact harness command each
      reviewer ran, the finding counts,
      and each valid finding's disposition (fixed in `<sha>` / deferred to
      `#N`). A skipped
