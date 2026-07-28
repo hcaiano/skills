@@ -17,9 +17,9 @@ the PR exists.
    destructive-infrastructure, or public-API change uses `single`: skip pool
    grading and run only the current agent's native review. Otherwise the gate
    spends both usage pools — Claude (simplify + review) and Codex (review) — so
-   fix its level before anything runs. An orchestrator-graded gate named in the
-   invocation wins only when the gate is not `single`. Otherwise read the pools
-   yourself: run
+   fix its level before anything runs. When an orchestrator names a graded gate,
+   ship-it still owns this hotfix check: `single` overrides that grade; otherwise
+   the orchestrator's grade wins. Without one, read the pools yourself: run
    `node scripts/usage-state.mjs` from the herdr-orchestrate skill
    installed alongside this one; a pool is out of headroom at
    `used_percent` ≥ 90 or when its CLI is observed refusing — a null
@@ -70,9 +70,9 @@ the PR exists.
        type), or from Codex/headless as
        `node <ship-it-dir>/scripts/run-claude-native.mjs review`.
        The same structured-result, heartbeat, timeout, MCP-isolation, and
-       transactional rollback rules from simplify apply. A nonzero result
-       makes Claude unavailable for this gate and regrades it; do not improvise
-       a replacement Claude prompt.
+       transactional rollback rules from simplify apply. For non-`single`
+       gates, a nonzero result makes Claude unavailable and regrades the gate;
+       `single` stops instead. Do not improvise a replacement Claude prompt.
        This gate is satisfied only by running the `/code-review` command in
        full; nothing improvised stands in for it.
      - Codex: run `codex review "<final-diff review prompt>"`. Do not use
