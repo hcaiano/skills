@@ -1,6 +1,7 @@
 interface:
   display_name: "Ship It"
-  short_description: "Open a PR, then hand off review cleanup"
+  short_description: "Run the local review gate and ship a PR"
+  default_prompt: "Use $ship-it to review and ship the current branch safely."
 
 policy:
   allow_implicit_invocation: false
