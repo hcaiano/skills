@@ -4,4 +4,4 @@ interface:
   default_prompt: "Use $ship-it to review and ship the current branch safely."
 
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
