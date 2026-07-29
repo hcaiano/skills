@@ -85,6 +85,29 @@ else if (args[0] === "agent" && args[1] === "prompt") {
     process.exit(1);
   }
   output({});
+} else if (args[0] === "pane" && args[1] === "split") {
+  const source = state.panes[args[2]];
+  const pane = {
+    agent: null, agent_status: "unknown", cwd: source.cwd,
+    pane_id: source.pane_id + "s", tab_id: source.tab_id, workspace_id: source.workspace_id,
+  };
+  state.panes[pane.pane_id] = pane;
+  save();
+  output({ pane });
+} else if (args[0] === "agent" && args[1] === "start") {
+  // herdr's own rule, enforced here so a name it would reject fails the suite
+  // instead of only failing in production.
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2])) {
+    process.stderr.write("invalid_agent_name: " + args[2] + "\\n");
+    process.exit(1);
+  }
+  const paneId = args[args.indexOf("--pane") + 1];
+  const pane = state.panes[paneId];
+  pane.agent = args[args.indexOf("--kind") + 1];
+  pane.agent_status = "idle";
+  state.last_agent_name = args[2];
+  save();
+  output({ agent: pane });
 } else if (args[0] === "agent" && args[1] === "send-keys") {
   state.enter_keys = (state.enter_keys ?? 0) + 1;
   state.last_send_keys = { pane: args[2], key: args[3] };
@@ -580,6 +603,28 @@ try {
   run("end", "--sid", rebound.sid, "--stale", "true");
   assert.equal(existsSync(sessionPath), false);
   assert.equal(existsSync(otherTabDirectory), true);
+
+  // Spawning derives the peer's agent name from the tab id, and herdr rejects
+  // anything but 1-32 lowercase characters. Workspace ids carry uppercase
+  // (wY:t1) and long ones overflow the limit — both broke the spawn outright.
+  for (const [paneId, tabId, workspaceId, expected] of [
+    ["wY:p1", "wY:t1", "wY", "pair-claude-wy_t1"],
+    ["w655f3dd90835016:p1", "w655f3dd90835016:t123", "w655f3dd90835016", "pair-claude-f0e59f4e"],
+  ]) {
+    const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
+    spawnState.panes = {
+      [paneId]: {
+        agent: "codex", agent_status: "idle", cwd: "/workspace",
+        pane_id: paneId, tab_id: tabId, workspace_id: workspaceId,
+      },
+    };
+    delete spawnState.last_agent_name;
+    writeFileSync(statePath, `${JSON.stringify(spawnState, null, 2)}\n`);
+    runAs(paneId, "spawn");
+    const named = JSON.parse(readFileSync(statePath, "utf8")).last_agent_name;
+    assert.equal(named, expected, `spawn used an agent name herdr would reject: ${named}`);
+    assert.match(named, /^[a-z][a-z0-9_-]{0,31}$/u);
+  }
 
   process.stdout.write("herdr-pair tests: PASS\n");
 } finally {
