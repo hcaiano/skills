@@ -265,17 +265,22 @@ at that tab instead of creating a second unit for it.
 
 ### Sending a message to an agent
 
-Send every kickoff, feedback message, and go-ahead once with
-`herdr agent prompt <pinned pane_id> "<text>"`; if the agent is working,
-Herdr queues the message.
+Send every kickoff, feedback message, and go-ahead through this skill's
+`scripts/send.mjs`, never through `herdr agent prompt` directly:
 
-`agent prompt` returns before it sends the message's Enter, so its success
-is not delivery: a message is **landed** only once the target's composer is
-clear. Land every send — read that composer; `herdr agent send-keys
-<pinned pane_id> enter` if your message sits there, resend once if it never
-arrived, and report the pane state to the user if it will not land.
+```bash
+node <skill dir>/scripts/send.mjs <pane_id> "<text>"
+node <skill dir>/scripts/send.mjs <pane_id> @<file>   # kickoffs: no quoting
+```
 
-Landing is the only read you owe a delegate. Never use `herdr agent wait`,
+It pastes, lets the paste settle, presses Enter, and confirms the composer
+cleared — `agent prompt` returns before its Enter takes effect and does not
+always deliver one, and a message left sitting in a composer stalls the unit
+in silence. Exit 0 carries a `landed: true` receipt; exit 1 means it never
+landed and that pane goes to the user. Keep the paste-and-Enter dance inside
+the script: hand-rolling it around `agent prompt` is how this breaks.
+
+That receipt is the only read you owe a delegate. Never use `herdr agent wait`,
 `prompt --wait`, polling, or timeout loops to monitor a unit: continue any
 remaining orchestration work, then yield. The lead resumes the orchestrator
 by pushing its next `[unit workspace=...]` milestone to the pinned report
@@ -298,13 +303,13 @@ ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
 Milestones: report each one by pushing it to the orchestrator the moment
 you hit it —
-  herdr agent prompt <report pane id> \
+  node <absolute path to send.mjs> <report pane id> \
     "[unit workspace=<workspace_id> <label>] <kind>: <detail>"
-— push unconditionally, even if the orchestrator is mid-turn (the prompt
-queues), then land it: `agent prompt` returns before it sends the Enter, so
-read that pane's composer and `herdr agent send-keys <report pane id> enter`
-if your message is sitting there unsubmitted. An unlanded milestone stalls
-the unit in silence. <kind> and its <detail>:
+— push unconditionally, even if the orchestrator is mid-turn; the script
+queues it and confirms it landed. Never substitute `herdr agent prompt`: it
+returns before its Enter takes effect, and an unlanded milestone stalls this
+unit in silence. A non-zero exit means it did not land — retry it, and tell
+the user if it still will not. <kind> and its <detail>:
   ready — the commit SHA, then per issue: what changed and where.
   shipped — PR URL, exact head SHA, CI state, and live-review checked-at time.
   blocked — the exact decision you need.
