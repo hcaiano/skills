@@ -19,35 +19,48 @@ the PR exists.
    spends both usage pools — Claude (simplify + review) and Codex (review) — so
    fix its level before anything runs. When an orchestrator names a graded gate,
    ship-it still owns this hotfix check: `single` overrides that grade; otherwise
-   the orchestrator's grade wins. Without one, read the pools yourself: run
+   the orchestrator's grade wins. Read the pools either way: run
    `node scripts/usage-state.mjs` from the herdr-orchestrate skill
    installed alongside this one; a pool is out of headroom at
    `used_percent` ≥ 90 or when its CLI is observed refusing — a null
-   reading never degrades on its own. Both with headroom → `dual`.
-   Claude out → `codex-only`. Codex out → `claude-only`. Both out →
-   stop and ask the user whether to ship on whichever harness still
-   responds or wait for a reset. Tell the user the graded level when it
-   is anything but `dual`.
+   reading never degrades on its own. Absent an orchestrator grade, both
+   pools with headroom → `dual`. Claude out → `codex-only`. Codex out →
+   `claude-only`. Both out → stop and ask the user whether to ship on
+   whichever harness still responds or wait for a reset. Tell the user the
+   graded level when it is anything but `dual`.
+   A pool inside its headroom but reading `pace` above 2 spends at twice
+   what the rest of its window funds, so it empties before its reset. The
+   graded reviews still run at that pace; what gives way is the Claude
+   simplify pass, and only to `claude.pace` — a hot Codex pool never skips
+   it (step 3).
 3. **Simplify pass** — once per PR, always before the review gate so the
-   reviewers see the simplified diff; a `single` or `codex-only` gate skips it.
+   reviewers see the simplified diff; a `single` or `codex-only` gate skips
+   it, as does `claude.pace` above 2 (step 2).
    Skip an existing receipt only when its
    `Simplify:` line proves a successful prior run or an applicable
    docs-only skip; a failed/aborted attempt is not success. Otherwise have
    Claude run its native `/simplify` command on this same final diff:
    - In-session when Claude is driving, invoke `/simplify` directly.
-   - From Codex/headless, run the bundled transactional wrapper from the
-     target worktree:
-     `node <ship-it-dir>/scripts/run-claude-native.mjs simplify`.
-     The wrapper owns the 60-minute total deadline and 20-minute
-     no-progress deadline, streams structured progress, disables Chrome and
-     unrelated MCP startup, requires Claude's successful final result event,
-     and restores the exact pre-run Git-visible working tree on every
-     incomplete result.
-     Do not wrap it in a shorter timeout, interrupt it while its heartbeats
-     continue, or replace it with the old buffered `--output-format text`
-     command. A failed run leaves Claude's partial work in a named recoverable
-     stash and exits nonzero; report the stash, mark Claude unavailable for
-     this gate, regrade to `codex-only`, and continue without those edits.
+   - From Codex/headless, `acceptEdits` writes to the worktree unsupervised,
+     so bracket the run. Snapshot the pre-run tree first as a baseline patch,
+     `git diff HEAD --binary > <baseline patch>` — it captures the
+     intent-to-add paths from step 1, which `git stash create` refuses. Then
+     start this in the background against a log, keeping its PID (stock
+     macOS has no `timeout` binary, so the deadline is yours):
+     `claude -p --model opus --permission-mode acceptEdits --strict-mcp-config --no-chrome --output-format stream-json --include-partial-messages --verbose "/simplify"`.
+     Streamed events make progress visible: the log growing is the liveness
+     signal, and 20 minutes without a new line, or 60 minutes in total, is a
+     hang. Complete means exit 0 plus a final `result` event with
+     `is_error: false`.
+     On a hang, a nonzero exit, or a missing result: kill that PID and
+     confirm no `claude` process is still writing before touching the tree
+     (background jobs share the caller's process group, so kill the PID
+     itself, never the group). Restore with
+     `git checkout HEAD -- . && git apply --binary <baseline patch>`, re-mark
+     the step 1 intent-to-add paths, and review anything untracked the run
+     left behind. Then mark Claude unavailable for this
+     gate (step 4 regrades) and record `failed — <reason>` on the receipt's
+     `Simplify:` line.
    On success, keep Claude's fixes in the working tree and run focused proof
    before the review gate. Skip simplify, like the gate, for
    docs/markdown/config-only diffs.
@@ -56,9 +69,11 @@ the PR exists.
    Codex review alone; `claude-only`: the Claude review alone. Skip only for
    diffs touching exclusively
    docs/markdown/config with no runtime surface; the receipt names the
-   graded level. A `single` gate stops if its native review cannot complete; it
-   never regrades to another agent. Everything else in this step applies to
-   whichever review(s) run. This is a fresh adversarial
+   graded level. A one-review gate — `single`, `codex-only`, `claude-only` —
+   stops if that review cannot complete and never regrades to another agent;
+   a `dual` review that cannot complete regrades to the other harness alone,
+   named in the receipt. Everything else in this step
+   applies to whichever review(s) run. This is a fresh adversarial
    review of the FINAL diff — reviews that happened while writing the code
    (pair acceptance, impeccable, in-flight feedback) are a different thing
    and leave this gate unrun:
@@ -67,13 +82,11 @@ the PR exists.
      skill:
      - Claude Code: invoke the `/code-review` slash command itself on Opus —
        in-session when Claude is driving (the same command the user would
-       type), or from Codex/headless as
-       `node <ship-it-dir>/scripts/run-claude-native.mjs review`.
-       The same structured-result, heartbeat, timeout, MCP-isolation, and
-       transactional rollback rules from simplify apply. For non-`single`
-       gates, a nonzero result makes Claude unavailable and regrades only when
-       the other harness remains available; otherwise stop. `single` always
-       stops. Do not improvise a replacement Claude prompt.
+       type), or headless as
+       `claude -p --model opus --permission-mode plan --strict-mcp-config --no-chrome --output-format stream-json --include-partial-messages --verbose "/code-review"`,
+       backgrounded against a log, live and complete on step 3's terms. Its
+       `plan` mode writes nothing, so it needs no baseline patch — a hang
+       still gets the same kill.
        This gate is satisfied only by running the `/code-review` command in
        full; nothing improvised stands in for it.
      - Codex: run `codex review "<final-diff review prompt>"`. Do not use
@@ -108,8 +121,7 @@ the PR exists.
      opening with a `Gate:` line (`single — hotfix` / `dual` / the degraded
      level and why) and a
      `Simplify:` line (`applied in <sha>` / `already run` /
-     `skipped — <reason>` / `failed — workspace restored, partial stash
-     <sha>`), then naming the exact harness command each
+     `skipped — <reason>` / `failed — <reason>`), then naming the exact harness command each
      reviewer ran, the finding counts,
      and each valid finding's disposition (fixed in `<sha>` / deferred to
      `#N`). A skipped
