@@ -100,8 +100,9 @@ node "$PAIR_SCRIPT" send --kind "$KIND" --body-file "$BODY"
 
 The sender waits for the partner to be promptable, reserves the sequence and
 message kind, then injects the control line and submits header, control line,
-and body in one `herdr agent prompt` call — text plus encoded Enter,
-bracketed-paste safe. It waits for `receive` to acknowledge that sequence in
+and body in one `herdr agent prompt` call, followed by the Enter that call
+owes but does not always deliver — without it the message sits unsubmitted in
+the partner's composer and the ACK wait below reads it as a busy partner. It waits for `receive` to acknowledge that sequence in
 `session.json`; an ACK can recover an interruption immediately after
 submission.
 

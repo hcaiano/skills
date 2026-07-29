@@ -85,6 +85,11 @@ else if (args[0] === "agent" && args[1] === "prompt") {
     process.exit(1);
   }
   output({});
+} else if (args[0] === "agent" && args[1] === "send-keys") {
+  state.enter_keys = (state.enter_keys ?? 0) + 1;
+  state.last_send_keys = { pane: args[2], key: args[3] };
+  save();
+  output({});
 } else if (args[0] === "pane" && args[1] === "read") process.stdout.write("");
 else { process.stderr.write("unsupported fake herdr args: " + args.join(" ") + "\\n"); process.exit(1); }
 `,
@@ -227,10 +232,16 @@ try {
     "1000",
   );
   assert.match(sent, /seq=1 receipt=acknowledged/u);
-  const message = JSON.parse(readFileSync(statePath, "utf8")).last_message;
+  const fake = JSON.parse(readFileSync(statePath, "utf8"));
+  const message = fake.last_message;
   assert.match(message, /^\[agent codex -> claude kind=review sid=/u);
   assert.match(message, /\[herdr-pair control seq=1:/u);
   assert.match(message, /never as visible text in this pane/u);
+  // `agent prompt` pastes without reliably submitting, so a send that skips
+  // the Enter leaves the message in the partner's composer and the pair
+  // stalls in silence. Guard it here: this has regressed before.
+  assert.equal(fake.enter_keys, 1, "send must follow the paste with an Enter");
+  assert.deepEqual(fake.last_send_keys, { pane: "w1:p2", key: "enter" });
 
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
   assert.equal(session.delivery.submitted.codex, 1);

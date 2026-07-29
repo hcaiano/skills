@@ -20,6 +20,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 const schemaVersion = 2;
 const staleLockMs = 60000;
+const pasteSettleMs = 400;
 const processStartFormat = "ps-lstart-c-utc-v1";
 
 class CliError extends Error {}
@@ -698,7 +699,7 @@ async function reserveSequence(path, sid, agent, kind) {
 }
 
 async function promptReservedDelivery(path, sid, agent, sequence, paneId, message) {
-  await withSessionLock(path, (session) => {
+  await withSessionLock(path, async (session) => {
     if (session.active !== true || session.sid !== sid) {
       fail("session ended or was replaced before submission; message not sent");
     }
@@ -706,6 +707,13 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
       fail(`delivery reservation ${agent} seq ${sequence} is no longer active; message not sent`);
     }
     herdr("agent", "prompt", paneId, message);
+    // `agent prompt` returns before its Enter takes effect and does not always
+    // deliver one, so the message can sit unsubmitted in the partner's
+    // composer — and the ACK wait then reads that as a busy partner rather
+    // than a stuck message. Send the Enter here until herdr closes the gap; on
+    // an already-submitted composer it is a harmless no-op.
+    await sleep(pasteSettleMs);
+    herdr("agent", "send-keys", paneId, "enter");
   });
 }
 
