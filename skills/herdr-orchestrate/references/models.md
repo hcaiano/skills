@@ -49,31 +49,60 @@ Taste = UI/UX, code quality, API design, copy.
 ## Weekly usage state
 
 Before grading, run `node scripts/usage-state.mjs` from this skill's
-directory. It prints one JSON line with each pool's weekly usage; a null pool
-means that source is unavailable — grade without the signal, never guess it:
+directory, and again before each later wave. It prints one JSON line per
+pool; a null pool means that source is unavailable — grade without the
+signal, never guess it:
 
 ```json
-{"claude":{"used_percent":41,"resets_in_hours":114,"stale_minutes":3},
- "codex":{"used_percent":20,"resets_in_hours":129,"stale_minutes":12}}
+{"claude":{"used_percent":49,"elapsed_hours":31,"resets_in_hours":137,"days_left":5.72,
+  "burn_per_day":38.4,"budget_per_day":8.9,"pace":4.3,"days_to_empty":1.3,
+  "short_window":{"used_percent":30,"resets_in_hours":2.2},"stale_minutes":0},
+ "codex":{"used_percent":7,"elapsed_hours":5,"resets_in_hours":163,"days_left":6.77,
+  "burn_per_day":null,"budget_per_day":13.7,"pace":null,"days_to_empty":null,
+  "short_window":null,"stale_minutes":0}}
 ```
 
 Sources: Claude — `~/.claude/usage-state.json`, written by the user's
 statusline on every active session update; Codex — the newest plan-pool
-`rate_limits` snapshot in `~/.codex/sessions`. `stale_minutes` is the
-snapshot's age; both windows are 7 days (168 h).
+`rate_limits` snapshot in `~/.codex/sessions`. Both weekly windows are 168 h
+but they open on different days, so the raw percentages are not comparable.
 
-- **Balance the pools.** The target is landing each weekly reset with both
-  pools similarly spent — never one exhausted while the other sits on
-  headroom. Route discretionary units to the pool burning cooler: compare
-  each pool's `used_percent` with how much of its window has elapsed
-  (`168 - resets_in_hours` out of 168); ahead of pace = hot, behind = cool.
-- A pool close to its reset with headroom left is fuel about to expire —
-  drain it first.
-- Both pools nearly exhausted → queue non-urgent units until the earlier
-  reset (`resets_in_hours` is at most a few days away) rather than degrading
-  to the fast lane while the review gate runs on the same empty pools; tell
-  the user what queued and until when. Only genuinely urgent work still
-  runs, on a workhorse.
+- **`pace` is the fuel gauge, not `used_percent`** — points/day spent so far
+  over points/day the rest of the window can still fund. A pool at 45% at
+  pace 3.8 holds ~1.5 days of fuel; a pool at 70% at pace 0.8 lasts to its
+  reset. `days_to_empty` is the same reading in days: the number to quote to
+  the user. The target is landing both pools near pace 1 at their resets.
+- **The orchestrator spends the Claude pool too** — its own turns, its
+  Claude implementers, and every Claude review — so Claude burns hotter than
+  the unit split suggests.
+- **Act on the pace**, in this order:
+  - both pools at 1.2 or under — grade normally; usage is not a constraint.
+  - one pool above 1.2 — staff this wave from the other pool, workhorse
+    models unchanged; only a unit that needs the hot pool's specific model
+    (sol for visual work, opus-5 for a long unsupervised run) still takes it.
+  - both above 1.2 — tighten the wave before touching model quality: solo
+    instead of pair (a pair spends both pools), fast lane for the units that
+    qualify, workhorses for the rest.
+  - both above 2 with `days_to_empty` under 2 — run only urgent units and
+    queue the rest until the earlier reset.
+- **An out-of-headroom pool takes nothing new**, whatever its pace says
+  (defined in the gate section below). Both out of headroom queues
+  non-urgent units until the earlier reset, however cool their pace reads.
+- **`pace: null`** — no measurable rate: the window is under 12 h old, under
+  6 h from reset, or fully spent. Apply the headroom rule first, then staff
+  from the null-pace pool when the measured one is above 1.2, grade normally
+  when it is not, and with both null prefer the lower `used_percent`.
+- **Expiring fuel.** A pool with `days_left` at or under 1.5, pace under 1,
+  and real headroom left loses what it does not spend — drain it first. This
+  is the one case that outranks routing away from the hotter pool; above
+  pace 1 the fuel is already spoken for, so the routing ladder holds.
+- **`stale_minutes` over ~180** means that pool has not run recently and
+  reads cooler than it is; treat its `used_percent` as a floor. A pool whose
+  window reset since its snapshot reads `null` — the script drops it rather
+  than reporting a window with no time left.
+- **`short_window`** is the pool's burst limit. At 80% or higher, a new agent
+  on that pool can stall or rate-limit at start — stagger the wave's kickoffs
+  or start it on the other pool.
 
 ## Review gate by pool state
 
@@ -90,14 +119,17 @@ degrade on evidence, not absence of signal:
   satisfies the gate; Claude simplify and review are skipped.
 - `claude-only` — the Codex pool is out of headroom: run Claude simplify,
   then a single Claude code review.
-- Both pools out → the both-pools-exhausted rule above: queue the unit. A
+- Both pools out → queue the unit, per the out-of-headroom rule above. A
   genuinely urgent unit that runs anyway takes a single review on
   whichever harness still responds when tried (prefer the pool its lead
   did not implement on); if neither responds, the unit's merge policy
   becomes `hold` — it stops at shipped for the user's own review.
 
-A degraded gate is a capacity decision, not a quality discount — the
-orchestrator's scope checks (ready, ship delta) still run in full.
+Pace alone never drops a review: a pool burning hot but still under 90%
+throttles how many units run and which pool staffs them (ship-it trims its
+simplify pass on the same signal). A degraded gate is a capacity decision,
+not a quality discount — the orchestrator's scope checks (ready, ship delta)
+still run in full.
 Name the graded gate in the kickoff and in the phase 4 summary, and check
 the shipped receipt against it: a `codex-only` receipt with one review is
 complete for that unit.

@@ -166,9 +166,9 @@ from what the issues demand:
 
 Then grade each unit's **staffing and model(s)** from
 `references/models.md` — model table, selection rules, and the usage-state
-command all live there; run that command once per invocation and grade every
-unit against its output — the same reading also grades the unit's
-**review gate** (`dual` by default; a pool without headroom degrades it,
+command all live there; run that command before grading each wave and staff
+every unit against the `pace` it reports. The same reading also grades the
+unit's **review gate** (`dual` by default; a pool without headroom degrades it,
 rules in the same reference; ship-it runs the gate at the graded level).
 Solo is the default: one implementer, with the orchestrator's scope checks
 and the graded ship-it gate unchanged by staffing. A pair
@@ -183,8 +183,9 @@ API contracts); or visible UI, which is always `hold` — agents never ship
 design unsupervised, the user gives design feedback personally. A `hold`
 unit stops at shipped for the user's OK.
 
-When the usage rules queue work (`references/models.md`: both pools
-exhausted), grade those units `queued (until <reset>)` instead of staffing
+When the usage rules queue work (`references/models.md`: both pools out of
+fuel before their resets), grade those units `queued (until <reset>)`
+instead of staffing
 them: report them in the split, skip their phase 3, and leave their issues
 free — any invocation after the reset triages and delegates them normally.
 
@@ -352,7 +353,9 @@ Issue #<N>: <title>
 1. After the last kickoff, summarize for the user: one line per unit — tab
    label, issues, branch, worktree path, effort, staffing, model(s), merge
    policy, review gate, status — plus the usage-state JSON the grading used,
-   verbatim: a
+   verbatim, and one line reading it: which pool is hot, each pool's
+   `days_to_empty` against its `days_left`, and what that changed in the
+   staffing. A
    nonsense reading must be visible to the user, never silently steering
    routing. Later summaries carry any restaff (guardrail 3) with its reason
    and each unit's valid-finding count from its dual-review receipt — the
