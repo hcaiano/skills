@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -204,6 +204,20 @@ function discover({ allowMissing = false } = {}) {
   return { self, partner: candidates[0], partnerAgent };
 }
 
+// herdr accepts an agent name of 1-32 characters, starting with a lowercase
+// letter and holding only lowercase letters, digits, '-' and '_'. Tab ids
+// break both halves of that: workspace ids carry uppercase (wY:t1), and a
+// 16-character workspace id leaves no room once the prefix is added. A name
+// that violates either rule fails the spawn outright, so derive it here and
+// keep it deterministic — the same tab must always produce the same name.
+function pairAgentName(partnerAgent, tabId) {
+  const slug = tabId.toLowerCase().replaceAll(/[^a-z0-9_-]/gu, "_");
+  const name = `pair-${partnerAgent}-${slug}`;
+  if (name.length <= 32) return name;
+  const digest = createHash("sha256").update(tabId).digest("hex").slice(0, 8);
+  return `pair-${partnerAgent}-${digest}`.slice(0, 32);
+}
+
 async function spawn() {
   const binding = discover({ allowMissing: true });
   if (binding.partner) {
@@ -221,7 +235,7 @@ async function spawn() {
     binding.self.cwd,
     "--no-focus",
   ).pane;
-  const name = `pair-${binding.partnerAgent}-${binding.self.tab_id.replaceAll(":", "_")}`;
+  const name = pairAgentName(binding.partnerAgent, binding.self.tab_id);
   herdr(
     "agent",
     "start",
