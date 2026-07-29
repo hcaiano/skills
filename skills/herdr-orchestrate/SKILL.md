@@ -30,20 +30,23 @@ names, and issue references literal.
   `herdr agent prompt`) and `gh` on `PATH`, `HERDR_ENV=1`, and
   `HERDR_PANE_ID` set. If any is missing, stop and say so.
 - Run from the task repository (or `cd` to the repo the user names).
-- For a new run, resolve the injected caller pane with
-  `herdr pane get "$HERDR_PANE_ID"`. If that syntax is unavailable, retry once
-  with `herdr pane current --current`. Both commands must resolve the caller,
-  never the pane focused in the UI.
-- Read only `herdr workspace get <workspace_id>` for its metadata and validate
-  the caller workspace against the task repository. A worktree uses its
-  `repo_root`; otherwise use the Git repository containing the returned pane
-  cwd. Then pin the returned `workspace_id` and `pane_id` for the whole run.
+- For a new run, resolve `herdr pane get "$HERDR_PANE_ID"` and pin both that
+  pane and its own `workspace_id` — the resolved pane is the single source,
+  never UI focus, and `$HERDR_WORKSPACE_ID` beside it goes stale the moment a
+  pane moves. A run lives entirely inside the caller's workspace, so an
+  inherited pane id — a headless `claude -p`, a subagent, any child process —
+  still names the right workspace: a pane cwd pointing somewhere other than
+  the task repository is ordinary, not a mismatch. Read `herdr workspace get
+  <workspace_id>` for its `label` and name that workspace to the user as the
+  run starts, so a wrong one surfaces before anything is provisioned.
 - A unit milestone carries the pinned `workspace_id`; use it to resume the
   run. User navigation never changes the pin and existing runs never resolve
   focus again. A continuation without the pin stops.
 - Stop before any GitHub, Project, branch, worktree, tab, pane, agent, or
-  message mutation when caller resolution fails, repositories differ, or the
-  caller pane has no agent.
+  message mutation when that pane does not resolve or hosts no agent — the
+  report channel reaches only a pane that has one, and a shell pane would
+  swallow every milestone push. Say which, so the user can start the run from
+  an agent pane.
 
 ## Guardrails
 
@@ -94,8 +97,10 @@ recovers the full picture from it instead of from memory.
 Using the pinned `workspace_id`, list only its tabs and panes
 (`herdr tab list --workspace <id>`; `herdr pane list --workspace <id>`).
 Derive agent state from those pane rows and target later agent reads by pane ID.
-For each `#N`-labeled tab, note its issues, branch, agent states
-(working / blocked / idle), any open PR for its branch (`gh pr list`), and
+A `#N` tab whose pane cwd resolves to another repository belongs to a
+different run — skip it; one workspace can hold units from more than one repo.
+For each `#N`-labeled tab of this repository, note its issues, branch, agent
+states (working / blocked / idle), any open PR for its branch (`gh pr list`), and
 the newest `[unit ...]` report line in the lead's pane output — that pane is
 the report channel; treat an unhandled line as just received.
 
