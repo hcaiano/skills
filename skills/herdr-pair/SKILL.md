@@ -20,19 +20,20 @@ Require `herdr` with the agent automation commands (`herdr agent start`,
 an exact caller pane ID. If any command is missing, stop and tell the user to
 install or start (or update) Herdr.
 
-Derive your identity with the helper — it validates the `HERDR_PANE_ID`
-hint and fails closed on a stale, wrong-kind, or uncorroborated pane:
+Derive your identity with the helper — it resolves your pane natively
+(`herdr pane current --current`, from the calling process, immune to
+focus and to a stale env hint) and fails closed on a wrong-kind or
+uncorroborated pane:
 
 ```bash
 PAIR_ID=($(node "$PAIR_SCRIPT" id --as <claude|codex> --format shell))
 ```
 
 Use `"${PAIR_ID[@]}"` on every helper command. Confirm the `workspace_id`
-and `cwd` in the `id` output are yours — the inherited hint can resolve to
-a same-kind pane in another workspace; a mismatch means stale. If `id`
-fails or mismatches, find your live pane with `herdr agent list` and pass
-it as `--pane` — never `herdr pane current` without `--pane` (it resolves
-by UI focus), and never a pane inferred from focus, labels, or pane order.
+and `cwd` in the `id` output are yours; a mismatch means the binding is
+wrong — find your live pane with `herdr agent list` and pass it as
+`--pane`. Never resolve yourself with bare `herdr pane current` (no
+`--current`: it follows UI focus), and never from labels or pane order.
 
 ## Guardrails
 

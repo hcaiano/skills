@@ -1113,10 +1113,21 @@ function identify(options) {
   if (!["claude", "codex"].includes(agent ?? "")) {
     fail("id requires --as claude|codex (the agent you are)");
   }
-  const candidate = callerContext.paneId ?? process.env.HERDR_PANE_ID ?? null;
+  let candidate = callerContext.paneId || null;
+  if (!candidate) {
+    // Native caller resolution: `--current` resolves from the calling
+    // process, not UI focus, and unlike the HERDR_PANE_ID env hint it
+    // cannot go stale across pane moves or session resumes.
+    try {
+      candidate = result("pane", "current", "--current").pane?.pane_id || null;
+    } catch {
+      candidate = null;
+    }
+  }
+  if (!candidate) candidate = process.env.HERDR_PANE_ID || null;
   if (!candidate) {
     fail(
-      "no caller pane: pass --pane, or run inside Herdr so HERDR_PANE_ID is set; find your live pane with `herdr agent list`",
+      "no caller pane: pass --pane, or run inside Herdr; find your live pane with `herdr agent list`",
     );
   }
   const pane = paneGet(candidate);
