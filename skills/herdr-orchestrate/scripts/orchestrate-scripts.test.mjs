@@ -33,6 +33,12 @@ if (state.fail_on === key) { process.stderr.write("simulated " + key + " failure
 if (key === "tab create") {
   out(state.tab_create);
 } else if (key === "agent start") {
+  if (state.busy_starts > 0) {
+    state.busy_starts -= 1;
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2) + "\\n");
+    process.stderr.write("agent_pane_busy: pane has no available prompt\\n");
+    process.exit(1);
+  }
   out({ agent: { name: args[2] } });
 } else if (key === "pane split") {
   out({ pane: { pane_id: args[2] + "s", tab_id: state.tab_create.tab.tab_id } });
@@ -71,7 +77,12 @@ process.exit(0);
 `);
 for (const name of ["herdr", "git", "trash"]) chmodSync(join(bin, name), 0o755);
 
-const env = { ...process.env, FAKE_STATE: statePath, PATH: `${bin}:${process.env.PATH}` };
+const env = {
+  ...process.env,
+  FAKE_STATE: statePath,
+  PATH: `${bin}:${process.env.PATH}`,
+  CREATE_UNIT_BUSY_RETRY_MS: "10",
+};
 const runScript = (script, ...args) => {
   const r = execFileSync(process.execPath, [script, ...args], { encoding: "utf8", env });
   return JSON.parse(r);
@@ -131,6 +142,23 @@ test("create-unit provisions, verifies, and cleans up", () => {
   const calls = readState().calls.map((c) => c.slice(0, 3).join(" "));
   assert.ok(calls.includes("herdr pane close"), "leftover shell pane must be closed");
   assert.ok(calls.at(-1).startsWith("herdr tab close"), "failure must close the tab");
+
+  // agent_pane_busy is an initialization race: retry bounded, then succeed.
+  const busy = baseState();
+  busy.busy_starts = 2;
+  writeState(busy);
+  const retried = runScript(createUnit, "--spec", soloSpec);
+  assert.equal(retried.created, true);
+  const starts = readState().calls.filter((c) => c[1] === "agent" && c[2] === "start");
+  assert.equal(starts.length, 3, "two busy rejections then one successful start");
+
+  // A pane that never frees exhausts the retries and still cleans up.
+  const stuck = baseState();
+  stuck.busy_starts = 999;
+  writeState(stuck);
+  const exhausted = runScriptFail(createUnit, "--spec", soloSpec);
+  assert.match(exhausted.error, /agent_pane_busy/u);
+  assert.equal(exhausted.cleanup, "closed tab w1:t9");
 
   // Wrong workspace fails before any agent starts, and closes the tab.
   const wrong = baseState();
