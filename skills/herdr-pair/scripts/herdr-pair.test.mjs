@@ -28,22 +28,29 @@ mkdirSync(bin, { recursive: true });
 const panes = {
   "w1:p1": {
     agent: "codex",
+    agent_session: { value: "codex-session-w1-p1" },
     agent_status: "working",
     cwd: "/workspace",
     pane_id: "w1:p1",
     tab_id: "w1:t1",
+    terminal_id: "term-w1-p1",
     workspace_id: "w1",
   },
   "w1:p2": {
     agent: "claude",
+    agent_session: { value: "claude-session-w1-p2" },
     agent_status: "idle",
     cwd: "/workspace",
     pane_id: "w1:p2",
     tab_id: "w1:t1",
+    terminal_id: "term-w1-p2",
     workspace_id: "w1",
   },
 };
-writeFileSync(statePath, `${JSON.stringify({ panes, last_message: "", auto_ack: true }, null, 2)}\n`);
+writeFileSync(
+  statePath,
+  `${JSON.stringify({ panes, last_message: "", auto_ack: true, mutations: [] }, null, 2)}\n`,
+);
 
 writeFileSync(
   fakeHerdr,
@@ -69,9 +76,10 @@ if (args[0] === "pane" && args[1] === "get") output({ pane: state.panes[args[2]]
 else if (args[0] === "pane" && args[1] === "list") output({ panes: Object.values(state.panes) });
 else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
+  state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
   pane.agent_status = "working";
-  const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive --sid \\"?([^\\" ]+)\\"? --from \\"?([^\\" ]+)\\"? --seq (\\d+)/);
+  const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*?--sid \\"?([^\\" ]+)\\"? --from \\"?([^\\" ]+)\\"? --seq (\\d+)/);
   if (control && state.auto_ack !== false) {
     const sender = control[3];
     const sequence = Number(control[4]);
@@ -87,9 +95,11 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   output({});
 } else if (args[0] === "pane" && args[1] === "split") {
   const source = state.panes[args[2]];
+  state.mutations.push({ command: "pane split", pane: args[2] });
   const pane = {
     agent: null, agent_status: "unknown", cwd: source.cwd,
-    pane_id: source.pane_id + "s", tab_id: source.tab_id, workspace_id: source.workspace_id,
+    pane_id: source.pane_id + "s", tab_id: source.tab_id,
+    terminal_id: "term-" + source.pane_id + "s", workspace_id: source.workspace_id,
   };
   state.panes[pane.pane_id] = pane;
   save();
@@ -103,12 +113,14 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   }
   const paneId = args[args.indexOf("--pane") + 1];
   const pane = state.panes[paneId];
+  state.mutations.push({ command: "agent start", pane: paneId });
   pane.agent = args[args.indexOf("--kind") + 1];
   pane.agent_status = "idle";
   state.last_agent_name = args[2];
   save();
   output({ agent: pane });
 } else if (args[0] === "agent" && args[1] === "send-keys") {
+  state.mutations.push({ command: "agent send-keys", pane: args[2] });
   state.enter_keys = (state.enter_keys ?? 0) + 1;
   state.last_send_keys = { pane: args[2], key: args[3] };
   save();
@@ -127,20 +139,35 @@ const env = {
   HOME: home,
   PATH: `${bin}:${process.env.PATH}`,
 };
+const agentForPane = (paneId) =>
+  JSON.parse(readFileSync(statePath, "utf8")).panes[paneId]?.agent;
+const withCaller = (paneId, args) => [
+  ...args,
+  "--pane",
+  paneId,
+  "--as",
+  agentForPane(paneId),
+  ...(() => {
+    const sessionId = JSON.parse(
+      readFileSync(statePath, "utf8"),
+    ).panes[paneId]?.agent_session?.value;
+    return sessionId ? ["--agent-session-id", sessionId] : [];
+  })(),
+];
 const runAs = (paneId, ...args) =>
-  execFileSync(process.execPath, [helper, ...args], {
+  execFileSync(process.execPath, [helper, ...withCaller(paneId, args)], {
     encoding: "utf8",
-    env: { ...env, HERDR_PANE_ID: paneId },
+    env: { ...env, HERDR_PANE_ID: "stale:pane" },
   });
 const runAsWithEnv = (paneId, overrides, ...args) =>
-  execFileSync(process.execPath, [helper, ...args], {
+  execFileSync(process.execPath, [helper, ...withCaller(paneId, args)], {
     encoding: "utf8",
-    env: { ...env, ...overrides, HERDR_PANE_ID: paneId },
+    env: { ...env, ...overrides, HERDR_PANE_ID: "stale:pane" },
   });
 const runAsyncWithEnv = (paneId, overrides, ...args) =>
   new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [helper, ...args], {
-      env: { ...env, ...overrides, HERDR_PANE_ID: paneId },
+    const child = spawn(process.execPath, [helper, ...withCaller(paneId, args)], {
+      env: { ...env, ...overrides, HERDR_PANE_ID: "stale:pane" },
     });
     let stdout = "";
     let stderr = "";
@@ -153,9 +180,197 @@ const runAsyncWithEnv = (paneId, overrides, ...args) =>
   });
 const runAsync = (paneId, ...args) => runAsyncWithEnv(paneId, {}, ...args);
 const run = (...args) => runAs("w1:p1", ...args);
+const runRaw = (...args) =>
+  execFileSync(process.execPath, [helper, ...args], {
+    encoding: "utf8",
+    env: { ...env, HERDR_PANE_ID: "stale:pane" },
+  });
 const sessionPath = join(home, ".herdr-coworkers", "w1", "w1_t1", "session.json");
 
 try {
+  let identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  identityState.panes["w9:p1"] = {
+    agent: "claude",
+    agent_status: "idle",
+    cwd: "/other-workspace",
+    pane_id: "w9:p1",
+    tab_id: "w9:t1",
+    terminal_id: "term-w9-p1",
+    workspace_id: "w9",
+  };
+  identityState.panes["w8:p1"] = {
+    agent: "codex",
+    agent_status: "idle",
+    cwd: "/foreign-workspace",
+    pane_id: "w8:p1",
+    tab_id: "w8:t1",
+    terminal_id: "term-w8-p1",
+    workspace_id: "w8",
+  };
+  identityState.panes["w8:p2"] = {
+    agent: "claude",
+    agent_status: "idle",
+    cwd: "/foreign-workspace",
+    pane_id: "w8:p2",
+    tab_id: "w8:t1",
+    terminal_id: "term-w8-p2",
+    workspace_id: "w8",
+  };
+  identityState.panes["w7:p1"] = {
+    agent: "codex",
+    agent_status: "working",
+    cwd: "/foreign-working",
+    pane_id: "w7:p1",
+    tab_id: "w7:t1",
+    terminal_id: "term-w7-p1",
+    workspace_id: "w7",
+  };
+  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
+  const mutationsBeforeMismatch = identityState.mutations.length;
+  assert.throws(
+    () => runRaw("spawn", "--pane", "w9:p1", "--as", "codex"),
+    /caller identity mismatch.*is claude, not --as codex/u,
+  );
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
+  assert.throws(
+    () => runRaw("spawn", "--pane", "w7:p1", "--as", "codex"),
+    /spawn requires a caller pane with a strong agent session identity/u,
+  );
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
+  assert.throws(
+    () => runRaw("spawn", "--pane", "w8:p1", "--as", "codex"),
+    /has no agent session identity and is idle/u,
+  );
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
+  const foreignBody = join(root, "foreign-body.txt");
+  writeFileSync(foreignBody, "Do not deliver this message.\n");
+  assert.throws(
+    () =>
+      runRaw(
+        "send",
+        "--pane",
+        "w8:p1",
+        "--as",
+        "codex",
+        "--sid",
+        "foreign-sid",
+        "--kind",
+        "task",
+        "--body-file",
+        foreignBody,
+      ),
+    /has no agent session identity and is idle/u,
+  );
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
+  const foreignSessionPath = join(
+    home,
+    ".herdr-coworkers",
+    "w8",
+    "w8_t1",
+    "session.json",
+  );
+  mkdirSync(dirname(foreignSessionPath), { recursive: true });
+  writeFileSync(
+    foreignSessionPath,
+    `${JSON.stringify({ sid: "foreign-sid", active: true })}\n`,
+  );
+  assert.throws(
+    () =>
+      runRaw(
+        "end",
+        "--pane",
+        "w8:p1",
+        "--as",
+        "codex",
+        "--sid",
+        "foreign-sid",
+        "--stale",
+        "true",
+      ),
+    /has no agent session identity and is idle/u,
+  );
+  assert.equal(existsSync(foreignSessionPath), true);
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  identityState.panes["w8:p1"].agent_status = "working";
+  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
+  writeFileSync(
+    foreignSessionPath,
+    `${JSON.stringify({
+      schema_version: 2,
+      sid: "foreign-sid",
+      workspace_id: "w8",
+      tab_id: "w8:t1",
+      initiator: "codex",
+      active: true,
+      participants: {
+        codex: {
+          pane_id: "w8:p1",
+          terminal_id: "term-w8-p1",
+          agent_session_id: null,
+        },
+        claude: {
+          pane_id: "w8:p2",
+          terminal_id: "term-w8-p2",
+          agent_session_id: null,
+        },
+      },
+      round: 0,
+      last_status: { claude: null, codex: null },
+      completed_cycles: 0,
+      no_progress_count: 0,
+      delivery: {
+        next: { claude: 0, codex: 0 },
+        submitted: { claude: 0, codex: 0 },
+        received: { claude: 0, codex: 0 },
+        pending: { claude: null, codex: null },
+      },
+    }, null, 2)}\n`,
+  );
+  assert.throws(
+    () =>
+      runRaw(
+        "send",
+        "--pane",
+        "w8:p1",
+        "--as",
+        "codex",
+        "--sid",
+        "caller-owned-sid",
+        "--kind",
+        "task",
+        "--body-file",
+        foreignBody,
+      ),
+    /send sid caller-owned-sid does not match current-tab session foreign-sid/u,
+  );
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
+  assert.throws(
+    () => runRaw("discover", "--as", "codex"),
+    /requires the caller's exact --pane ID/u,
+  );
+  const explicitlyBound = JSON.parse(
+    runRaw(
+      "discover",
+      "--pane",
+      "w1:p1",
+      "--as",
+      "codex",
+      "--agent-session-id",
+      "codex-session-w1-p1",
+    ),
+  );
+  assert.equal(explicitlyBound.self.pane_id, "w1:p1");
+  delete identityState.panes["w9:p1"];
+  delete identityState.panes["w8:p1"];
+  delete identityState.panes["w8:p2"];
+  delete identityState.panes["w7:p1"];
+  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
+
   const created = JSON.parse(run("init"));
   assert.equal(created.schema_version, 2);
   assert.equal(created.active, true);
@@ -164,6 +379,33 @@ try {
   const resumed = JSON.parse(run("init"));
   assert.equal(resumed.resumed, true);
   assert.equal(resumed.sid, created.sid);
+
+  let recycledState = JSON.parse(readFileSync(statePath, "utf8"));
+  recycledState.panes["w1:p1"].terminal_id = "term-recycled-w1-p1";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+  assert.throws(
+    () => run("verify"),
+    /live panes do not match the participants recorded for this tab/u,
+  );
+  recycledState.panes["w1:p1"].terminal_id = "term-w1-p1";
+  recycledState.panes["w1:p2"].terminal_id = "term-recycled-w1-p2";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+  assert.throws(
+    () => run("verify"),
+    /live panes do not match the participants recorded for this tab/u,
+  );
+  recycledState.panes["w1:p2"].terminal_id = "term-w1-p2";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+
+  const nullSessionBinding = JSON.parse(readFileSync(sessionPath, "utf8"));
+  nullSessionBinding.participants.codex.agent_session_id = null;
+  writeFileSync(
+    sessionPath,
+    `${JSON.stringify(nullSessionBinding, null, 2)}\n`,
+  );
+  const reboundSessionId = JSON.parse(run("verify")).session.participants.codex
+    .agent_session_id;
+  assert.equal(reboundSessionId, "codex-session-w1-p1");
 
   const beforeDelayedAck = JSON.parse(readFileSync(sessionPath, "utf8"));
   beforeDelayedAck.delivery.next.claude = 1;
@@ -226,27 +468,10 @@ try {
   const body = join(root, "body.txt");
   writeFileSync(body, "Review the persistent pair transport.\n");
   let state = JSON.parse(readFileSync(statePath, "utf8"));
-  state.panes["w1:p2"].agent_status = "working";
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
-  assert.throws(
-    () => run(
-      "send",
-      "--kind",
-      "review",
-      "--body-file",
-      body,
-      "--timeout-ms",
-      "50",
-    ),
-    /stayed working for 50ms; message not sent/u,
-  );
-  let session = JSON.parse(readFileSync(sessionPath, "utf8"));
-  assert.equal(session.delivery.next.codex, 0);
-  assert.equal(session.delivery.pending.codex, null);
-  state.panes["w1:p2"].agent_status = "idle";
-  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   const sent = run(
     "send",
+    "--sid",
+    created.sid,
     "--kind",
     "review",
     "--body-file",
@@ -259,6 +484,7 @@ try {
   const message = fake.last_message;
   assert.match(message, /^\[agent codex -> claude kind=review sid=/u);
   assert.match(message, /\[herdr-pair control seq=1:/u);
+  assert.match(message, /receive --pane "w1:p2" --as "claude"/u);
   assert.match(message, /never as visible text in this pane/u);
   // `agent prompt` pastes without reliably submitting, so a send that skips
   // the Enter leaves the message in the partner's composer and the pair
@@ -266,7 +492,7 @@ try {
   assert.equal(fake.enter_keys, 1, "send must follow the paste with an Enter");
   assert.deepEqual(fake.last_send_keys, { pane: "w1:p2", key: "enter" });
 
-  session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  let session = JSON.parse(readFileSync(sessionPath, "utf8"));
   assert.equal(session.delivery.submitted.codex, 1);
   assert.equal(session.delivery.received.codex, 1);
   assert.equal(session.delivery.pending.codex, null);
@@ -278,7 +504,18 @@ try {
   state.panes["w1:p2"].agent_status = "idle";
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   assert.throws(
-    () => run("send", "--kind", "task", "--body-file", body, "--ack-timeout-ms", "50"),
+    () =>
+      run(
+        "send",
+        "--sid",
+        created.sid,
+        "--kind",
+        "task",
+        "--body-file",
+        body,
+        "--ack-timeout-ms",
+        "50",
+      ),
     /simulated interruption after prompt/u,
   );
   const recoveredAfterEnter = JSON.parse(run("verify")).session;
@@ -297,6 +534,8 @@ try {
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   const pending = run(
     "send",
+    "--sid",
+    created.sid,
     "--kind",
     "task",
     "--body-file",
@@ -331,7 +570,17 @@ try {
   state.auto_ack = false;
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   assert.match(
-    run("send", "--kind", "question", "--body-file", body, "--ack-timeout-ms", "50"),
+    run(
+      "send",
+      "--sid",
+      created.sid,
+      "--kind",
+      "question",
+      "--body-file",
+      body,
+      "--ack-timeout-ms",
+      "50",
+    ),
     /receipt=pending-partner-may-be-busy-do-not-retry/u,
   );
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
@@ -354,7 +603,17 @@ try {
   state.panes["w1:p2"].agent_status = "idle";
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   assert.match(
-    run("send", "--kind", "review", "--body-file", body, "--ack-timeout-ms", "50"),
+    run(
+      "send",
+      "--sid",
+      created.sid,
+      "--kind",
+      "review",
+      "--body-file",
+      body,
+      "--ack-timeout-ms",
+      "50",
+    ),
     /receipt=pending-partner-may-be-busy-do-not-retry/u,
   );
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
@@ -380,7 +639,17 @@ try {
   state.panes["w1:p2"].agent_status = "idle";
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   assert.match(
-    run("send", "--kind", "accepted", "--body-file", acceptedBody, "--ack-timeout-ms", "1000"),
+    run(
+      "send",
+      "--sid",
+      created.sid,
+      "--kind",
+      "accepted",
+      "--body-file",
+      acceptedBody,
+      "--ack-timeout-ms",
+      "1000",
+    ),
     /receipt=acknowledged/u,
   );
   state = JSON.parse(readFileSync(statePath, "utf8"));
@@ -388,7 +657,18 @@ try {
   state.panes["w1:p2"].agent_status = "idle";
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   assert.match(
-    runAs("w1:p2", "send", "--kind", "accepted", "--body-file", acceptedBody, "--ack-timeout-ms", "1000"),
+    runAs(
+      "w1:p2",
+      "send",
+      "--sid",
+      created.sid,
+      "--kind",
+      "accepted",
+      "--body-file",
+      acceptedBody,
+      "--ack-timeout-ms",
+      "1000",
+    ),
     /receipt=acknowledged/u,
   );
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
@@ -408,6 +688,30 @@ try {
   assert.equal(reset.round, 0);
   assert.deepEqual(reset.last_status, { claude: null, codex: null });
   assert.equal(reset.delivery.received.codex, 6);
+
+  // A partner that never idles still gets the message: the send waits only a
+  // short grace period, then delivers queued and proves landing from the
+  // composer. Blocking until idle used to time out and silently drop urgent
+  // messages (a STOP lost on 2026-07-29). Guard the queued path.
+  state = JSON.parse(readFileSync(statePath, "utf8"));
+  state.panes["w1:p2"].agent_status = "working";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  const queued = run(
+    "send",
+    "--sid",
+    created.sid,
+    "--kind",
+    "task",
+    "--body-file",
+    body,
+    "--timeout-ms",
+    "50",
+    "--ack-timeout-ms",
+    "1000",
+  );
+  assert.match(queued, /seq=7 receipt=acknowledged/u);
+  session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  assert.equal(session.delivery.pending.codex, null);
 
   run("end", "--sid", created.sid);
   assert.equal(existsSync(sessionPath), false);
@@ -514,8 +818,16 @@ try {
   assert.equal(migrated.schema_version, 2);
   assert.equal(migrated.active, true);
   assert.deepEqual(migrated.participants, {
-    codex: { pane_id: "w1:p1" },
-    claude: { pane_id: "w1:p2" },
+    codex: {
+      pane_id: "w1:p1",
+      terminal_id: "term-w1-p1",
+      agent_session_id: "codex-session-w1-p1",
+    },
+    claude: {
+      pane_id: "w1:p2",
+      terminal_id: "term-w1-p2",
+      agent_session_id: "claude-session-w1-p2",
+    },
   });
   assert.equal(migrated.delivery.next.codex, 8);
   assert.equal(migrated.delivery.submitted.codex, 7);
@@ -614,7 +926,9 @@ try {
     const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
     spawnState.panes = {
       [paneId]: {
-        agent: "codex", agent_status: "idle", cwd: "/workspace",
+        agent: "codex",
+        agent_session: { value: `session-${paneId}` },
+        agent_status: "working", cwd: "/workspace",
         pane_id: paneId, tab_id: tabId, workspace_id: workspaceId,
       },
     };

@@ -8,8 +8,15 @@ description: "Ship finished work: the graded local review gate, then one PR carr
 Open or update a PR for the current work. Quality is enforced locally, before
 the PR exists.
 
+Run it only when the user invokes ship-it or another skill (an orchestrator's
+graded gate) delegates to it — finishing a change is not an invitation to
+ship it.
+
 1. Read the repository instructions and inspect the current branch, diff, and
-   working tree. Preserve unrelated user changes. Before review, mark each
+   working tree. Preserve unrelated user changes. `git fetch origin
+   <target-branch>` first, and take every merge base in this skill against
+   `origin/<target-branch>` — a stale local target reviews another PR's
+   commits. Before review, mark each
    intended untracked path with `git add --intent-to-add -- <path>` so the
    complete diff includes its contents; never do this to unrelated files.
 2. **Grade the gate.** A reproduced, localized, reversible production hotfix
@@ -66,13 +73,19 @@ the PR exists.
    docs/markdown/config-only diffs.
 4. **Local review gate** at the graded level — `single`: the current agent's
    native review alone; `dual`: both native reviews below; `codex-only`: the
-   Codex review alone; `claude-only`: the Claude review alone. Skip only for
+   Codex review alone; `claude-only`: the Claude review alone. `dual` means
+   one Claude review plus one Codex review: two reviews from the same
+   harness satisfy only that harness's single level, whatever conservation
+   pressure suggested them. Skip only for
    diffs touching exclusively
    docs/markdown/config with no runtime surface; the receipt names the
    graded level. A one-review gate — `single`, `codex-only`, `claude-only` —
    stops if that review cannot complete and never regrades to another agent;
    a `dual` review that cannot complete regrades to the other harness alone,
-   named in the receipt. Everything else in this step
+   named in the receipt. A review completes on content, not exit code: a
+   clean exit whose output is a refusal, a rate-limit notice, or an empty
+   payload is a failed review — rerun it or regrade per the rules above,
+   never count it. Everything else in this step
    applies to whichever review(s) run. This is a fresh adversarial
    review of the FINAL diff — reviews that happened while writing the code
    (pair acceptance, impeccable, in-flight feedback) are a different thing
@@ -142,20 +155,31 @@ the PR exists.
    the branch, return to steps 4–7 before recording the clean live-review
    baseline time.
 8. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
-   never tight loops). Fix a red check with one batched commit and return to
-   steps 4–7; after two red rounds, stop and report.
+   never tight loops). Required checks are the only thing waited on: cloud
+   auto-review bots are disabled by design — never wait for or solicit one.
+   Green means every required check passed; pending is not green. A check
+   that cannot run at all (billing, runner outage) is a blocker — report the
+   PR blocked on it, never shipped with a waiver. Fix a red check with one
+   batched commit and return to
+   steps 4–7; after two red rounds, stop and report. The same brake bounds
+   the gate itself: a third full review gate on one PR — whoever asks for
+   it — stops and surfaces the churn to the user instead of running.
 9. Immediately before reporting shipped, re-fetch complete paginated reviews,
    issue comments, inline comments, and review threads, and capture the live
    `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
    whose required checks passed; any mismatch returns to steps 4–8. Handle
    every item newer than the baseline and every unresolved thread. If that
-   changes the branch, return to steps 4–8. `review:verify` proves only its
+   changes the branch, return to steps 4–8. Require GitHub to report the PR
+   mergeable against its base; a conflict returns to steps 4–8 after a merge
+   from the base. `review:verify` proves only its
    timestamp. Record the clean check timestamp and head.
 10. Report the outcome to the user: PR link, exact head, CI status, live-review
    timestamp, receipt summary, and any findings discarded or deferred.
 
 Do not force-push, merge, modify `main`, broaden scope, or change the target
-branch without explicit authorization. Done when the PR is open with the
+branch without explicit authorization. When the base moved under the branch,
+merge `origin/<target>` in and re-enter the gate on the merge HEAD — a
+pushed branch is never rebased, so force-push is never needed. Done when the PR is open with the
 dual-review and passing final-CI receipt in its body, green required checks, a
 clean timestamped live-review check on the exact head, and the user has the
 report.

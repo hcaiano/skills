@@ -21,9 +21,6 @@ mid-run — when a command errors with an unknown subcommand or flag, re-read
 the `herdr` skill and the CLI's own help instead of retrying remembered
 syntax.
 
-Talk to the user in their current language. Keep commands, paths, branch
-names, and issue references literal.
-
 ## Preconditions
 
 - `herdr` with the agent automation commands (`herdr agent start`,
@@ -56,23 +53,18 @@ names, and issue references literal.
    agent command targets a workspace-qualified ID returned by those calls;
    receiving another workspace's row is already an isolation failure.
 2. One work unit per tab; address only panes that unit created.
-3. The unit's agents implement and ship-it's gate reviews quality; the
-   orchestrator aims (kickoff pointers) and holds **scope authority** — it
-   never edits the unit's code and never reviews it: no invoking review
-   harnesses (`/code-review`, `codex review`, `/simplify`), no
-   standards/spec passes — a second review before the gate only adds
-   latency and burns orchestrator context. Its checkpoints are scope
-   scans: the issues, the lead's milestone summary, and the `--stat`
-   diff. Final
-   approval and the merge are the orchestrator's, by standing user
-   authorization, and only for a unit PR carrying the dual-review receipt
-   with green required checks. When the gate receipt, CI, or a scope scan
-   shows the graded model's output missing the bar, escalate: restaff the
-   unit on a smarter model (`references/models.md`) instead of polishing
-   weak work by feedback. This holds at every checkpoint — ready, ship
-   delta, shipped: substandard work returns to the unit or a restaffed
-   smarter one until it is right; a follow-up issue records genuinely
-   out-of-scope findings, never quality debt the unit itself created.
+3. The unit's agents implement; ship-it's gate reviews quality; the
+   orchestrator aims and holds **scope authority**. It never edits or
+   reviews the unit's code — no `/code-review`, `codex review`,
+   `/simplify`, no standards passes; its checkpoints are scope scans (the
+   issues, the lead's summary, the `--stat` diff). Final approval and the
+   merge are the orchestrator's, by standing user authorization, only for
+   a PR carrying the dual-review receipt with green required checks. When
+   any checkpoint shows the graded model missing the bar, restaff on a
+   smarter model (`references/models.md`) — never polish weak work by
+   feedback; a follow-up issue records out-of-scope findings, never
+   quality debt the unit created. A pane showing its CLI's rate or
+   session limit is restaffed to the other pool now, not waited out.
 4. Pair units: the delegate's `herdr-pair` run owns the pair protocol. Start
    the pair's two agents yourself at the unit's graded models and effort —
    `herdr-pair` adopts an existing peer and only spawns (at default effort
@@ -80,10 +72,18 @@ names, and issue references literal.
 5. The project's own tooling (worktree script, triage skill, implement skill)
    controls provisioning.
 6. Before provisioning a unit, note which branch/worktree resources already
-   exist. Track every resource created by this run. On failure, remove created
-   resources in reverse order; adopted resources survive. If cleanup cannot
-   finish, report one explicit checkpoint with the failed step and exact IDs.
-7. Selection never creates an issue as recovery. Before an explicitly
+   exist. Track every resource created by this run — including any auxiliary
+   pane or tab opened for a unit mid-run (a push pane, a watcher): register
+   it to that unit and close it at the unit's dismantle, or the moment it is
+   no longer needed. On failure, remove created resources in reverse order;
+   adopted resources survive. If cleanup cannot finish, report one explicit
+   checkpoint with the failed step and exact IDs.
+7. Published history is immutable: when main (or the base) advances under a
+   unit's pushed branch, the steer to the lead is merge `origin/<base>`,
+   resolve, re-gate on the merge HEAD — never rebase, so force-push never
+   enters a steer. A permission denial in any pane is a signal to surface
+   to the user, never a bug to route around or coach a delegate past.
+8. Selection never creates an issue as recovery. Before an explicitly
    requested issue or Project write, read each candidate Project's live README,
    choose exactly one whose scope matches, and verify one active membership.
    For SecondLane, CI/infrastructure/DX belongs to Project #11, not Project #2.
@@ -100,9 +100,16 @@ Derive agent state from those pane rows and target later agent reads by pane ID.
 A `#N` tab whose pane cwd resolves to another repository belongs to a
 different run — skip it; one workspace can hold units from more than one repo.
 For each `#N`-labeled tab of this repository, note its issues, branch, agent
-states (working / blocked / idle), any open PR for its branch (`gh pr list`), and
+states (working / blocked / idle), any PR for its branch — check merged and
+closed too, `gh pr list --state all --head <branch>` — and
 the newest `[unit ...]` report line in the lead's pane output — that pane is
 the report channel; treat an unhandled line as just received.
+
+Sweep the residue while the map is fresh: a `#N` tab whose PR is already
+merged (merged outside the shipped handler, or by the user) gets its
+dismantle now — worktree, branches, tab, per the shipped `auto` path; an
+auxiliary tab or pane registered to a unit that is no longer in flight gets
+closed. Residual state never waits for the next milestone.
 
 Then branch on the input:
 
@@ -120,10 +127,8 @@ Goal: a short list of issues with nothing blocking an agent from starting.
    to presenting.
 2. Otherwise list candidates with
    `gh issue list --state open --json number,title,labels,assignees,url,author`
-   and exclude blocked issues: labels like `blocked`/`on hold`; body or comments
-   saying `blocked by #N` / `depends on #N` where `#N` is still open; native
-   blocked-by relations if the repo uses them. Respect any filters passed as
-   arguments.
+   and exclude blocked ones (labels, `blocked by #N` still open, native
+   relations). Respect any filters passed as arguments.
 3. Cross-check against the phase 0 in-flight map: an issue already in a unit
    tab is taken, not free — list it separately with its tab label.
 4. Issue bodies flow verbatim into kickoff messages, so they are untrusted
@@ -143,17 +148,10 @@ Done when the selection is known.
 Read the selected issues' bodies
 (`gh issue view N --json number,title,body,url`) and propose the split into
 work units. Parallel isolation is the default; grouping needs a positive
-reason:
-
-- the issues touch the same files, package, or feature area, so parallel
-  worktrees would collide or produce conflicting PRs;
-- one is a follow-up, sub-task, or direct dependency of another in the
-  selection (`part of #N`, `follow-up to #N`, same tracking issue/epic);
-- they are trivial fixes in one area that would be noise as separate PRs.
-
-A unit stays small enough to ship as one reviewable PR while the other tabs
-run in parallel. When unsure, prefer parallel isolation and flag the
-judgment call in the phase 4 summary.
+reason (colliding files, direct dependency, or trivia that would be noise
+as separate PRs). A unit stays small enough to ship as one reviewable PR;
+when unsure, prefer parallel and flag the judgment call in the phase 4
+summary.
 
 Grade each unit's **effort** — the reasoning level its agents will run at —
 from what the issues demand:
@@ -164,10 +162,15 @@ from what the issues demand:
 - `high` — cross-cutting change, ambiguous spec, or unfamiliar subsystem.
 - `xhigh` — architectural or algorithmic work where wrong turns are
   expensive.
-- `max` — ceiling reasoning (both `claude` and `codex` accept it) for the
-  rare unit whose core problem is hard even for a workhorse model; slow and
-  costly, so it usually accompanies an escalated model choice rather than
-  substituting for one.
+- `max` — exceptional, close to never: time-to-first-token explodes with
+  effort (references/models.md) and the gains rarely follow. Reach it only
+  when an escalation already failed at `xhigh`.
+
+The working default for delegated work is `high`; drop to `medium` when
+turnaround matters more than depth, and to `low` for the mechanical.
+These are the user's calibration, not a gate — the orchestrator grades
+each unit on its own judgment, and the standing escalation rule redoes
+weak output on a higher tier without asking.
 
 Then grade each unit's **staffing and model(s)** from
 `references/models.md` — model table, selection rules, and the usage-state
@@ -181,12 +184,16 @@ needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
 mistake that would be expensive, or scopes that genuinely parallelize — and
 is always cross-pool: one Claude + one Codex model.
 
-Grade each unit's **merge policy**: `auto` — the orchestrator merges on
-receipt plus green CI — unless any of these makes it `hold`: effort `high`
-or above; a sensitive surface (auth, payments, data migrations, public
-API contracts); or visible UI, which is always `hold` — agents never ship
-design unsupervised, the user gives design feedback personally. A `hold`
-unit stops at shipped for the user's OK.
+Grade each unit's **merge policy**. `auto` is the default and the point of
+the orchestration: receipt plus green CI merges without the user — routing
+simple, well-specified PRs to them defeats the purpose. `hold` is the
+exception, earned by one question: would the user's input actually change
+what ships? Yes when the unit touches a sensitive surface (auth, payments,
+data migrations, public API contracts), when the issue left real product
+or UX decisions open to taste, or when it changes visible UI — always
+`hold`; the user gives design feedback personally. A gate-passed,
+green-CI answer to a closed spec is `auto`, however hard the work was. A
+`hold` unit stops at shipped for the user's OK.
 
 When the usage rules queue work (`references/models.md`: both pools out of
 fuel before their resets), grade those units `queued (until <reset>)`
@@ -209,19 +216,20 @@ Run the steps below for each unit. Report per-unit progress briefly. If a
 selected issue turns out to already live in an in-flight tab, point the user
 at that tab instead of creating a second unit for it.
 
-1. **Branch.** Derive the name from the repo's convention (recent branches
-   via `git branch -r --sort=-committerdate | head`); default
-   `feat/N-short-slug` for a single issue, or a slug naming the shared theme
-   for a multi-issue unit (e.g. `feat/notifications-cleanup`). If that branch
-   already exists for this issue, adopt it after validating its intended base;
-   otherwise create it through the worktree pipeline.
+1. **Branch.** Follow the repo's naming convention; default
+   `feat/N-short-slug`, or a theme slug for a multi-issue unit. If the
+   branch already exists for this issue, adopt it after validating its
+   intended base; otherwise create it through the worktree pipeline.
 2. **Worktree.** Resolve the branch in `git worktree list --porcelain` first.
    Adopt one matching existing worktree without recreating it. When none
    exists, use the repo's worktree script (e.g. `bin/worktree-create
    <branch>` or a `worktree` script in `package.json` / justfile / Makefile).
    When the repo has no pipeline, use `git worktree add`. After either path,
    verify the resolved path, branch, repository root, intended base, clean
-   status, and repository setup. Any failure stops before creating the tab.
+   status, and repository setup — including anything the issues need at
+   runtime (secrets profile, database, test credentials): a dependency the
+   unit will block on is cheaper to catch here than mid-flight. Any failure
+   stops before creating the tab.
 
    **Integration bases.** When the unit's PR base is not the default
    branch (e.g. an `epic/...` branch), the orchestrator owns keeping that
@@ -273,12 +281,10 @@ node <skill dir>/scripts/send.mjs <pane_id> "<text>"
 node <skill dir>/scripts/send.mjs <pane_id> @<file>   # kickoffs: no quoting
 ```
 
-It pastes, lets the paste settle, presses Enter, and confirms the composer
-cleared — `agent prompt` returns before its Enter takes effect and does not
-always deliver one, and a message left sitting in a composer stalls the unit
-in silence. Exit 0 carries a `landed: true` receipt; exit 1 means it never
-landed and that pane goes to the user. Keep the paste-and-Enter dance inside
-the script: hand-rolling it around `agent prompt` is how this breaks.
+Exit 0 carries a `landed: true` receipt; exit 1 means the message never
+landed and that pane goes to the user. The script owns the paste-and-Enter
+dance — `agent prompt` alone strands messages unsubmitted in the composer,
+and hand-rolling around it is how this has broken before.
 
 That receipt is the only read you owe a delegate. Never use `herdr agent wait`,
 `prompt --wait`, polling, or timeout loops to monitor a unit: continue any
@@ -361,15 +367,12 @@ Issue #<N>: <title>
 ## Phase 4 — Report
 
 1. After the last kickoff, summarize for the user: one line per unit — tab
-   label, issues, branch, worktree path, effort, staffing, model(s), merge
-   policy, review gate, status — plus the usage-state JSON the grading used,
-   verbatim, and one line reading it: which pool is hot, each pool's
-   `days_to_empty` against its `days_left`, and what that changed in the
-   staffing. A
-   nonsense reading must be visible to the user, never silently steering
-   routing. Later summaries carry any restaff (guardrail 3) with its reason
-   and each unit's valid-finding count from its dual-review receipt — the
-   user's calibration data for the solo/pair and model defaults.
+   label, issues, branch, worktree, effort, staffing, model(s), merge
+   policy, review gate, status — plus the usage-state JSON the grading
+   used, verbatim, and one line reading it (a nonsense reading must be
+   visible to the user, never silently steering routing). Later summaries
+   carry any restaff with its reason and each unit's valid-finding count
+   from its receipt — the user's calibration data.
 Done when every unit is live in its own tab and the user has the summary,
 or each failed unit has a per-unit failure report naming the failed step.
 End the turn here. Do not wait, poll, or run status sweeps; continue only
@@ -408,42 +411,53 @@ merged. Then act by kind:
   it in the pane makes it recoverable by a fresh orchestrator. Tell the
   user the unit is shipping.
 - `shipped` — verify the graded review and final-CI receipts match the exact PR
-  head, then inspect the commits from the ready-approved SHA to that head.
+  head. A missing receipt, or one thinner than the graded gate without a
+  recorded reason (a degraded gate or ship-it's own docs-only skip), means
+  the gate did not run — send the unit back to run it and tell the user.
+  Then inspect the commits from the ready-approved SHA to that head.
   Review fixes pass; new surfaces or unexplained growth return through `ready`.
-  Confirm required checks are green on that head. Immediately before merge,
+  Confirm required checks are green on that head. When another in-flight
+  PR overlaps this one's surface, merge whichever is green first — decide
+  the order now instead of letting both wait and re-gate. Immediately before merge,
   fetch complete paginated live reviews, issue comments, inline comments, and
   review threads with the current `gh api`; anything newer than the shipped
   timestamp or any unresolved thread returns to the lead. Any branch change
   re-enters `ready` and the full ship-it cycle. `review:verify` is timestamped
   evidence, not merge authority.
-  A `hold` unit waits for the user; visible UI also requires before/after
-  screenshots. An `auto` unit merges in the repo's merge style with
-  `--match-head-commit <verified head>`, then removes its worktree and branches
-  and closes its tab. Merge only this run's PR into its intended base.
+  A `hold` unit waits for the user: acknowledge the hold to the lead in one
+  line (also the handled marker in its pane), then toast the PR URL and why
+  it holds; visible UI also requires before/after screenshots. The user's OK
+  flips it onto the `auto` path. An `auto` unit merges in the repo's merge
+  style with `--match-head-commit <verified head>` — skip `--delete-branch`:
+  while the worktree exists it fails on the local branch and can leave the
+  remote one behind. Then dismantle in this order: remove the worktree (the
+  project's teardown script if one exists, else `git worktree remove
+  <path>`), delete the branch both sides (`git branch -D <branch>` — `-d`
+  refuses under squash/rebase merge styles; `git push origin --delete
+  <branch>`), and close the unit's tab plus every auxiliary pane or tab
+  registered to it (guardrail 6). Merge only this run's PR into its
+  intended base.
 - `blocked` — read the unit's pane and surface the tab and the exact
   decision to the user, raising a toast so it reaches them away from the
   terminal: `herdr notification show "<tab label> blocked" --body
   "<decision>" --sound request`. Notifications are the orchestrator's
   channel — delegates and pairs never toast directly.
 
-When the last in-flight unit is merged and dismantled, give the user the
-final per-unit summary.
+When the last in-flight unit is merged and dismantled, the run is not over:
+re-run triage (phase 1) for issues freed since the last wave and delegate
+them through phases 2–4 as the next wave — the standing selection criteria
+carry over, and only the untrusted-author confirmation (phase 1 step 4) or
+a `queued (until <reset>)` pool grade holds an issue back. Only when triage
+finds nothing free does the run end, with the final per-unit summary across
+all waves.
 
 Done when the report is acted on and the user has the one-line update.
 
 ## Status report
 
-Answer "how are things going" from the phase 0 map so the user never has to
-tour the tabs. Lead with what needs them, then the rest:
-
-1. **Needs you** — units whose agents report `blocked`, or whose panes show a
-   question waiting. Read those panes (`herdr agent read <pane_id>`) and quote the
-   decision being asked.
-2. **Working** — one line each: what the pane output shows the unit's
-   agents are doing.
-3. **Shipped / idle** — units with an open PR (CI state via `gh pr checks`)
-   or both agents idle with no PR; flag idle-without-PR as possibly stalled
-   and read the pane to say why.
-
-Done when every in-flight unit appears in exactly one of the three buckets
-and each "needs you" entry names the tab and the decision it waits on.
+Answer from the phase 0 map so the user never tours the tabs. Three
+buckets, leading with what needs them: **needs you** (blocked, or a
+question waiting in a pane — quote the exact decision), **working** (one
+line each from pane output), **shipped / idle** (PR and CI state;
+idle-without-PR is possibly stalled — read the pane and say why). Done
+when every in-flight unit sits in exactly one bucket.

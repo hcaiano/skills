@@ -1,50 +1,60 @@
 # Model table and staffing rules
 
 Reference for phase 2 grading: which model(s) implement a unit, solo or
-paired. Last calibrated 2026-07-24, Opus 5 launch day (CursorBench 3.2,
-Frontier-Bench v0.1, OSWorld 2.0, Design Arena; Opus 5 numbers are
-launch-announcement claims — firm them up when independent benches land).
-Recalibrate when a model generation lands.
+paired. Last calibrated 2026-07-30 (Artificial Analysis latency + Coding
+Agent Index, METR reward-hacking report, Terminal-Bench 2.1, ARC-AGI-3;
+most Opus 5 benches remain self-reported — ARC-AGI-3 is independently
+verified). Recalibrate when a model generation lands.
 
 ## Models
 
 Two independent weekly-usage pools: Claude and Codex. Ratings 1–10, higher =
 better. Intelligence = how hard a problem the model takes unsupervised.
-Taste = UI/UX, code quality, API design, copy.
+Taste = UI/UX, code quality, API design, copy. Speed = throughput + time to
+first token (AA, at the tier named).
 
-| model | pool | `herdr agent start` args | intelligence | taste | notes |
-|---|---|---|---|---|---|
-| fable-5 | Claude | `--kind claude -- --model fable --effort <tier>` | 10 | 9 | Reserved. Orchestrator by default; implements only a unit that truly needs maximum intelligence (e.g. fable + sol pair on critical work). Delegates consult it as oracle instead: Claude via its `oracle` subagent, Codex via `ask-peer`. |
-| gpt-5.6-sol | Codex | `--kind codex -- -c model="gpt-5.6-sol" -c model_reasoning_effort="<tier>"` | 9.5 | 8.5 | Codex-pool workhorse, opus-5's intelligence peer. Fastest terminal/agentic work and best visual design (#1 Design Arena); highest measured reward-hacking rate of any public model — its output ships only through the ship-it gate plus the orchestrator's scope checks. |
-| opus-5 | Claude | `--kind claude -- --model opus --effort <tier>` | 9.5 | 8 | Claude-pool workhorse. Within 0.5% of fable's peak (CursorBench 3.2 at `max`) at half fable's price; early reports emphasize verify-and-iterate reliability on long unsupervised runs. No `medium` effort tier (low/high/xhigh/max) — run a `medium`-graded unit at `high`. Verify `--model opus` resolves to Opus 5 in the start banner; if it still points at 4.8, pin `--model claude-opus-5`. Taste provisional: no Design Arena data yet. |
-| sonnet-5 | Claude | `--kind claude -- --model sonnet --effort <tier>` | 7.5 | 7 | Fast lane; unusually strong on terminal loops. |
-| gpt-5.6-terra | Codex | `--kind codex -- -c model="gpt-5.6-terra" -c model_reasoning_effort="<tier>"` | 7 | 6.5 | Fast lane; best value for supervised mechanical work. |
+| model | pool | `herdr agent start` args | intelligence | taste | speed | notes |
+|---|---|---|---|---|---|---|
+| fable-5 | Claude | `--kind claude -- --model fable --effort <tier>` | 10 | 9 | slow | Reserved. Orchestrator by default; implements only a unit that truly needs maximum intelligence (e.g. fable + sol pair on critical work). Delegates consult it as oracle instead: Claude via its `oracle` subagent, Codex via `ask-peer`. |
+| opus-5 | Claude | `--kind claude -- --model opus --effort <tier>` | 9.5 | 8 | slow (53 tok/s; TTFT 68 s at `max`) | Claude-pool workhorse for hard units: long unsupervised runs, deep multi-file repo work. #1 AA Intelligence + Agentic Index; ARC-AGI-3 30.2% (verified, ~4× sol). Latency makes it expensive in wall-clock for small units — grade those to the fast lane. No `medium` effort (low/high/xhigh/max) — run a `medium` unit at `high`. Verify `--model opus` resolves to Opus 5 in the start banner; if it still points at 4.8, pin `--model claude-opus-5`. Taste provisional (no Design Arena read yet). |
+| gpt-5.6-sol | Codex | `--kind codex -- -c model="gpt-5.6-sol" -c model_reasoning_effort="<tier>"` | 9.5 | 8 | medium (61 tok/s; TTFT 4.6 s `medium`, 10.8 s `high`) | Codex-pool workhorse for genuinely hard work: big multi-file refactors, architecture. Reward-hacking confirmed worst of any public model (METR 55.4% gaming; Hugging Face incident, Jul 2026) — ships only through the ship-it gate plus scope checks, and never runs long unsupervised (that class is opus-5's). Former "#1 Design Arena" edge no longer supported by the current board — check the live board before using taste as a tie-break. |
+| gpt-5.6-terra | Codex | `--kind codex -- -c model="gpt-5.6-terra" -c model_reasoning_effort="<tier>"` | 8 | 6.5 | fast (~120 tok/s; TTFT 1.3 s `medium` — ~2× sol) | Codex-pool fast lane. AA Coding Agent Index 77.4 vs sol's 80. Enough for scoped refactors, tests, simple UI, triage, first-pass review — when speed is the point (selection rules). |
+| sonnet-5 | Claude | `--kind claude -- --model sonnet --effort <tier>` | 8 | 7 | fast | Claude-pool fast lane, terra's peer for pool balance. Terminal-Bench 2.1 80.4% (~Opus 4.8 level); SWE-bench Pro 63.2%; 1M context. Weak taste outside code. |
+
+sonnet-5 and terra are the floor: weaker tiers (haiku, luna) stay out of the
+roster by the user's standing decision — prefer available intelligence over
+squeezing cheaper models.
 
 ## Selection rules
 
-- **Workhorses.** Nearly every unit gets opus-5 or sol — intelligence
-  peers, so pool balance breaks the tie. Sol keeps the edge on UI/visual
-  work (#1 Design Arena) and raw terminal speed; opus-5 is the pick for
-  long unsupervised runs (verify-and-iterate profile vs sol's
-  reward-hacking record) and deep multi-file repo work.
-- **Fable, sparingly — more than ever.** Opus-5 sits within 0.5% of
-  fable's peak at half the cost, so fable as implementer is reserved for
-  the rare unit where that last half-percent matters and failure is very
-  expensive (typically paired with sol). Everything else reaches fable
-  through the oracle channel instead.
-- **Fast lane (rare).** A trivial mechanical unit may go to terra or sonnet
-  at `low`; sol at `low`/`medium` or opus-5 at `low` are also fast — prefer
-  them when in doubt.
+- **Frontier by default.** The great majority of units go to opus-5 or
+  sol — autonomous work has to come out right the first time, and quality
+  is what makes the autonomy safe. Pool balance breaks the tie; opus-5
+  takes deep multi-file work and long unsupervised runs (sol never runs
+  those), sol takes big refactors and architecture.
+- **Fast lane when speed is the point.** terra or sonnet-5 at `medium` for
+  the genuinely mechanical or latency-sensitive unit — a closed-spec
+  trivial change where the wait would cost more than the intelligence
+  buys (terra starts ~50× faster than opus-5 at `max`). The review gate
+  and the escalation rule are the net.
+- **Fable, sparingly.** Reserved for the rare unit where the last
+  half-percent matters and failure is very expensive (typically paired
+  with sol). Everything else reaches fable through the oracle channel.
 - **Defaults, not limits.** Standing permission to escalate: when a cheaper
   model's output misses the bar — at any checkpoint — send
   the work back or redo it on a smarter model without asking. Judge the
   output, not the price. When axes conflict for anything that ships,
-  intelligence > taste > cost — cost breaks ties only; use cheap models to
-  scout and try things before the expensive model acts, never to under-staff
-  shipping work.
+  intelligence > taste > cost — cost breaks ties only.
 - **Pair composition.** A pair is always cross-pool — one Claude + one Codex
   model, normally opus-5 + sol — halving the load on each weekly pool and
   keeping two model families in play.
+- **Effort follows the same ladder.** `high` is the working default for
+  anything minimally difficult; `medium` when turnaround matters more than
+  depth; `low` for mechanical diffs; `xhigh` only when correctness
+  outranks turnaround; `max` close to never (only after an `xhigh`
+  escalation failed) — TTFT scales hard with effort (terra: 1.3 s
+  `medium` → 19 s `xhigh` → 155 s `max`; sol `max`: 131 s). The
+  orchestrator grades each unit on its own judgment.
 
 ## Weekly usage state
 

@@ -1,16 +1,13 @@
 ---
 name: herdr-pair
-description: "Persistent Claude-Codex pairing inside one Herdr tab. Use for live peer work, workflows requesting a pair, or inbound agent/control messages; resume the exact session and reply through the bundled transport."
+description: "Persistent Claude-Codex pairing inside one Herdr tab. Use for live peer work, workflows requesting a pair, or any inbound `[agent ...]` / `[herdr-pair control ...]` line — including after context compaction; resume the exact session and reply through the bundled transport."
 ---
 
 # Herdr Pair
 
 Pair Claude and Codex in one Herdr tab. Keep the pair and its `sid` alive across
 tasks, accepted work cycles, and context compaction. The user can read and
-interject in either pane.
-
-Write partner messages and user handoffs in the user's current language. Keep
-code, commands, paths, identifiers, errors, and protocol headers literal.
+interject in either pane. Keep protocol headers and identifiers literal.
 
 ## Preconditions
 
@@ -20,14 +17,45 @@ path; the project cwd is unrelated to the installed skill path.
 
 Require `herdr` with the agent automation commands (`herdr agent start`,
 `herdr agent prompt`) and `trash` on `PATH`, `HERDR_ENV=1`, and
-`HERDR_PANE_ID`. If any is missing, stop and tell the user to install or
-start (or update) Herdr.
+an exact caller pane ID. If any command is missing, stop and tell the user to
+install or start (or update) Herdr.
+
+Set `SELF_AGENT` to the current agent (`claude` or `codex`) and `SELF_PANE` to
+the caller's exact live pane. Treat `HERDR_PANE_ID` only as a hint: inspect it
+with `herdr pane get`, and reject it if its agent does not equal `SELF_AGENT`.
+When the inherited ID is missing or stale, use `herdr agent list` and exact
+current-turn transcript evidence to identify the caller; never infer it only
+from cwd, focus, direction, labels, or pane order. Stop on ambiguity. Confirm
+the final binding:
+
+```bash
+herdr pane get "$SELF_PANE"
+```
+
+Never use `herdr pane current` without an explicit `--pane`; it may resolve by
+UI focus and return a different workspace.
+
+If the confirmed caller pane exposes `agent_session.value`, set `SELF_SESSION`
+to that caller-owned value. Build one argument vector and use it for every
+helper command:
+
+```bash
+PAIR_ID=(--pane "$SELF_PANE" --as "$SELF_AGENT")
+if [ -n "${SELF_SESSION:-}" ]; then
+  PAIR_ID+=(--agent-session-id "$SELF_SESSION")
+fi
+```
+
+The helper requires the exact session ID when Herdr exposes one. If Herdr does
+not expose it, the pane must be actively `working`; idle or done panes fail
+closed.
 
 ## Guardrails
 
-1. Scope every pane operation to the caller's exact `workspace_id` and
-   `tab_id`. Never address a pane discovered only by workspace, focus, label,
-   cwd, direction, or pane number.
+1. Scope every pane operation to the caller's exact `workspace_id`, `tab_id`,
+   `pane_id`, agent kind, and recorded terminal identity. Inherited
+   `HERDR_PANE_ID` is not authority. Never address a pane discovered only by
+   workspace, focus, label, cwd, direction, or pane number.
 2. Use `herdr-pair.mjs send` as the sole partner transport. Reserve normal
    assistant output for a header-free user handoff. `SendMessage`, subagent
    messaging, and direct pane writes are different channels.
@@ -71,12 +99,16 @@ Use these kinds:
 
 ## Start or resume
 
-1. Run `node "$PAIR_SCRIPT" discover`. If no opposite agent exists, run
-   `node "$PAIR_SCRIPT" spawn` once. Stop on multiple candidates or spawn
-   failure.
-2. Run `node "$PAIR_SCRIPT" init`. It creates a new tab-scoped session or
-   idempotently resumes the exact live session. It also migrates supported
-   legacy session shapes.
+1. Run
+   `node "$PAIR_SCRIPT" discover "${PAIR_ID[@]}"`.
+   If no opposite agent exists, run
+   `node "$PAIR_SCRIPT" spawn "${PAIR_ID[@]}"` once.
+   Stop on multiple candidates or spawn failure.
+2. Run `node "$PAIR_SCRIPT" init "${PAIR_ID[@]}"`.
+   It creates a new tab-scoped session or
+   idempotently resumes the exact live session.
+   Record its exact `sid` as `PAIR_SID`; every send is
+   bound to it so a wrong same-kind pane cannot borrow another tab's session.
 3. Send the first `task` through the helper. The partners are equals:
    propose a scope split — one write lease per scope, each partner
    implementing its own scopes and reviewing the other's `ready` — and
@@ -95,34 +127,34 @@ Write only the body to a temp file, then invoke:
 ```bash
 BODY=$(mktemp); trap 'trash "$BODY"' EXIT
 # Write the partner message body to "$BODY".
-node "$PAIR_SCRIPT" send --kind "$KIND" --body-file "$BODY"
+node "$PAIR_SCRIPT" send "${PAIR_ID[@]}" --sid "$PAIR_SID" \
+  --kind "$KIND" --body-file "$BODY"
 ```
 
-The sender waits for the partner to be promptable, reserves the sequence and
-message kind, then injects the control line and submits header, control line,
-and body in one `herdr agent prompt` call, followed by the Enter that call
-owes but does not always deliver — without it the message sits unsubmitted in
-the partner's composer and the ACK wait below reads it as a busy partner. It waits for `receive` to acknowledge that sequence in
-`session.json`; an ACK can recover an interruption immediately after
-submission.
+The sender gives a busy partner a short grace period, then delivers anyway —
+both harnesses queue a submitted prompt while working, so no message is ever
+dropped for a partner that stays busy. It reserves the sequence and message
+kind, submits header, control line, and body in one `herdr agent prompt`
+call, and proves landing from the partner's composer itself: Enter until the
+composer no longer holds the text, one full resend, then a loud failure. It
+then waits for `receive` to acknowledge that sequence in `session.json`; an
+ACK can recover an interruption immediately after submission.
 
 - `receipt=acknowledged`: the partner ran `receive` for this message.
-- `receipt=pending-partner-may-be-busy-do-not-retry`: submission was observed,
-  but the partner has not acknowledged it yet. Do not resend. Later run
-  `node "$PAIR_SCRIPT" reconcile`; the status advances only after its ACK.
+- `receipt=pending-partner-may-be-busy-do-not-retry`: the message landed
+  (queued if the partner was working), but is not acknowledged yet. Do not
+  resend. Later run `node "$PAIR_SCRIPT" reconcile`; the status advances only
+  after its ACK.
 - A nonzero exit after reservation is a transport failure. The pending
   reservation remains so an ACK can reconcile it; never claim delivery or clear
-  it without inspection. A pre-reservation wait timeout leaves no pending state.
-
-A working Claude is never prompted mid-turn; the sender waits for its turn to
-end. A working Codex may be prompted while working — Codex queues the message
-for its next turn.
+  it without inspection.
 
 If inspection proves a pending message never reached the partner, clear only
 that delivery with explicit user approval:
 
 ```bash
-node "$PAIR_SCRIPT" reconcile --sid "<sid>" --clear-pending true
+node "$PAIR_SCRIPT" reconcile "${PAIR_ID[@]}" --sid "<sid>" \
+  --clear-pending true
 ```
 
 ## Receive and recover after compaction
@@ -135,7 +167,7 @@ For inbound `[agent ...]` traffic:
 2. For a legacy message without a control line, run:
 
    ```bash
-   node "$PAIR_SCRIPT" receive --sid "<sid>" --from "<from>"
+   node "$PAIR_SCRIPT" receive "${PAIR_ID[@]}" --sid "<sid>" --from "<from>"
    ```
 
 3. Process the message, write the reply body to a temp file, and run
@@ -158,24 +190,24 @@ local handoff; both agents may idle; the next task resumes the same pair and
 `sid`. The session remains active.
 
 `blocked` and `stalemate` also hand off without deleting the session. Use
-`node "$PAIR_SCRIPT" reset` only to clear work-cycle counters/statuses in a
-verified live pair; it preserves identity and delivery history.
+`node "$PAIR_SCRIPT" reset "${PAIR_ID[@]}"` only to clear work-cycle
+counters/statuses in a verified live pair; it preserves identity and delivery
+history.
 
 End and trash the session only when the user explicitly asks to end the pair:
 
 ```bash
-node "$PAIR_SCRIPT" end --sid "<sid>"
+node "$PAIR_SCRIPT" end "${PAIR_ID[@]}" --sid "<sid>"
 ```
 
-`end` verifies the exact sid, workspace, tab, and participants, then trashes
-only that tab's session and removes an empty workspace directory. Closing the
-Herdr tab ends the panes naturally; stale state must never be borrowed by
-another tab. If old pane IDs or a missing partner prevent resume, explain the
-mismatch and use `end --sid "<sid>" --stale true` only with explicit user
-approval. Normal `end` refuses while delivery is pending; wait for its ACK or
-use the explicit inspected clear path. An explicitly approved stale end may
-discard pending state only when the partner pane is gone or its recorded
-participant binding is stale.
+The script verifies sid, workspace, tab, and participants itself, and
+refuses while delivery is pending (wait for the ACK or use the inspected
+clear path). If old pane IDs or a missing partner prevent resume, explain
+the mismatch and use `end "${PAIR_ID[@]}" --sid "<sid>" --stale true` only
+with explicit user approval — a stale end may discard pending state only
+when the partner pane is gone or its recorded binding is stale. Closing the
+Herdr tab ends the panes naturally; stale state is never borrowed by
+another tab.
 
 ## Workbench tab
 
