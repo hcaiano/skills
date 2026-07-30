@@ -1137,9 +1137,18 @@ function identify(options) {
     process.stdout.write(`${cli.join(" ")}\n`);
     return;
   }
+  // workspace_id and cwd let the caller catch a stale hint that resolved to
+  // a same-kind pane in another workspace — kind alone cannot.
   process.stdout.write(
     `${JSON.stringify(
-      { pane: pane.pane_id, as: agent, agent_session_id: sessionId, args: cli },
+      {
+        pane: pane.pane_id,
+        as: agent,
+        agent_session_id: sessionId,
+        workspace_id: pane.workspace_id ?? null,
+        cwd: pane.cwd ?? null,
+        args: cli,
+      },
       null,
       2,
     )}\n`,
