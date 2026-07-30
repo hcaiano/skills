@@ -27,11 +27,19 @@ syntax.
   `herdr agent prompt`) and `gh` on `PATH`, and `HERDR_ENV=1`. If any is
   missing, stop and say so.
 - Run from the task repository (or `cd` to the repo the user names).
-- For a new run, resolve the caller's own pane natively —
-  `herdr pane current --current` (resolves from the calling process, never
-  UI focus, and unlike `$HERDR_PANE_ID`/`$HERDR_WORKSPACE_ID` cannot go
-  stale across pane moves or session resumes) — and pin both that pane and
-  its `workspace_id`. A pane cwd pointing somewhere other than the task
+- For a new run, resolve the caller's own pane natively and pin both that
+  pane and its `workspace_id`:
+
+  ```bash
+  env -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
+    herdr pane current --current
+  ```
+
+  The env strip is load-bearing: with `HERDR_PANE_ID` set, `--current`
+  echoes the env var — which is captured at process start and goes stale
+  across pane moves and session resumes; only with the env absent does
+  herdr resolve the calling process itself (measured 2026-07-30). Never
+  pin from UI focus. A pane cwd pointing somewhere other than the task
   repository is ordinary, not a mismatch. Read `herdr workspace get
   <workspace_id>` for its `label` and name that workspace to the user as the
   run starts, so a wrong one surfaces before anything is provisioned.

@@ -1115,11 +1115,21 @@ function identify(options) {
   }
   let candidate = callerContext.paneId || null;
   if (!candidate) {
-    // Native caller resolution: `--current` resolves from the calling
-    // process, not UI focus, and unlike the HERDR_PANE_ID env hint it
-    // cannot go stale across pane moves or session resumes.
+    // Native caller resolution — measured behavior (2026-07-30): with
+    // HERDR_PANE_ID set, `pane current --current` just echoes the env var,
+    // stale or not; only with the env STRIPPED does herdr resolve from the
+    // calling process itself. So strip it, or this whole path is the hint
+    // wearing a different hat.
     try {
-      candidate = result("pane", "current", "--current").pane?.pane_id || null;
+      const clean = { ...process.env };
+      delete clean.HERDR_PANE_ID;
+      delete clean.HERDR_TAB_ID;
+      delete clean.HERDR_WORKSPACE_ID;
+      const out = execFileSync("herdr", ["pane", "current", "--current"], {
+        encoding: "utf8",
+        env: clean,
+      });
+      candidate = JSON.parse(out).result.pane?.pane_id || null;
     } catch {
       candidate = null;
     }
