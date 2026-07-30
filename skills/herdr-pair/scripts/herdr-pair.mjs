@@ -22,6 +22,7 @@ const schemaVersion = 2;
 const staleLockMs = 60000;
 const pasteSettleMs = 400;
 const processStartFormat = "ps-lstart-c-utc-v1";
+let callerContext = null;
 
 class CliError extends Error {}
 
@@ -44,7 +45,11 @@ function result(command, ...args) {
 }
 
 function paneGet(paneId) {
-  return result("pane", "get", paneId).pane;
+  const pane = result("pane", "get", paneId).pane;
+  if (!pane || pane.pane_id !== paneId) {
+    fail(`herdr did not return the exact requested pane ${paneId}`);
+  }
+  return pane;
 }
 
 function paneList(workspaceId) {
@@ -52,11 +57,65 @@ function paneList(workspaceId) {
 }
 
 function currentPane() {
-  const paneId = process.env.HERDR_PANE_ID;
-  if (process.env.HERDR_ENV !== "1" || !paneId) {
-    fail("herdr-pair requires HERDR_ENV=1 and HERDR_PANE_ID");
+  if (process.env.HERDR_ENV !== "1") {
+    fail("herdr-pair requires HERDR_ENV=1");
   }
-  return paneGet(paneId);
+  if (!callerContext?.paneId || !callerContext?.agent) {
+    fail(
+      "herdr-pair requires the caller's exact --pane ID and --as claude|codex; inherited HERDR_PANE_ID is not an identity authority",
+    );
+  }
+  if (!["claude", "codex"].includes(callerContext.agent)) {
+    fail(`unsupported caller agent: ${callerContext.agent}`);
+  }
+
+  const pane = paneGet(callerContext.paneId);
+  if (pane.agent !== callerContext.agent) {
+    fail(
+      `caller identity mismatch: --pane ${callerContext.paneId} is ${pane.agent ?? "not an agent"}, not --as ${callerContext.agent}`,
+    );
+  }
+  const observedSessionId = pane.agent_session?.value ?? null;
+  if (observedSessionId) {
+    if (!callerContext.agentSessionId) {
+      fail(
+        `caller pane ${pane.pane_id} exposes an agent session; pass the caller-owned --agent-session-id`,
+      );
+    }
+    if (callerContext.agentSessionId !== observedSessionId) {
+      fail(
+        `caller session mismatch for ${pane.pane_id}: --agent-session-id does not match the live ${pane.agent} session`,
+      );
+    }
+  } else if (pane.agent_status !== "working") {
+    fail(
+      `caller pane ${pane.pane_id} has no agent session identity and is ${pane.agent_status ?? "unknown"}; refusing an uncorroborated pane`,
+    );
+  }
+  return pane;
+}
+
+function participantRecord(pane) {
+  return {
+    pane_id: pane.pane_id,
+    terminal_id: pane.terminal_id ?? null,
+    agent_session_id: pane.agent_session?.value ?? null,
+  };
+}
+
+function participantMatches(record, pane) {
+  return (
+    record?.pane_id === pane.pane_id &&
+    (!record.terminal_id || record.terminal_id === pane.terminal_id) &&
+    (!record.agent_session_id ||
+      record.agent_session_id === pane.agent_session?.value)
+  );
+}
+
+function agentSessionCliArgument(pane) {
+  return pane.agent_session?.value
+    ? ` --agent-session-id ${JSON.stringify(pane.agent_session.value)}`
+    : "";
 }
 
 function opposite(agent) {
@@ -97,6 +156,25 @@ function normalizeSession(session, live) {
     delete normalized.self;
     delete normalized.partner;
     changed = true;
+  }
+  if (normalized.participants && live?.self && live?.partner) {
+    for (const pane of [live.self, live.partner]) {
+      const record = normalized.participants[pane.agent];
+      if (
+        record?.pane_id === pane.pane_id &&
+        ((record.terminal_id == null && pane.terminal_id) ||
+          (record.agent_session_id == null && pane.agent_session?.value))
+      ) {
+        normalized.participants[pane.agent] = {
+          ...participantRecord(pane),
+          ...record,
+          terminal_id: record.terminal_id ?? pane.terminal_id ?? null,
+          agent_session_id:
+            record.agent_session_id ?? pane.agent_session?.value ?? null,
+        };
+        changed = true;
+      }
+    }
   }
   if (normalized.schema_version !== schemaVersion) {
     normalized.schema_version = schemaVersion;
@@ -223,6 +301,11 @@ async function spawn() {
   if (binding.partner) {
     process.stdout.write(`${JSON.stringify(binding, null, 2)}\n`);
     return;
+  }
+  if (!binding.self.agent_session?.value) {
+    fail(
+      `spawn requires a caller pane with a strong agent session identity; ${binding.self.pane_id} exposes none`,
+    );
   }
 
   const split = result(
@@ -446,7 +529,7 @@ async function initSession() {
           sid = JSON.parse(readFileSync(path, "utf8")).sid ?? sid;
         } catch {}
         fail(
-          `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${JSON.stringify(scriptPath)} end --sid ${JSON.stringify(sid)} --stale true`,
+          `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${JSON.stringify(scriptPath)} end --pane ${JSON.stringify(binding.self.pane_id)} --as ${JSON.stringify(binding.self.agent)}${agentSessionCliArgument(binding.self)} --sid ${JSON.stringify(sid)} --stale true`,
         );
       }
       await reconcileAcknowledged(resumed.path, resumed.session.sid);
@@ -465,13 +548,12 @@ async function initSession() {
       initiator: binding.self.agent,
       active: true,
       participants: {
-        claude: {
-          pane_id:
-            binding.self.agent === "claude" ? binding.self.pane_id : binding.partner.pane_id,
-        },
-        codex: {
-          pane_id: binding.self.agent === "codex" ? binding.self.pane_id : binding.partner.pane_id,
-        },
+        claude: participantRecord(
+          binding.self.agent === "claude" ? binding.self : binding.partner,
+        ),
+        codex: participantRecord(
+          binding.self.agent === "codex" ? binding.self : binding.partner,
+        ),
       },
       round: 0,
       last_status: { claude: null, codex: null },
@@ -544,8 +626,8 @@ async function verifiedSession() {
   const selfRecord = session.participants[live.self.agent];
   const partnerRecord = session.participants[live.partner.agent];
   if (
-    selfRecord?.pane_id !== live.self.pane_id ||
-    partnerRecord?.pane_id !== live.partner.pane_id
+    !participantMatches(selfRecord, live.self) ||
+    !participantMatches(partnerRecord, live.partner)
   ) {
     fail("live panes do not match the participants recorded for this tab");
   }
@@ -554,7 +636,8 @@ async function verifiedSession() {
   if (
     partner.workspace_id !== live.self.workspace_id ||
     partner.tab_id !== live.self.tab_id ||
-    partner.agent !== live.partner.agent
+    partner.agent !== live.partner.agent ||
+    !participantMatches(partnerRecord, partner)
   ) {
     fail("recorded partner is no longer the opposite agent in the caller's current tab");
   }
@@ -686,7 +769,40 @@ async function waitUntilNotWorking(paneId, timeoutMs) {
     if (pane.agent_status !== "working") return pane;
     await sleep(250);
   }
-  fail(`partner ${paneId} stayed working for ${timeoutMs}ms; message not sent`);
+  // A grace period, not a gate: the caller delivers anyway. Blocking until
+  // idle used to drop messages to a partner that never idled (a STOP lost on
+  // 2026-07-29 while its recipient held "working" for 1h18m).
+  return null;
+}
+
+const composerConfirmMs = 3000;
+const composerPollMs = 200;
+
+// `--source recent` returns an empty string on a live pane, so a composer
+// check that omits the source reads "clear" no matter what is on screen.
+function visibleTail(paneId) {
+  return herdr("pane", "read", paneId, "--source", "visible", "--lines", "40", "--format", "text");
+}
+
+// True while our text still sits unsubmitted: the last prompt line on screen
+// (`›` in Codex, `>` in Claude Code) carries it instead of the placeholder an
+// empty composer shows.
+function composerHolds(paneId, head) {
+  const lines = visibleTail(paneId).split("\n");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    if (!/^[›>]\s/.test(line)) continue;
+    return line.slice(2).trim().startsWith(head);
+  }
+  return false;
+}
+
+async function composerSettled(paneId, head) {
+  for (let waited = 0; waited < composerConfirmMs; waited += composerPollMs) {
+    if (!composerHolds(paneId, head)) return true;
+    await sleep(composerPollMs);
+  }
+  return !composerHolds(paneId, head);
 }
 
 async function reserveSequence(path, sid, agent, kind) {
@@ -720,14 +836,32 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
     if (session.delivery.pending?.[agent]?.seq !== sequence) {
       fail(`delivery reservation ${agent} seq ${sequence} is no longer active; message not sent`);
     }
-    herdr("agent", "prompt", paneId, message);
     // `agent prompt` returns before its Enter takes effect and does not always
     // deliver one, so the message can sit unsubmitted in the partner's
     // composer — and the ACK wait then reads that as a busy partner rather
-    // than a stuck message. Send the Enter here until herdr closes the gap; on
-    // an already-submitted composer it is a harmless no-op.
+    // than a stuck message. Land it the way herdr-orchestrate's send.mjs does:
+    // paste, Enter until the composer no longer holds the text, one full
+    // resend, then a loud failure instead of a silent stall. Prose rewrites of
+    // the skill have shaved this off four times; it lives in code on purpose.
+    const head = (message.split("\n").find((line) => line.trim()) ?? "").trim().slice(0, 40);
+    herdr("agent", "prompt", paneId, message);
     await sleep(pasteSettleMs);
-    herdr("agent", "send-keys", paneId, "enter");
+    let landed = false;
+    for (let attempt = 0; attempt < 3 && !landed; attempt += 1) {
+      herdr("agent", "send-keys", paneId, "enter");
+      landed = await composerSettled(paneId, head);
+    }
+    if (!landed) {
+      herdr("agent", "prompt", paneId, message);
+      await sleep(pasteSettleMs);
+      herdr("agent", "send-keys", paneId, "enter");
+      landed = await composerSettled(paneId, head);
+    }
+    if (!landed) {
+      fail(
+        `message for ${paneId} seq ${sequence} never left the partner composer; the reservation stays pending — inspect that pane, then reconcile before sending again`,
+      );
+    }
   });
 }
 
@@ -813,8 +947,9 @@ async function endSession(args) {
     let participantMismatch = binding.partner === null;
     if (binding.partner) {
       for (const agent of ["claude", "codex"]) {
-        const expected = agent === binding.self.agent ? binding.self.pane_id : binding.partner.pane_id;
-        if (normalized.participants?.[agent]?.pane_id !== expected) {
+        const expected =
+          agent === binding.self.agent ? binding.self : binding.partner;
+        if (!participantMatches(normalized.participants?.[agent], expected)) {
           participantMismatch = true;
         }
       }
@@ -858,24 +993,41 @@ async function send(args) {
   const options = parseOptions(args);
   const kind = options.kind;
   const bodyFile = options["body-file"];
-  if (!kind || !bodyFile) fail("send requires --kind and --body-file");
+  const claimedSid = options.sid;
+  if (!kind || !bodyFile || !claimedSid) {
+    fail("send requires --sid, --kind, and --body-file");
+  }
 
   let binding = await verifiedSession();
+  if (binding.session.sid !== claimedSid) {
+    fail(
+      `send sid ${claimedSid} does not match current-tab session ${binding.session.sid}`,
+    );
+  }
   await reconcileAcknowledged(binding.path, binding.session.sid);
   const body = readFileSync(bodyFile, "utf8").trimEnd();
 
-  // A working Claude cannot take a prompt mid-turn; Codex queues prompts
-  // natively, so it may be prompted while working. Re-resolve after every
-  // wait so the reservation binds to a current partner.
-  while (true) {
+  // Prefer handing to an idle partner, but never trade delivery for
+  // idleness: both harnesses queue a submitted prompt while working, and
+  // promptReservedDelivery proves landing from the composer itself. The wait
+  // is a short grace period; on timeout the message is delivered queued.
+  binding = await verifiedSession();
+  if (binding.session.sid !== claimedSid) {
+    fail(
+      `send sid ${claimedSid} no longer matches current-tab session ${binding.session.sid}`,
+    );
+  }
+  if (binding.partner.agent_status === "working") {
+    await waitUntilNotWorking(
+      binding.partner.pane_id,
+      Number(options["timeout-ms"] ?? 10000),
+    );
     binding = await verifiedSession();
-    if (
-      binding.partner.agent_status !== "working" ||
-      binding.partner.agent === "codex"
-    ) {
-      break;
+    if (binding.session.sid !== claimedSid) {
+      fail(
+        `send sid ${claimedSid} no longer matches current-tab session ${binding.session.sid}`,
+      );
     }
-    await waitUntilNotWorking(binding.partner.pane_id, Number(options["timeout-ms"] ?? 60000));
   }
   const sequence = await reserveSequence(
     binding.path,
@@ -884,7 +1036,7 @@ async function send(args) {
     kind,
   );
   const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
-  const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
+  const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --pane ${JSON.stringify(binding.partner.pane_id)} --as ${JSON.stringify(binding.partner.agent)}${agentSessionCliArgument(binding.partner)} --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
   const message = `${header}\n${control}\n\n${body}`;
   await promptReservedDelivery(
@@ -955,6 +1107,12 @@ async function reconcileSession(args) {
 
 async function main() {
   const [command, ...args] = process.argv.slice(2);
+  const options = parseOptions(args);
+  callerContext = {
+    paneId: options.pane ?? null,
+    agent: options.as ?? null,
+    agentSessionId: options["agent-session-id"] ?? null,
+  };
 
   if (command === "discover") {
     process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
@@ -980,7 +1138,7 @@ async function main() {
   } else if (command === "end") {
     await endSession(args);
   } else {
-    fail("usage: herdr-pair.mjs discover | spawn | init | verify | reconcile [--sid SID --clear-pending true] | reset | end --sid SID [--stale true] | receive --sid SID --from AGENT [--seq N] | send --kind KIND --body-file FILE [--timeout-ms MS] [--ack-timeout-ms MS]");
+    fail("usage: herdr-pair.mjs COMMAND --pane PANE_ID --as claude|codex [--agent-session-id ID] [command options]");
   }
 }
 
