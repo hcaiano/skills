@@ -48,25 +48,18 @@ ship it.
    docs-only skip; a failed/aborted attempt is not success. Otherwise have
    Claude run its native `/simplify` command on this same final diff:
    - In-session when Claude is driving, invoke `/simplify` directly.
-   - From Codex/headless, `acceptEdits` writes to the worktree unsupervised,
-     so bracket the run. Snapshot the pre-run tree first as a baseline patch,
-     `git diff HEAD --binary > <baseline patch>` — it captures the
-     intent-to-add paths from step 1, which `git stash create` refuses. Then
-     start this in the background against a log, keeping its PID (stock
-     macOS has no `timeout` binary, so the deadline is yours):
-     `claude -p --model opus --permission-mode acceptEdits --strict-mcp-config --no-chrome --output-format stream-json --include-partial-messages --verbose "/simplify"`.
-     Streamed events make progress visible: the log growing is the liveness
-     signal, and 20 minutes without a new line, or 60 minutes in total, is a
-     hang. Complete means exit 0 plus a final `result` event with
-     `is_error: false`.
-     On a hang, a nonzero exit, or a missing result: kill that PID and
-     confirm no `claude` process is still writing before touching the tree
-     (background jobs share the caller's process group, so kill the PID
-     itself, never the group). Restore with
-     `git checkout HEAD -- . && git apply --binary <baseline patch>`, re-mark
-     the step 1 intent-to-add paths, and review anything untracked the run
-     left behind. Then mark Claude unavailable for this
-     gate (step 4 regrades) and record `failed — <reason>` on the receipt's
+   - From Codex/headless, run it through the bundled wrapper — it owns the
+     baseline patch, liveness deadline, kill, verified restore, and content
+     validation, and reports leftover untracked files for review:
+
+     ```bash
+     node <skill dir>/scripts/headless-claude.mjs "/simplify" --writable true
+     ```
+
+     Exit 0 with `{ok: true}` is the only success. On `{ok: false}` the
+     tree is already restored (a `restore_error` means it is NOT — inspect
+     before touching anything); mark Claude unavailable for this gate
+     (step 4 regrades) and record `failed — <reason>` on the receipt's
      `Simplify:` line.
    On success, keep Claude's fixes in the working tree and run focused proof
    before the review gate. Skip simplify, like the gate, for
@@ -95,12 +88,10 @@ ship it.
      skill:
      - Claude Code: invoke the `/code-review` slash command itself on Opus —
        in-session when Claude is driving (the same command the user would
-       type), or headless as
-       `claude -p --model opus --permission-mode plan --strict-mcp-config --no-chrome --output-format stream-json --include-partial-messages --verbose "/code-review"`,
-       backgrounded against a log, live and complete on step 3's terms. Its
-       `plan` mode writes nothing, so it needs no baseline patch — a hang
-       still gets the same kill.
-       This gate is satisfied only by running the `/code-review` command in
+       type), or headless via
+       `node <skill dir>/scripts/headless-claude.mjs "/code-review"`
+       (read-only plan mode; `{ok: true}` with a non-empty result is the
+       only pass). This gate is satisfied only by running `/code-review` in
        full; nothing improvised stands in for it.
      - Codex: run `codex review "<final-diff review prompt>"`. Do not use
        `--base` when the final diff also has staged or unstaged changes because
