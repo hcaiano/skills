@@ -24,16 +24,15 @@ syntax.
 ## Preconditions
 
 - `herdr` with the agent automation commands (`herdr agent start`,
-  `herdr agent prompt`) and `gh` on `PATH`, `HERDR_ENV=1`, and
-  `HERDR_PANE_ID` set. If any is missing, stop and say so.
+  `herdr agent prompt`) and `gh` on `PATH`, and `HERDR_ENV=1`. If any is
+  missing, stop and say so.
 - Run from the task repository (or `cd` to the repo the user names).
-- For a new run, resolve `herdr pane get "$HERDR_PANE_ID"` and pin both that
-  pane and its own `workspace_id` — the resolved pane is the single source,
-  never UI focus, and `$HERDR_WORKSPACE_ID` beside it goes stale the moment a
-  pane moves. A run lives entirely inside the caller's workspace, so an
-  inherited pane id — a headless `claude -p`, a subagent, any child process —
-  still names the right workspace: a pane cwd pointing somewhere other than
-  the task repository is ordinary, not a mismatch. Read `herdr workspace get
+- For a new run, resolve the caller's own pane natively —
+  `herdr pane current --current` (resolves from the calling process, never
+  UI focus, and unlike `$HERDR_PANE_ID`/`$HERDR_WORKSPACE_ID` cannot go
+  stale across pane moves or session resumes) — and pin both that pane and
+  its `workspace_id`. A pane cwd pointing somewhere other than the task
+  repository is ordinary, not a mismatch. Read `herdr workspace get
   <workspace_id>` for its `label` and name that workspace to the user as the
   run starts, so a wrong one surfaces before anything is provisioned.
 - A unit milestone carries the pinned `workspace_id`; use it to resume the

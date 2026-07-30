@@ -125,6 +125,8 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   state.last_send_keys = { pane: args[2], key: args[3] };
   save();
   output({});
+} else if (args[0] === "pane" && args[1] === "current") {
+  output({ pane: state.panes[state.current_pane] });
 } else if (args[0] === "pane" && args[1] === "read") process.stdout.write("");
 else { process.stderr.write("unsupported fake herdr args: " + args.join(" ") + "\\n"); process.exit(1); }
 `,
@@ -218,6 +220,15 @@ try {
   assert.throws(() => runRaw("id", "--as", "claude"), /stale:pane/u);
   const idExplicit = JSON.parse(runRaw("id", "--as", "codex", "--pane", "w1:p1"));
   assert.equal(idExplicit.pane, "w1:p1");
+  // Native caller resolution (`pane current --current`) beats a stale env
+  // hint: with the fake reporting the calling pane, the stale HERDR_PANE_ID
+  // is never consulted.
+  let currentState = JSON.parse(readFileSync(statePath, "utf8"));
+  currentState.current_pane = "w1:p2";
+  writeFileSync(statePath, `${JSON.stringify(currentState, null, 2)}\n`);
+  assert.equal(JSON.parse(runRaw("id", "--as", "claude")).pane, "w1:p2");
+  delete currentState.current_pane;
+  writeFileSync(statePath, `${JSON.stringify(currentState, null, 2)}\n`);
 
   let identityState = JSON.parse(readFileSync(statePath, "utf8"));
   identityState.panes["w9:p1"] = {
