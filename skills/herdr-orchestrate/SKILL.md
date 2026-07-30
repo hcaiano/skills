@@ -26,7 +26,9 @@ syntax.
 - `herdr` with the agent automation commands (`herdr agent start`,
   `herdr agent prompt`) and `gh` on `PATH`, and `HERDR_ENV=1`. If any is
   missing, stop and say so.
-- Run from the task repository (or `cd` to the repo the user names).
+- Resolve the task repository explicitly with
+  `git -C <task repository> rev-parse --show-toplevel`; do not use the
+  caller's inherited cwd as repository identity.
 - For a new run, pin the caller pane and its `workspace_id` by **your own
   agent session id**, through the herdr-pair helper installed alongside
   this skill (Claude: the UUID in your own transcript/scratchpad paths;
@@ -37,19 +39,33 @@ syntax.
     --as <claude|codex> --session <your session id>
   ```
 
+  Before accepting any result, require its exact agent and workspace, validate
+  the workspace repository when registered, and compare that pane's transcript
+  with the current conversation and task repository. A user-declared move or
+  any failed check is a stale binding even when the session lookup is unique.
+
   It matches `agent_session.value` across live panes — the one signal
-  that survives a stale env and ignores focus — and falls back to the
-  validated `HERDR_PANE_ID` hint only without a match. `herdr pane
-  current` never identifies you, in any form — measured 2026-07-30: bare
+  that survives a stale env and ignores focus — and never falls back to
+  the inherited `HERDR_PANE_ID` hint. If that lookup
+  fails, resolves a stale owner, or identifies a pane that fails those checks,
+  stop and report the stale hint; do not guess a replacement. After the user
+  explicitly confirms the intended pane **and** workspace, read and follow
+  `<herdr-pair skill dir>/references/pane-identity-recovery.md`. Do not
+  provision anything until its final session-based lookup resolves uniquely
+  to the confirmed pane.
+
+  `herdr pane current` never identifies you, in any form — measured
+  2026-07-30: bare
   it follows UI focus, and `--current` echoes `$HERDR_PANE_ID` (stale or
   not) or falls back to the focused pane. A pane cwd pointing somewhere other than the task
   repository is ordinary, not a mismatch — the **workspace**, not the
   pane, is what must match: read `herdr workspace get <workspace_id>` and
-  require its registered repo (`worktree.repo_root`) to equal the task
-  repository's root (`git rev-parse --show-toplevel`). Equal → name the
-  workspace label to the user and proceed. Different or null → stop
-  before any provisioning and name both sides; the user restarts the run
-  from a pane in the right workspace. This is a gate, not a remark — an
+  require its registered checkout (`worktree.checkout_path`, falling back to
+  `worktree.repo_root` on older metadata) to equal the task repository's
+  explicit root. Equal → name the
+  workspace label to the user and proceed. Different → stop before any
+  provisioning and name both sides. Null → use only the explicit recovery
+  reference above; otherwise stop. This is a gate, not a remark — an
   agent that noticed the wrong label and carried on has already
   provisioned a unit into a foreign workspace.
 - A unit milestone carries the pinned `workspace_id`; use it to resume the
