@@ -239,34 +239,24 @@ at that tab instead of creating a second unit for it.
    (merge `origin/main` into it, push) and verify
    `git merge-base <worktree branch> <base>` contains the worktree's
    starting point. Repeat the sync whenever main advances during the run.
-3. **Tab and agents.** Create the unit's tab in the pinned workspace
-   (`herdr tab create --workspace <id> --cwd <worktree> --label "#N <short
-   title>" --no-focus`; multi-issue label: `#N+#M <theme>`). The new tab
-   arrives with one shell pane — that is the lead's pane. Read its
-   `pane_id` from the create response's `root_pane`; require its workspace,
-   tab, and cwd to match the pinned workspace, new tab, and unit worktree.
-   Start the lead only after that check. Use the unit's graded model at the
-   unit's effort — exact per-model args in `references/models.md`. For a pair
-   unit, split exactly once for the peer, the other pool's model (guardrail 4):
+3. **Tab and agents.** Provision through the bundled script — it creates
+   the tab in the pinned workspace, verifies the root pane's workspace and
+   cwd, starts the lead there (pair: one split for the peer, the other
+   pool's model, guardrail 4), closes any leftover shell pane, and tears
+   the tab down on failure:
 
    ```bash
-   herdr agent start lead-<N> --pane <initial pane_id> <graded model args>
-   # pair units only:
-   herdr pane split <initial pane_id> --direction right --no-focus
-   herdr agent start peer-<N> --pane <split pane_id> <other pool model args>
+   node <skill dir>/scripts/create-unit.mjs --spec '{
+     "workspace": "<id>", "cwd": "<worktree>", "label": "#N <short title>",
+     "lead": {"name": "lead-<N>", "args": [<graded model args>]},
+     "peer": {"name": "peer-<N>", "args": [<other pool model args>]}
+   }'
    ```
 
-   `<N>` is the unit's first issue number; the names `lead-<N>` / `peer-<N>`
-   are UI labels. Carry their workspace-qualified pane IDs and use those IDs
-   in every later `herdr agent` command. Arguments after `--` pass to the
-   agent executable, so `--pane` must come before the model args' `--`. Always
-   pin the model explicitly: a bare `claude` or `codex`
-   inherits the user's saved default instead of the graded model.
-   `herdr agent start` returns only once its agent is up, so the unit is ready
-   when every start succeeded and the tab holds exactly one pane per agent
-   (`herdr pane list --workspace <id>` filtered to this tab) — solo: the
-   lead in the tab's original pane; pair: lead there, peer in the split. A
-   leftover shell pane means the lead was split in instead — close it.
+   Model args per `references/models.md`; always pin the model explicitly —
+   a bare `claude` or `codex` inherits the user's saved default instead of
+   the graded model. Multi-issue label: `#N+#M <theme>`. Carry the returned
+   `lead_pane`/`peer_pane` IDs in every later `herdr agent` command.
 4. **Kickoff.** Send the message below to the lead pane per
    [Sending a message to an agent](#sending-a-message-to-an-agent). The unit
    is live when the kickoff lands.
@@ -428,15 +418,18 @@ merged. Then act by kind:
   line (also the handled marker in its pane), then toast the PR URL and why
   it holds; visible UI also requires before/after screenshots. The user's OK
   flips it onto the `auto` path. An `auto` unit merges in the repo's merge
-  style with `--match-head-commit <verified head>` — skip `--delete-branch`:
-  while the worktree exists it fails on the local branch and can leave the
-  remote one behind. Then dismantle in this order: remove the worktree (the
-  project's teardown script if one exists, else `git worktree remove
-  <path>`), delete the branch both sides (`git branch -D <branch>` — `-d`
-  refuses under squash/rebase merge styles; `git push origin --delete
-  <branch>`), and close the unit's tab plus every auxiliary pane or tab
-  registered to it (guardrail 6). Merge only this run's PR into its
-  intended base.
+  style with `--match-head-commit <verified head>` — skip `--delete-branch`
+  (it fails while the worktree exists). Then dismantle through the bundled
+  script — worktree, branch both sides, registered auxiliary tabs/panes
+  (guardrail 6), tab, in the order that works, with a checkpoint report on
+  failure:
+
+  ```bash
+  node <skill dir>/scripts/dismantle-unit.mjs --worktree <path> \
+    --branch <branch> --tab <tab_id> [--teardown "<cmd>"] [--aux <id,...>]
+  ```
+
+  Merge only this run's PR into its intended base.
 - `blocked` — read the unit's pane and surface the tab and the exact
   decision to the user, raising a toast so it reaches them away from the
   terminal: `herdr notification show "<tab label> blocked" --body

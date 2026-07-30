@@ -20,35 +20,17 @@ Require `herdr` with the agent automation commands (`herdr agent start`,
 an exact caller pane ID. If any command is missing, stop and tell the user to
 install or start (or update) Herdr.
 
-Set `SELF_AGENT` to the current agent (`claude` or `codex`) and `SELF_PANE` to
-the caller's exact live pane. Treat `HERDR_PANE_ID` only as a hint: inspect it
-with `herdr pane get`, and reject it if its agent does not equal `SELF_AGENT`.
-When the inherited ID is missing or stale, use `herdr agent list` and exact
-current-turn transcript evidence to identify the caller; never infer it only
-from cwd, focus, direction, labels, or pane order. Stop on ambiguity. Confirm
-the final binding:
+Derive your identity with the helper — it validates the `HERDR_PANE_ID`
+hint and fails closed on a stale, wrong-kind, or uncorroborated pane:
 
 ```bash
-herdr pane get "$SELF_PANE"
+PAIR_ID=($(node "$PAIR_SCRIPT" id --as <claude|codex> --format shell))
 ```
 
-Never use `herdr pane current` without an explicit `--pane`; it may resolve by
-UI focus and return a different workspace.
-
-If the confirmed caller pane exposes `agent_session.value`, set `SELF_SESSION`
-to that caller-owned value. Build one argument vector and use it for every
-helper command:
-
-```bash
-PAIR_ID=(--pane "$SELF_PANE" --as "$SELF_AGENT")
-if [ -n "${SELF_SESSION:-}" ]; then
-  PAIR_ID+=(--agent-session-id "$SELF_SESSION")
-fi
-```
-
-The helper requires the exact session ID when Herdr exposes one. If Herdr does
-not expose it, the pane must be actively `working`; idle or done panes fail
-closed.
+Use `"${PAIR_ID[@]}"` on every helper command. If `id` fails, find your
+live pane with `herdr agent list` and pass it as `--pane` — never `herdr
+pane current` without `--pane` (it resolves by UI focus), and never a pane
+inferred from cwd, focus, labels, or pane order.
 
 ## Guardrails
 

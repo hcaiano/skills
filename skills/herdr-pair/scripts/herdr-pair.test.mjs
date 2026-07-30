@@ -187,7 +187,36 @@ const runRaw = (...args) =>
   });
 const sessionPath = join(home, ".herdr-coworkers", "w1", "w1_t1", "session.json");
 
+const runRawWithEnv = (overrides, ...args) =>
+  execFileSync(process.execPath, [helper, ...args], {
+    encoding: "utf8",
+    env: { ...env, ...overrides },
+  });
+
 try {
+  // `id` derives identity from the hint or an explicit --pane, and fails
+  // closed on a stale hint, a wrong-kind pane, or an uncorroborated pane.
+  const idHappy = JSON.parse(
+    runRawWithEnv({ HERDR_PANE_ID: "w1:p2" }, "id", "--as", "claude"),
+  );
+  assert.deepEqual(idHappy, {
+    pane: "w1:p2",
+    as: "claude",
+    agent_session_id: "claude-session-w1-p2",
+    args: ["--pane", "w1:p2", "--as", "claude", "--agent-session-id", "claude-session-w1-p2"],
+  });
+  assert.equal(
+    runRawWithEnv({ HERDR_PANE_ID: "w1:p2" }, "id", "--as", "claude", "--format", "shell").trim(),
+    "--pane w1:p2 --as claude --agent-session-id claude-session-w1-p2",
+  );
+  assert.throws(
+    () => runRawWithEnv({ HERDR_PANE_ID: "w1:p2" }, "id", "--as", "codex"),
+    /hosts claude, not codex/u,
+  );
+  assert.throws(() => runRaw("id", "--as", "claude"), /stale:pane/u);
+  const idExplicit = JSON.parse(runRaw("id", "--as", "codex", "--pane", "w1:p1"));
+  assert.equal(idExplicit.pane, "w1:p1");
+
   let identityState = JSON.parse(readFileSync(statePath, "utf8"));
   identityState.panes["w9:p1"] = {
     agent: "claude",

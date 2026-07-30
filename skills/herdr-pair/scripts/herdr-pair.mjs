@@ -1105,6 +1105,47 @@ async function reconcileSession(args) {
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
 }
 
+// Derive and verify the caller's identity from an explicit --pane or the
+// HERDR_PANE_ID hint. The hint is never authority: a stale or wrong-kind
+// pane fails closed with instructions instead of borrowing an identity.
+function identify(options) {
+  const agent = callerContext?.agent;
+  if (!["claude", "codex"].includes(agent ?? "")) {
+    fail("id requires --as claude|codex (the agent you are)");
+  }
+  const candidate = callerContext.paneId ?? process.env.HERDR_PANE_ID ?? null;
+  if (!candidate) {
+    fail(
+      "no caller pane: pass --pane, or run inside Herdr so HERDR_PANE_ID is set; find your live pane with `herdr agent list`",
+    );
+  }
+  const pane = paneGet(candidate);
+  if (pane.agent !== agent) {
+    fail(
+      `pane ${candidate} hosts ${pane.agent ?? "no agent"}, not ${agent}; the inherited hint is stale — find your live pane with \`herdr agent list\` and pass it as --pane`,
+    );
+  }
+  const sessionId = pane.agent_session?.value ?? null;
+  if (!sessionId && pane.agent_status !== "working") {
+    fail(
+      `pane ${pane.pane_id} exposes no agent session and is ${pane.agent_status ?? "unknown"}; refusing an uncorroborated identity`,
+    );
+  }
+  const cli = ["--pane", pane.pane_id, "--as", agent];
+  if (sessionId) cli.push("--agent-session-id", sessionId);
+  if (options.format === "shell") {
+    process.stdout.write(`${cli.join(" ")}\n`);
+    return;
+  }
+  process.stdout.write(
+    `${JSON.stringify(
+      { pane: pane.pane_id, as: agent, agent_session_id: sessionId, args: cli },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   const options = parseOptions(args);
@@ -1114,7 +1155,9 @@ async function main() {
     agentSessionId: options["agent-session-id"] ?? null,
   };
 
-  if (command === "discover") {
+  if (command === "id") {
+    identify(options);
+  } else if (command === "discover") {
     process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
   } else if (command === "spawn") {
     await spawn();
