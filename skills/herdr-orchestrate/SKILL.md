@@ -27,19 +27,22 @@ syntax.
   `herdr agent prompt`) and `gh` on `PATH`, and `HERDR_ENV=1`. If any is
   missing, stop and say so.
 - Run from the task repository (or `cd` to the repo the user names).
-- For a new run, resolve the caller's own pane natively and pin both that
-  pane and its `workspace_id`:
+- For a new run, pin the caller pane and its `workspace_id` by **your own
+  agent session id**, through the herdr-pair helper installed alongside
+  this skill (Claude: the UUID in your own transcript/scratchpad paths;
+  Codex: your rollout session id):
 
   ```bash
-  env -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
-    herdr pane current --current
+  node <herdr-pair skill dir>/scripts/herdr-pair.mjs id \
+    --as <claude|codex> --session <your session id>
   ```
 
-  The env strip is load-bearing: with `HERDR_PANE_ID` set, `--current`
-  echoes the env var — which is captured at process start and goes stale
-  across pane moves and session resumes; only with the env absent does
-  herdr resolve the calling process itself (measured 2026-07-30). Never
-  pin from UI focus. A pane cwd pointing somewhere other than the task
+  It matches `agent_session.value` across live panes — the one signal
+  that survives a stale env and ignores focus — and falls back to the
+  validated `HERDR_PANE_ID` hint only without a match. `herdr pane
+  current` never identifies you, in any form — measured 2026-07-30: bare
+  it follows UI focus, and `--current` echoes `$HERDR_PANE_ID` (stale or
+  not) or falls back to the focused pane. A pane cwd pointing somewhere other than the task
   repository is ordinary, not a mismatch — the **workspace**, not the
   pane, is what must match: read `herdr workspace get <workspace_id>` and
   require its registered repo (`worktree.repo_root`) to equal the task
