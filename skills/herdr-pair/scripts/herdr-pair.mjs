@@ -12,6 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,6 +40,68 @@ function herdr(...args) {
   }
 }
 
+function herdrApi(method, params, sequence) {
+  const socketPath = process.env.HERDR_SOCKET_PATH;
+  if (!socketPath) fail("Herdr recovery requires HERDR_SOCKET_PATH");
+  const id = `herdr-pair:${randomUUID()}`;
+  let paramsJson = JSON.stringify(params);
+  if (sequence !== undefined) {
+    paramsJson =
+      paramsJson === "{}"
+        ? `{"seq":${sequence}}`
+        : `${paramsJson.slice(0, -1)},"seq":${sequence}}`;
+  }
+  const payload = `{"id":${JSON.stringify(id)},"method":${JSON.stringify(method)},"params":${paramsJson}}\n`;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let buffer = "";
+    const client = createConnection(socketPath);
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      client.destroy();
+      if (error) reject(error);
+      else resolve(value);
+    };
+    client.setTimeout(2000);
+    client.on("connect", () => client.write(payload));
+    client.on("data", (chunk) => {
+      buffer += chunk.toString("utf8");
+      for (;;) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) break;
+        const line = buffer.slice(0, newline);
+        buffer = buffer.slice(newline + 1);
+        if (!line.trim()) continue;
+        let response;
+        try {
+          response = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (response.id !== id) continue;
+        if (response.error) {
+          finish(
+            new CliError(
+              `Herdr ${method} failed: ${response.error.message ?? JSON.stringify(response.error)}`,
+            ),
+          );
+        } else {
+          finish(null, response.result);
+        }
+      }
+    });
+    client.on("timeout", () => finish(new CliError(`Herdr ${method} timed out`)));
+    client.on("error", (error) =>
+      finish(new CliError(`Herdr ${method} failed: ${error.message}`)),
+    );
+    client.on("end", () => {
+      if (!settled) finish(new CliError(`Herdr ${method} closed without a response`));
+    });
+  });
+}
+
 function result(command, ...args) {
   const parsed = JSON.parse(herdr(command, ...args));
   return parsed.result;
@@ -54,6 +117,24 @@ function paneGet(paneId) {
 
 function paneList(workspaceId) {
   return result("pane", "list", "--workspace", workspaceId).panes;
+}
+
+function workspaceGet(workspaceId) {
+  const workspace = result("workspace", "get", workspaceId).workspace;
+  if (!workspace || workspace.workspace_id !== workspaceId) {
+    fail(`herdr did not return the exact requested workspace ${workspaceId}`);
+  }
+  return workspace;
+}
+
+function allPanes() {
+  const panes = new Map();
+  for (const workspace of result("workspace", "list").workspaces ?? []) {
+    for (const pane of paneList(workspace.workspace_id)) {
+      panes.set(pane.pane_id, pane);
+    }
+  }
+  return [...panes.values()];
 }
 
 function currentPane() {
@@ -1105,16 +1186,19 @@ async function reconcileSession(args) {
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
 }
 
-// Derive and verify the caller's identity from an explicit --pane or the
-// HERDR_PANE_ID hint. The hint is never authority: a stale or wrong-kind
-// pane fails closed with instructions instead of borrowing an identity.
+// Derive and verify the caller's identity from the exact agent session, or
+// from an explicit --pane during user-confirmed recovery. HERDR_PANE_ID is
+// never identity authority.
 function identify(options) {
   const agent = callerContext?.agent;
   if (!["claude", "codex"].includes(agent ?? "")) {
     fail("id requires --as claude|codex (the agent you are)");
   }
+  if (!options.session) {
+    fail("id requires --session with the caller's exact agent session id");
+  }
   let candidate = callerContext.paneId || null;
-  if (!candidate && options.session) {
+  if (!candidate) {
     // The caller's own agent session id is the only signal herdr keeps that
     // survives a stale env AND ignores UI focus. Measured 2026-07-30:
     // `pane current --current` echoes $HERDR_PANE_ID when set and falls
@@ -1134,9 +1218,12 @@ function identify(options) {
       fail(
         `session ${options.session} appears on ${matches.size} panes; herdr state is inconsistent — pass --pane explicitly`,
       );
+    } else {
+      fail(
+        `no pane reports session ${options.session}; inherited HERDR_PANE_ID is not a recovery authority — require explicit user confirmation and pass --pane`,
+      );
     }
   }
-  if (!candidate) candidate = process.env.HERDR_PANE_ID || null;
   if (!candidate) {
     fail(
       "no caller pane: pass --pane, or run inside Herdr; find your live pane with `herdr agent list`",
@@ -1145,13 +1232,13 @@ function identify(options) {
   const pane = paneGet(candidate);
   if (pane.agent !== agent) {
     fail(
-      `pane ${candidate} hosts ${pane.agent ?? "no agent"}, not ${agent}; the inherited hint is stale — find your live pane with \`herdr agent list\` and pass it as --pane`,
+      `pane ${candidate} hosts ${pane.agent ?? "no agent"}, not ${agent}; find your live pane with \`herdr agent list\` and pass it explicitly`,
     );
   }
   const sessionId = pane.agent_session?.value ?? null;
-  if (options.session && sessionId && sessionId !== options.session) {
+  if (sessionId && sessionId !== options.session) {
     fail(
-      `pane ${pane.pane_id} hosts session ${sessionId}, not yours (${options.session}) — the hint points at a different ${agent}; pass your live pane as --pane`,
+      `pane ${pane.pane_id} hosts session ${sessionId}, not yours (${options.session}); pass your live pane explicitly`,
     );
   }
   if (!sessionId && pane.agent_status !== "working") {
@@ -1183,6 +1270,265 @@ function identify(options) {
   );
 }
 
+let lastReportSequence = 0n;
+
+function reportSequence(after = 0n) {
+  const clockSequence = BigInt(Date.now() + 1) * 1_000_000n;
+  lastReportSequence =
+    [clockSequence, lastReportSequence + 1n, after + 1n].reduce((highest, value) =>
+      value > highest ? value : highest,
+    );
+  return lastReportSequence.toString();
+}
+
+function normalizedReportState(pane) {
+  if (["idle", "working", "blocked", "unknown"].includes(pane.agent_status)) {
+    return pane.agent_status;
+  }
+  return pane.agent_status === "done" ? "idle" : "unknown";
+}
+
+function exactSessionOwner(pane, source, agent, sessionId) {
+  return (
+    pane.agent_session?.value === sessionId &&
+    pane.agent_session?.source === source &&
+    pane.agent_session?.agent === agent &&
+    pane.agent_session?.kind === "id"
+  );
+}
+
+function claimSession(paneId, source, agent, sessionId) {
+  herdr(
+    "pane",
+    "report-agent-session",
+    paneId,
+    "--source",
+    source,
+    "--agent",
+    agent,
+    "--seq",
+    reportSequence(),
+    "--agent-session-id",
+    sessionId,
+    "--session-start-source",
+    "resume",
+  );
+  const claimed = paneGet(paneId);
+  if (!exactSessionOwner(claimed, source, agent, sessionId)) {
+    fail(`Herdr did not persist session ${sessionId} on confirmed pane ${paneId}`);
+  }
+  return claimed;
+}
+
+async function clearSession(pane, source, agent, sessionId) {
+  const reportSeq = reportSequence();
+  herdr(
+    "pane",
+    "report-agent",
+    pane.pane_id,
+    "--source",
+    source,
+    "--agent",
+    agent,
+    "--state",
+    normalizedReportState(pane),
+    "--seq",
+    reportSeq,
+  );
+  paneGet(pane.pane_id);
+  const clearSeq = reportSequence(BigInt(reportSeq));
+  await herdrApi(
+    "pane.clear_agent_authority",
+    { pane_id: pane.pane_id, source },
+    clearSeq,
+  );
+  if (paneGet(pane.pane_id).agent_session?.value === sessionId) {
+    fail(`Herdr did not clear stale session ${sessionId} from ${pane.pane_id}`);
+  }
+}
+
+async function rebindSession(options) {
+  const paneId = options.pane;
+  const agent = options.as;
+  const sessionId = options.session;
+  const confirmedWorkspace = options.workspace;
+  const repoRoot = options["repo-root"];
+  const repoValidation = options["repo-validation"];
+
+  if (process.env.HERDR_ENV !== "1") fail("rebind-session requires HERDR_ENV=1");
+  if (!paneId || !["claude", "codex"].includes(agent ?? "")) {
+    fail("rebind-session requires the explicitly confirmed --pane and --as claude|codex");
+  }
+  if (!sessionId) fail("rebind-session requires the caller's exact --session");
+  if (!confirmedWorkspace) {
+    fail("rebind-session requires the explicitly confirmed --workspace");
+  }
+  if (!repoRoot || !repoRoot.startsWith("/")) {
+    fail("rebind-session requires an absolute --repo-root resolved with git -C <repo>");
+  }
+  if (options["transcript-verified"] !== "true") {
+    fail("rebind-session requires --transcript-verified true after comparing the pane transcript");
+  }
+
+  const target = paneGet(paneId);
+  if (target.agent !== agent) {
+    fail(`confirmed pane ${paneId} hosts ${target.agent ?? "no agent"}, not ${agent}`);
+  }
+  if (target.workspace_id !== confirmedWorkspace) {
+    fail(
+      `confirmed pane ${paneId} belongs to ${target.workspace_id ?? "no workspace"}, not ${confirmedWorkspace}`,
+    );
+  }
+  const workspace = workspaceGet(confirmedWorkspace);
+  const registeredCheckout =
+    workspace.worktree?.checkout_path ?? workspace.worktree?.repo_root ?? null;
+  if (registeredCheckout) {
+    if (repoValidation !== "registered") {
+      fail("rebind-session requires --repo-validation registered for a registered worktree");
+    }
+    if (registeredCheckout !== repoRoot) {
+      fail(
+        `confirmed workspace ${confirmedWorkspace} is registered to checkout ${registeredCheckout}, not ${repoRoot}`,
+      );
+    }
+  } else if (repoValidation !== "transcript") {
+    fail(
+      "rebind-session requires --repo-validation transcript when Herdr has no registered worktree",
+    );
+  }
+
+  const source = `herdr:${agent}`;
+  const targetSession = target.agent_session ?? null;
+  if (targetSession && !exactSessionOwner(target, source, agent, sessionId)) {
+    fail(
+      `confirmed pane ${paneId} already has a non-matching session owner (${targetSession.source ?? "unknown source"} ${targetSession.kind ?? "unknown kind"} ${targetSession.value ?? "unknown value"})`,
+    );
+  }
+  if (!targetSession && target.agent_status !== "working") {
+    fail(
+      `confirmed pane ${paneId} exposes no agent session and is ${target.agent_status ?? "unknown"}`,
+    );
+  }
+
+  const previous = allPanes().filter(
+    (pane) => pane.pane_id !== paneId && pane.agent_session?.value === sessionId,
+  );
+  if (previous.length > 1) {
+    fail(
+      `session ${sessionId} appears on ${previous.length} previous panes; explicit recovery requires one or zero previous owners`,
+    );
+  }
+  for (const pane of previous) {
+    if (pane.agent !== agent) {
+      fail(
+        `session ${sessionId} also appears on ${pane.pane_id} as ${pane.agent ?? "no agent"}, not ${agent}`,
+      );
+    }
+    if (
+      pane.agent_session?.source !== source ||
+      pane.agent_session?.agent !== agent ||
+      pane.agent_session?.kind !== "id"
+    ) {
+      fail(
+        `session ${sessionId} on ${pane.pane_id} lacks the exact ${source} id ownership needed for safe cleanup`,
+      );
+    }
+  }
+
+  let claimedTarget = false;
+  if (!targetSession) {
+    claimSession(paneId, source, agent, sessionId);
+    claimedTarget = true;
+  }
+
+  const cleared = [];
+  const cleanupAttempted = new Set();
+  try {
+    for (const pane of previous) {
+      const live = paneGet(pane.pane_id);
+      if (
+        live.agent_session?.value !== sessionId ||
+        live.agent_session?.source !== source ||
+        live.agent_session?.agent !== agent ||
+        live.agent_session?.kind !== "id"
+      ) {
+        fail(`session ownership changed on ${pane.pane_id} during recovery; refusing cleanup`);
+      }
+      cleanupAttempted.add(pane.pane_id);
+      await clearSession(live, source, agent, sessionId);
+      cleared.push(pane.pane_id);
+    }
+
+    const owners = allPanes().filter((pane) => pane.agent_session?.value === sessionId);
+    if (owners.length !== 1 || owners[0].pane_id !== paneId) {
+      fail(
+        `session ${sessionId} is not uniquely bound to ${paneId} after recovery; found ${owners.length} owners`,
+      );
+    }
+  } catch (error) {
+    const rollbackErrors = [];
+    for (const pane of previous) {
+      if (!cleanupAttempted.has(pane.pane_id)) continue;
+      let live = null;
+      try {
+        live = paneGet(pane.pane_id);
+      } catch (rollbackError) {
+        rollbackErrors.push(`inspect ${pane.pane_id}: ${rollbackError.message}`);
+        continue;
+      }
+      if (!exactSessionOwner(live, source, agent, sessionId)) {
+        if (live.agent_session) {
+          rollbackErrors.push(
+            `restore ${pane.pane_id}: ownership changed to ${live.agent_session.source ?? "unknown source"} ${live.agent_session.kind ?? "unknown kind"} ${live.agent_session.value ?? "unknown value"}`,
+          );
+          continue;
+        }
+        try {
+          await herdrApi(
+            "pane.clear_agent_authority",
+            { pane_id: pane.pane_id, source },
+            reportSequence(),
+          );
+          claimSession(pane.pane_id, source, agent, sessionId);
+        } catch (rollbackError) {
+          rollbackErrors.push(`restore ${pane.pane_id}: ${rollbackError.message}`);
+        }
+      }
+    }
+    if (claimedTarget) {
+      try {
+        await clearSession(paneGet(paneId), source, agent, sessionId);
+      } catch (rollbackError) {
+        rollbackErrors.push(`clear ${paneId}: ${rollbackError.message}`);
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      fail(
+        `session cleanup failed (${error.message}); rollback incomplete: ${rollbackErrors.join("; ")}`,
+      );
+    }
+    fail(
+      `session cleanup failed (${error.message}); rolled back the confirmed-pane claim`,
+    );
+  }
+
+  process.stdout.write(
+    `${JSON.stringify(
+      {
+        pane: paneId,
+        as: agent,
+        agent_session_id: sessionId,
+        workspace_id: confirmedWorkspace,
+        repo_root: repoRoot,
+        repo_validation: repoValidation,
+        cleared_panes: cleared,
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   const options = parseOptions(args);
@@ -1194,6 +1540,8 @@ async function main() {
 
   if (command === "id") {
     identify(options);
+  } else if (command === "rebind-session") {
+    await rebindSession(options);
   } else if (command === "discover") {
     process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
   } else if (command === "spawn") {

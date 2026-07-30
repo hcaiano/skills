@@ -30,14 +30,18 @@ PAIR_ID=($(node "$PAIR_SCRIPT" id --as <claude|codex> \
   --session <your session id> --format shell))
 ```
 
-It finds the unique pane registered to that session across workspaces,
-falls back to the validated `HERDR_PANE_ID` hint only without a match,
-and fails closed on any mismatch. Use `"${PAIR_ID[@]}"` on every helper
-command; confirm the `workspace_id` and `cwd` in the output are yours. If
-it fails, find your live pane with `herdr agent list` and pass it as
-`--pane`. `herdr pane current` never identifies you, in any form —
-measured: bare it follows UI focus, and `--current` echoes
-`$HERDR_PANE_ID` (stale or not) or falls back to the focused pane.
+It finds the unique pane registered to that session across workspaces and
+fails closed on zero, multiple, or mismatched results. It never falls back to
+the inherited `HERDR_PANE_ID` hint. Use `"${PAIR_ID[@]}"` on every helper
+command; validate the returned workspace independently. Pane cwd is never
+identity authority. Validate the exact agent, repository, and pane transcript
+before any mutation; a user-declared move or failed check makes a unique match
+stale. If lookup fails or resolves a stale owner, stop. Recover
+only after the user explicitly confirms the pane and workspace, following
+[references/pane-identity-recovery.md](references/pane-identity-recovery.md)
+exactly. `herdr pane current` never identifies you, in any form — measured:
+bare it follows UI focus, and `--current` echoes `$HERDR_PANE_ID` (stale or
+not) or falls back to the focused pane.
 
 ## Guardrails
 
