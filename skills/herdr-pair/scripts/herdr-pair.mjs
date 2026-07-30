@@ -1114,24 +1114,26 @@ function identify(options) {
     fail("id requires --as claude|codex (the agent you are)");
   }
   let candidate = callerContext.paneId || null;
-  if (!candidate) {
-    // Native caller resolution — measured behavior (2026-07-30): with
-    // HERDR_PANE_ID set, `pane current --current` just echoes the env var,
-    // stale or not; only with the env STRIPPED does herdr resolve from the
-    // calling process itself. So strip it, or this whole path is the hint
-    // wearing a different hat.
-    try {
-      const clean = { ...process.env };
-      delete clean.HERDR_PANE_ID;
-      delete clean.HERDR_TAB_ID;
-      delete clean.HERDR_WORKSPACE_ID;
-      const out = execFileSync("herdr", ["pane", "current", "--current"], {
-        encoding: "utf8",
-        env: clean,
-      });
-      candidate = JSON.parse(out).result.pane?.pane_id || null;
-    } catch {
-      candidate = null;
+  if (!candidate && options.session) {
+    // The caller's own agent session id is the only signal herdr keeps that
+    // survives a stale env AND ignores UI focus. Measured 2026-07-30:
+    // `pane current --current` echoes $HERDR_PANE_ID when set and falls
+    // back to the FOCUSED pane when not — it never resolves the calling
+    // process, so it is never consulted here.
+    const matches = new Map();
+    for (const workspace of result("workspace", "list").workspaces ?? []) {
+      for (const pane of paneList(workspace.workspace_id)) {
+        if (pane.agent_session?.value === options.session) {
+          matches.set(pane.pane_id, pane);
+        }
+      }
+    }
+    if (matches.size === 1) {
+      candidate = [...matches.keys()][0];
+    } else if (matches.size > 1) {
+      fail(
+        `session ${options.session} appears on ${matches.size} panes; herdr state is inconsistent — pass --pane explicitly`,
+      );
     }
   }
   if (!candidate) candidate = process.env.HERDR_PANE_ID || null;
@@ -1147,6 +1149,11 @@ function identify(options) {
     );
   }
   const sessionId = pane.agent_session?.value ?? null;
+  if (options.session && sessionId && sessionId !== options.session) {
+    fail(
+      `pane ${pane.pane_id} hosts session ${sessionId}, not yours (${options.session}) — the hint points at a different ${agent}; pass your live pane as --pane`,
+    );
+  }
   if (!sessionId && pane.agent_status !== "working") {
     fail(
       `pane ${pane.pane_id} exposes no agent session and is ${pane.agent_status ?? "unknown"}; refusing an uncorroborated identity`,

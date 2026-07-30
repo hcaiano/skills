@@ -125,10 +125,9 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   state.last_send_keys = { pane: args[2], key: args[3] };
   save();
   output({});
-} else if (args[0] === "pane" && args[1] === "current") {
-  // Faithful to real herdr (measured 2026-07-30): with HERDR_PANE_ID set,
-  // --current echoes the env var; true caller resolution only when absent.
-  output({ pane: state.panes[process.env.HERDR_PANE_ID ?? state.current_pane] });
+} else if (args[0] === "workspace" && args[1] === "list") {
+  const ids = [...new Set(Object.values(state.panes).map((p) => p.workspace_id))];
+  output({ workspaces: ids.map((id) => ({ workspace_id: id })) });
 } else if (args[0] === "pane" && args[1] === "read") process.stdout.write("");
 else { process.stderr.write("unsupported fake herdr args: " + args.join(" ") + "\\n"); process.exit(1); }
 `,
@@ -222,15 +221,18 @@ try {
   assert.throws(() => runRaw("id", "--as", "claude"), /stale:pane/u);
   const idExplicit = JSON.parse(runRaw("id", "--as", "codex", "--pane", "w1:p1"));
   assert.equal(idExplicit.pane, "w1:p1");
-  // Native caller resolution beats a stale env hint ONLY because the helper
-  // strips HERDR_PANE_ID before calling --current — the fake, like real
-  // herdr, would otherwise echo the stale env back. This asserts the strip.
-  let currentState = JSON.parse(readFileSync(statePath, "utf8"));
-  currentState.current_pane = "w1:p2";
-  writeFileSync(statePath, `${JSON.stringify(currentState, null, 2)}\n`);
-  assert.equal(JSON.parse(runRaw("id", "--as", "claude")).pane, "w1:p2");
-  delete currentState.current_pane;
-  writeFileSync(statePath, `${JSON.stringify(currentState, null, 2)}\n`);
+  // The caller's own session id finds its pane across every workspace —
+  // immune to a stale env hint and to focus. (`pane current` in any form is
+  // never called: the fake has no handler, so a reintroduction fails loud.)
+  const idBySession = JSON.parse(
+    runRaw("id", "--as", "claude", "--session", "claude-session-w1-p2"),
+  );
+  assert.equal(idBySession.pane, "w1:p2");
+  // A hint whose pane hosts a different session of the same kind is refused.
+  assert.throws(
+    () => runRawWithEnv({ HERDR_PANE_ID: "w1:p2" }, "id", "--as", "claude", "--session", "not-my-session"),
+    /hosts session claude-session-w1-p2, not yours/u,
+  );
 
   let identityState = JSON.parse(readFileSync(statePath, "utf8"));
   identityState.panes["w9:p1"] = {

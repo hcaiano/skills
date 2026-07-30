@@ -20,21 +20,24 @@ Require `herdr` with the agent automation commands (`herdr agent start`,
 an exact caller pane ID. If any command is missing, stop and tell the user to
 install or start (or update) Herdr.
 
-Derive your identity with the helper — it strips the inheritable
-`HERDR_*` env hints and has herdr resolve the calling process itself
-(with the env set, even `pane current --current` just echoes the hint,
-stale or not), then fails closed on a wrong-kind or uncorroborated pane:
+Derive your identity with the helper, passing your **own agent session
+id** — the one signal herdr keeps that survives a stale env and ignores
+focus (Claude: the UUID in your own transcript/scratchpad paths; Codex:
+your rollout session id):
 
 ```bash
-PAIR_ID=($(node "$PAIR_SCRIPT" id --as <claude|codex> --format shell))
+PAIR_ID=($(node "$PAIR_SCRIPT" id --as <claude|codex> \
+  --session <your session id> --format shell))
 ```
 
-Use `"${PAIR_ID[@]}"` on every helper command. Confirm the `workspace_id`
-and `cwd` in the `id` output are yours; a mismatch means the binding is
-wrong — find your live pane with `herdr agent list` and pass it as
-`--pane`. Never resolve yourself with bare `herdr pane current` (it
-follows UI focus) or with `--current` while the `HERDR_*` env is still
-set (it echoes the hint), and never from labels or pane order.
+It finds the unique pane registered to that session across workspaces,
+falls back to the validated `HERDR_PANE_ID` hint only without a match,
+and fails closed on any mismatch. Use `"${PAIR_ID[@]}"` on every helper
+command; confirm the `workspace_id` and `cwd` in the output are yours. If
+it fails, find your live pane with `herdr agent list` and pass it as
+`--pane`. `herdr pane current` never identifies you, in any form —
+measured: bare it follows UI focus, and `--current` echoes
+`$HERDR_PANE_ID` (stale or not) or falls back to the focused pane.
 
 ## Guardrails
 
