@@ -215,7 +215,9 @@ const server = createServer((client) => {
       const line = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
       if (!line.trim()) continue;
+      const exactSequence = line.match(/"seq"\\s*:\\s*(\\d+)/)?.[1];
       const request = JSON.parse(line);
+      if (exactSequence) request.params.seq = exactSequence;
       const state = JSON.parse(readFileSync(statePath, "utf8"));
       if (request.method === "pane.clear_agent_authority") {
         const pane = state.panes[request.params.pane_id];

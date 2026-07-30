@@ -46,10 +46,15 @@ function herdrApi(method, params, sequence) {
   const id = `herdr-pair:${randomUUID()}`;
   let paramsJson = JSON.stringify(params);
   if (sequence !== undefined) {
+    const exactSequence = String(sequence);
+    if (!/^\d+$/u.test(exactSequence)) fail("Herdr recovery sequence must be an unsigned integer");
+    // Herdr's socket schema requires a JSON integer u64, not a quoted string.
+    // Splice the already-validated decimal digits so Node never coerces the
+    // nanosecond-scale value through its lossy Number representation.
     paramsJson =
       paramsJson === "{}"
-        ? `{"seq":${sequence}}`
-        : `${paramsJson.slice(0, -1)},"seq":${sequence}}`;
+        ? `{"seq":${exactSequence}}`
+        : `${paramsJson.slice(0, -1)},"seq":${exactSequence}}`;
   }
   const payload = `{"id":${JSON.stringify(id)},"method":${JSON.stringify(method)},"params":${paramsJson}}\n`;
 
@@ -1335,7 +1340,6 @@ async function clearSession(pane, source, agent, sessionId) {
     "--seq",
     reportSeq,
   );
-  paneGet(pane.pane_id);
   const clearSeq = reportSequence(BigInt(reportSeq));
   await herdrApi(
     "pane.clear_agent_authority",
