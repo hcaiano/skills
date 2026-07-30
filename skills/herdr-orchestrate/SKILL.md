@@ -40,9 +40,15 @@ syntax.
   across pane moves and session resumes; only with the env absent does
   herdr resolve the calling process itself (measured 2026-07-30). Never
   pin from UI focus. A pane cwd pointing somewhere other than the task
-  repository is ordinary, not a mismatch. Read `herdr workspace get
-  <workspace_id>` for its `label` and name that workspace to the user as the
-  run starts, so a wrong one surfaces before anything is provisioned.
+  repository is ordinary, not a mismatch — the **workspace**, not the
+  pane, is what must match: read `herdr workspace get <workspace_id>` and
+  require its registered repo (`worktree.repo_root`) to equal the task
+  repository's root (`git rev-parse --show-toplevel`). Equal → name the
+  workspace label to the user and proceed. Different or null → stop
+  before any provisioning and name both sides; the user restarts the run
+  from a pane in the right workspace. This is a gate, not a remark — an
+  agent that noticed the wrong label and carried on has already
+  provisioned a unit into a foreign workspace.
 - A unit milestone carries the pinned `workspace_id`; use it to resume the
   run. User navigation never changes the pin and existing runs never resolve
   focus again. A continuation without the pin stops.
