@@ -94,10 +94,14 @@ but they open on different days, so the raw percentages are not comparable.
     models unchanged; only a unit that needs the hot pool's specific model
     (sol for visual work, opus-5 for a long unsupervised run) still takes it.
   - both above 1.2 — tighten the wave before touching model quality: solo
-    instead of pair (a pair spends both pools), fast lane for the units that
-    qualify, workhorses for the rest.
-  - both above 2 with `days_to_empty` under 2 — run only urgent units and
-    queue the rest until the earlier reset.
+    instead of pair (a pair spends both pools), workhorses unchanged. The
+    fast lane is graded by task difficulty only — never a fuel-saving
+    downgrade; shifting a hard unit to terra/sonnet to save tokens trades
+    exactly the quality the delegation exists to protect.
+  - both above 2 with `days_to_empty` under 2 — the Codex pool is the
+    standing overflow (user preference): urgent and in-flight work
+    continues on sol; only genuinely deferrable units queue until the
+    earlier reset.
 - **An out-of-headroom pool takes nothing new**, whatever its pace says
   (defined in the gate section below). Both out of headroom queues
   non-urgent units until the earlier reset, however cool their pace reads.
