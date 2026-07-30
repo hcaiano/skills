@@ -15,7 +15,7 @@ first token (AA, at the tier named).
 
 | model | pool | `herdr agent start` args | intelligence | taste | speed | notes |
 |---|---|---|---|---|---|---|
-| fable-5 | Claude | `--kind claude -- --model fable --effort <tier>` | 10 | 9 | slow | Reserved: orchestrator by default, and never a staffing or restaff target on the orchestrator's own judgment — it implements only when the user names it for a unit. Delegates consult it as oracle instead: Claude via its `oracle` subagent, Codex via `ask-peer`. |
+| fable-5 | Claude | `--kind claude -- --model fable --effort <tier>` | 10 | 9 | slow | Advisor only — it burns the weekly Claude pool fastest, so it never implements a unit and is never a staffing or restaff target. Orchestrator by default. Delegates consult it as oracle for the moments that need maximum intelligence: Claude via its `oracle` subagent, Codex via `ask-peer`. |
 | opus-5 | Claude | `--kind claude -- --model opus --effort <tier>` | 9.5 | 8 | slow (53 tok/s; TTFT 68 s at `max`) | Claude-pool workhorse for hard units: long unsupervised runs, deep multi-file repo work. #1 AA Intelligence + Agentic Index; ARC-AGI-3 30.2% (verified, ~4× sol). Latency makes it expensive in wall-clock for small units — grade those to the fast lane. No `medium` effort (low/high/xhigh/max) — run a `medium` unit at `high`. Verify `--model opus` resolves to Opus 5 in the start banner; if it still points at 4.8, pin `--model claude-opus-5`. Taste provisional (no Design Arena read yet). |
 | gpt-5.6-sol | Codex | `--kind codex -- -c model="gpt-5.6-sol" -c model_reasoning_effort="<tier>"` | 9.5 | 8 | medium (61 tok/s; TTFT 4.6 s `medium`, 10.8 s `high`) | Codex-pool workhorse for genuinely hard work: big multi-file refactors, architecture. Reward-hacking confirmed worst of any public model (METR 55.4% gaming; Hugging Face incident, Jul 2026) — ships only through the ship-it gate plus scope checks, and never runs long unsupervised (that class is opus-5's). Former "#1 Design Arena" edge no longer supported by the current board — check the live board before using taste as a tie-break. |
 | gpt-5.6-terra | Codex | `--kind codex -- -c model="gpt-5.6-terra" -c model_reasoning_effort="<tier>"` | 8 | 6.5 | fast (~120 tok/s; TTFT 1.3 s `medium` — ~2× sol) | Codex-pool fast lane. AA Coding Agent Index 77.4 vs sol's 80. Enough for scoped refactors, tests, simple UI, triage, first-pass review — when speed is the point (selection rules). |
@@ -37,9 +37,10 @@ squeezing cheaper models.
   trivial change where the wait would cost more than the intelligence
   buys (terra starts ~50× faster than opus-5 at `max`). The review gate
   and the escalation rule are the net.
-- **Fable, only by name.** The user naming fable for a unit is the only
-  path to fable implementing. Everything else reaches fable through the
-  oracle channel.
+- **Fable, advisor only.** Fable never implements. A unit that needs
+  fable-level intelligence consults it through the oracle channel — a
+  pointed question, a pointed answer, cost proportional to a consult
+  instead of an implementation — and implements on a workhorse.
 - **Defaults, not limits.** Standing permission to escalate: when a cheaper
   model's output misses the bar — at any checkpoint — send the work back
   or redo it on a smarter model without asking. Escalation climbs the
