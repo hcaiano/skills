@@ -27,10 +27,12 @@ hint and fails closed on a stale, wrong-kind, or uncorroborated pane:
 PAIR_ID=($(node "$PAIR_SCRIPT" id --as <claude|codex> --format shell))
 ```
 
-Use `"${PAIR_ID[@]}"` on every helper command. If `id` fails, find your
-live pane with `herdr agent list` and pass it as `--pane` — never `herdr
-pane current` without `--pane` (it resolves by UI focus), and never a pane
-inferred from cwd, focus, labels, or pane order.
+Use `"${PAIR_ID[@]}"` on every helper command. Confirm the `workspace_id`
+and `cwd` in the `id` output are yours — the inherited hint can resolve to
+a same-kind pane in another workspace; a mismatch means stale. If `id`
+fails or mismatches, find your live pane with `herdr agent list` and pass
+it as `--pane` — never `herdr pane current` without `--pane` (it resolves
+by UI focus), and never a pane inferred from focus, labels, or pane order.
 
 ## Guardrails
 

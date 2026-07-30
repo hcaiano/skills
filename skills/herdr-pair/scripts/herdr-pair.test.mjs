@@ -203,6 +203,8 @@ try {
     pane: "w1:p2",
     as: "claude",
     agent_session_id: "claude-session-w1-p2",
+    workspace_id: "w1",
+    cwd: "/workspace",
     args: ["--pane", "w1:p2", "--as", "claude", "--agent-session-id", "claude-session-w1-p2"],
   });
   assert.equal(
