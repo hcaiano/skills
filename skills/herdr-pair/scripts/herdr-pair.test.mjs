@@ -126,7 +126,9 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   save();
   output({});
 } else if (args[0] === "pane" && args[1] === "current") {
-  output({ pane: state.panes[state.current_pane] });
+  // Faithful to real herdr (measured 2026-07-30): with HERDR_PANE_ID set,
+  // --current echoes the env var; true caller resolution only when absent.
+  output({ pane: state.panes[process.env.HERDR_PANE_ID ?? state.current_pane] });
 } else if (args[0] === "pane" && args[1] === "read") process.stdout.write("");
 else { process.stderr.write("unsupported fake herdr args: " + args.join(" ") + "\\n"); process.exit(1); }
 `,
@@ -220,9 +222,9 @@ try {
   assert.throws(() => runRaw("id", "--as", "claude"), /stale:pane/u);
   const idExplicit = JSON.parse(runRaw("id", "--as", "codex", "--pane", "w1:p1"));
   assert.equal(idExplicit.pane, "w1:p1");
-  // Native caller resolution (`pane current --current`) beats a stale env
-  // hint: with the fake reporting the calling pane, the stale HERDR_PANE_ID
-  // is never consulted.
+  // Native caller resolution beats a stale env hint ONLY because the helper
+  // strips HERDR_PANE_ID before calling --current — the fake, like real
+  // herdr, would otherwise echo the stale env back. This asserts the strip.
   let currentState = JSON.parse(readFileSync(statePath, "utf8"));
   currentState.current_pane = "w1:p2";
   writeFileSync(statePath, `${JSON.stringify(currentState, null, 2)}\n`);
