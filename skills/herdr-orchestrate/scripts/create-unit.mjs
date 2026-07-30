@@ -40,6 +40,25 @@ const herdr = (...args) => {
   }
 };
 
+const sleep = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); };
+const BUSY_RETRY_MS = Number(process.env.CREATE_UNIT_BUSY_RETRY_MS ?? 500);
+const BUSY_RETRY_ATTEMPTS = Number(process.env.CREATE_UNIT_BUSY_RETRY_ATTEMPTS ?? 20);
+
+// Herdr rejects `agent start` with agent_pane_busy until a freshly created
+// pane's shell reaches its prompt — an initialization race seen twice in
+// production. Retry only that exact structured error, briefly and bounded;
+// every other failure stays fatal on the first hit.
+const startAgent = (...args) => {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return herdr('agent', 'start', ...args);
+    } catch (error) {
+      if (!/agent_pane_busy/u.test(error.message) || attempt >= BUSY_RETRY_ATTEMPTS) throw error;
+      sleep(BUSY_RETRY_MS);
+    }
+  }
+};
+
 const arg = process.argv.indexOf('--spec');
 if (arg === -1 || !process.argv[arg + 1]) emit({ created: false, error: 'usage: create-unit.mjs --spec <json|@file>' }, 2);
 const raw = process.argv[arg + 1];
@@ -72,14 +91,14 @@ try {
     throw new Error(`root pane cwd is ${root.cwd}, not the unit worktree ${spec.cwd}`);
   }
 
-  herdr('agent', 'start', spec.lead.name, '--pane', root.pane_id, ...spec.lead.args);
+  startAgent(spec.lead.name, '--pane', root.pane_id, ...spec.lead.args);
 
   let peerPane = null;
   if (spec.peer) {
     const split = herdr('pane', 'split', root.pane_id, '--direction', 'right', '--no-focus');
     peerPane = split?.pane?.pane_id ?? split?.pane_id;
     if (!peerPane) throw new Error('pane split returned no pane_id');
-    herdr('agent', 'start', spec.peer.name, '--pane', peerPane, ...spec.peer.args);
+    startAgent(spec.peer.name, '--pane', peerPane, ...spec.peer.args);
   }
 
   // Exactly one pane per agent; close any agentless leftover.
