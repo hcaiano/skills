@@ -12,9 +12,8 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { createConnection } from "node:net";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,73 +37,6 @@ function herdr(...args) {
     const detail = error.stderr?.toString().trim() || error.message;
     fail(`herdr ${args.join(" ")} failed: ${detail}`);
   }
-}
-
-function herdrApi(method, params, sequence) {
-  const socketPath = process.env.HERDR_SOCKET_PATH;
-  if (!socketPath) fail("Herdr recovery requires HERDR_SOCKET_PATH");
-  const id = `herdr-pair:${randomUUID()}`;
-  let paramsJson = JSON.stringify(params);
-  if (sequence !== undefined) {
-    const exactSequence = String(sequence);
-    if (!/^\d+$/u.test(exactSequence)) fail("Herdr recovery sequence must be an unsigned integer");
-    // Herdr's socket schema requires a JSON integer u64, not a quoted string.
-    // Splice the already-validated decimal digits so Node never coerces the
-    // nanosecond-scale value through its lossy Number representation.
-    paramsJson =
-      paramsJson === "{}"
-        ? `{"seq":${exactSequence}}`
-        : `${paramsJson.slice(0, -1)},"seq":${exactSequence}}`;
-  }
-  const payload = `{"id":${JSON.stringify(id)},"method":${JSON.stringify(method)},"params":${paramsJson}}\n`;
-
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let buffer = "";
-    const client = createConnection(socketPath);
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
-      client.destroy();
-      if (error) reject(error);
-      else resolve(value);
-    };
-    client.setTimeout(2000);
-    client.on("connect", () => client.write(payload));
-    client.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
-      for (;;) {
-        const newline = buffer.indexOf("\n");
-        if (newline < 0) break;
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        if (!line.trim()) continue;
-        let response;
-        try {
-          response = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (response.id !== id) continue;
-        if (response.error) {
-          finish(
-            new CliError(
-              `Herdr ${method} failed: ${response.error.message ?? JSON.stringify(response.error)}`,
-            ),
-          );
-        } else {
-          finish(null, response.result);
-        }
-      }
-    });
-    client.on("timeout", () => finish(new CliError(`Herdr ${method} timed out`)));
-    client.on("error", (error) =>
-      finish(new CliError(`Herdr ${method} failed: ${error.message}`)),
-    );
-    client.on("end", () => {
-      if (!settled) finish(new CliError(`Herdr ${method} closed without a response`));
-    });
-  });
 }
 
 function result(command, ...args) {
@@ -132,23 +64,75 @@ function workspaceGet(workspaceId) {
   return workspace;
 }
 
-function allPanes() {
-  const panes = new Map();
-  for (const workspace of result("workspace", "list").workspaces ?? []) {
-    for (const pane of paneList(workspace.workspace_id)) {
-      panes.set(pane.pane_id, pane);
+function sessionSnapshot() {
+  const snapshot = result("api", "snapshot").snapshot;
+  if (!snapshot || !Array.isArray(snapshot.agents)) {
+    fail("herdr api snapshot did not return .result.snapshot.agents");
+  }
+  return snapshot;
+}
+
+function processInfo(paneId) {
+  const info = result("pane", "process-info", "--pane", paneId).process_info;
+  if (
+    !info ||
+    info.pane_id !== paneId ||
+    !Array.isArray(info.foreground_processes)
+  ) {
+    fail(`herdr did not return process info for exact pane ${paneId}`);
+  }
+  for (const entry of info.foreground_processes) {
+    const validObject =
+      entry !== null &&
+      typeof entry === "object" &&
+      !Array.isArray(entry);
+    const validArgv =
+      Array.isArray(entry?.argv) &&
+      entry.argv.every((argument) => typeof argument === "string");
+    const validStrings = ["name", "argv0", "cwd"].every(
+      (field) =>
+        !Object.hasOwn(entry ?? {}, field) || typeof entry[field] === "string",
+    );
+    if (!validObject || !validArgv || !validStrings) {
+      fail(`herdr returned malformed foreground process for pane ${paneId}`);
     }
   }
-  return [...panes.values()];
+  return info;
+}
+
+function matchingForegroundProcess(info, agent, repoRoot) {
+  return info.foreground_processes.find((entry) => {
+    const executables = [entry.name, entry.argv0, entry.argv?.[0]]
+      .filter((value) => typeof value === "string")
+      .map((value) => basename(value).toLowerCase());
+    return executables.includes(agent) && entry.cwd === repoRoot;
+  });
+}
+
+function requireForegroundProcess(paneId, agent, repoRoot) {
+  const info = processInfo(paneId);
+  if (!matchingForegroundProcess(info, agent, repoRoot)) {
+    fail(
+      `pane ${paneId} has no live foreground ${agent} process rooted at ${repoRoot}`,
+    );
+  }
+  return info;
 }
 
 function currentPane() {
   if (process.env.HERDR_ENV !== "1") {
     fail("herdr-pair requires HERDR_ENV=1");
   }
-  if (!callerContext?.paneId || !callerContext?.agent) {
+  if (
+    !callerContext?.paneId ||
+    !callerContext?.workspaceId ||
+    !callerContext?.tabId ||
+    !callerContext?.agent ||
+    !callerContext?.terminalId ||
+    !callerContext?.repoRoot
+  ) {
     fail(
-      "herdr-pair requires the caller's exact --pane ID and --as claude|codex; inherited HERDR_PANE_ID is not an identity authority",
+      "herdr-pair requires the transcript-proven --pane, --workspace, --tab-id, --as, --terminal-id, and --repo-root pin",
     );
   }
   if (!["claude", "codex"].includes(callerContext.agent)) {
@@ -161,23 +145,20 @@ function currentPane() {
       `caller identity mismatch: --pane ${callerContext.paneId} is ${pane.agent ?? "not an agent"}, not --as ${callerContext.agent}`,
     );
   }
-  const observedSessionId = pane.agent_session?.value ?? null;
-  if (observedSessionId) {
-    if (!callerContext.agentSessionId) {
-      fail(
-        `caller pane ${pane.pane_id} exposes an agent session; pass the caller-owned --agent-session-id`,
-      );
-    }
-    if (callerContext.agentSessionId !== observedSessionId) {
-      fail(
-        `caller session mismatch for ${pane.pane_id}: --agent-session-id does not match the live ${pane.agent} session`,
-      );
-    }
-  } else if (pane.agent_status !== "working") {
+  if (pane.workspace_id !== callerContext.workspaceId) {
     fail(
-      `caller pane ${pane.pane_id} has no agent session identity and is ${pane.agent_status ?? "unknown"}; refusing an uncorroborated pane`,
+      `caller workspace mismatch: --pane ${pane.pane_id} belongs to ${pane.workspace_id ?? "none"}, not --workspace ${callerContext.workspaceId}`,
     );
   }
+  if (pane.tab_id !== callerContext.tabId) {
+    fail(
+      `caller tab mismatch: --pane ${pane.pane_id} belongs to ${pane.tab_id ?? "none"}, not --tab-id ${callerContext.tabId}`,
+    );
+  }
+  if (pane.terminal_id !== callerContext.terminalId) {
+    fail(`caller terminal changed for ${pane.pane_id}; rerun transcript proof`);
+  }
+  requireForegroundProcess(pane.pane_id, callerContext.agent, callerContext.repoRoot);
   return pane;
 }
 
@@ -192,16 +173,35 @@ function participantRecord(pane) {
 function participantMatches(record, pane) {
   return (
     record?.pane_id === pane.pane_id &&
-    (!record.terminal_id || record.terminal_id === pane.terminal_id) &&
-    (!record.agent_session_id ||
-      record.agent_session_id === pane.agent_session?.value)
+    (!record.terminal_id || record.terminal_id === pane.terminal_id)
   );
 }
 
-function agentSessionCliArgument(pane) {
-  return pane.agent_session?.value
-    ? ` --agent-session-id ${JSON.stringify(pane.agent_session.value)}`
-    : "";
+function pinnedCliArguments(pane, repoRoot) {
+  return [
+    "--pane",
+    pane.pane_id,
+    "--workspace",
+    pane.workspace_id,
+    "--tab-id",
+    pane.tab_id,
+    "--as",
+    pane.agent,
+    "--terminal-id",
+    pane.terminal_id,
+    "--repo-root",
+    repoRoot,
+  ];
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
+}
+
+function pinnedCliText(pane, repoRoot) {
+  return pinnedCliArguments(pane, repoRoot)
+    .map(shellQuote)
+    .join(" ");
 }
 
 function opposite(agent) {
@@ -339,7 +339,7 @@ function normalizeSession(session, live) {
   return { session: normalized, changed };
 }
 
-function discover({ allowMissing = false } = {}) {
+function discover({ allowMissing = false, allowStalePartner = false } = {}) {
   const self = currentPane();
   const partnerAgent = opposite(self.agent);
   const tabAgents = paneList(self.workspace_id).filter(
@@ -365,7 +365,22 @@ function discover({ allowMissing = false } = {}) {
     );
   }
 
-  return { self, partner: candidates[0], partnerAgent };
+  const partner = candidates[0];
+  const partnerProcess = processInfo(partner.pane_id);
+  if (!matchingForegroundProcess(partnerProcess, partner.agent, callerContext.repoRoot)) {
+    if (allowStalePartner) {
+      return {
+        self,
+        partner: null,
+        partnerAgent,
+        stalePartner: partner,
+      };
+    }
+    fail(
+      `pane ${partner.pane_id} has no live foreground ${partner.agent} process rooted at ${callerContext.repoRoot}`,
+    );
+  }
+  return { self, partner, partnerAgent };
 }
 
 // herdr accepts an agent name of 1-32 characters, starting with a lowercase
@@ -388,11 +403,6 @@ async function spawn() {
     process.stdout.write(`${JSON.stringify(binding, null, 2)}\n`);
     return;
   }
-  if (!binding.self.agent_session?.value) {
-    fail(
-      `spawn requires a caller pane with a strong agent session identity; ${binding.self.pane_id} exposes none`,
-    );
-  }
 
   const split = result(
     "pane",
@@ -401,7 +411,7 @@ async function spawn() {
     "--direction",
     "right",
     "--cwd",
-    binding.self.cwd,
+    callerContext.repoRoot,
     "--no-focus",
   ).pane;
   const name = pairAgentName(binding.partnerAgent, binding.self.tab_id);
@@ -615,7 +625,7 @@ async function initSession() {
           sid = JSON.parse(readFileSync(path, "utf8")).sid ?? sid;
         } catch {}
         fail(
-          `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${JSON.stringify(scriptPath)} end --pane ${JSON.stringify(binding.self.pane_id)} --as ${JSON.stringify(binding.self.agent)}${agentSessionCliArgument(binding.self)} --sid ${JSON.stringify(sid)} --stale true`,
+          `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${shellQuote(scriptPath)} end ${pinnedCliText(binding.self, callerContext.repoRoot)} --sid ${shellQuote(sid)} --stale true`,
         );
       }
       await reconcileAcknowledged(resumed.path, resumed.session.sid);
@@ -1011,7 +1021,10 @@ async function endSession(args) {
     fail("--stale must be true when explicitly authorized");
   }
   const trash = requireTrash();
-  const binding = discover({ allowMissing: allowStale });
+  const binding = discover({
+    allowMissing: allowStale,
+    allowStalePartner: allowStale,
+  });
   const path = sessionPath(binding.self);
   const directory = dirname(path);
   const workspaceDirectory = dirname(directory);
@@ -1122,7 +1135,7 @@ async function send(args) {
     kind,
   );
   const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
-  const receiveCommand = `node ${JSON.stringify(scriptPath)} receive --pane ${JSON.stringify(binding.partner.pane_id)} --as ${JSON.stringify(binding.partner.agent)}${agentSessionCliArgument(binding.partner)} --sid ${JSON.stringify(binding.session.sid)} --from ${JSON.stringify(binding.self.agent)} --seq ${sequence}`;
+  const receiveCommand = `node ${shellQuote(scriptPath)} receive ${pinnedCliText(binding.partner, callerContext.repoRoot)} --sid ${shellQuote(binding.session.sid)} --from ${shellQuote(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
   const message = `${header}\n${control}\n\n${body}`;
   await promptReservedDelivery(
@@ -1191,341 +1204,144 @@ async function reconcileSession(args) {
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
 }
 
-// Derive and verify the caller's identity from the exact agent session, or
-// from an explicit --pane during user-confirmed recovery. HERDR_PANE_ID is
-// never identity authority.
+function conversationMarkers(path) {
+  if (!path) fail("id requires --conversation-markers-file");
+  let markers;
+  try {
+    markers = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    fail(`cannot read conversation markers from ${path}: ${error.message}`);
+  }
+  const values = [
+    markers?.newest_user_request,
+    markers?.recent_caller_output,
+  ];
+  if (
+    typeof values[0] !== "string" ||
+    values[0].trim().length === 0 ||
+    typeof values[1] !== "string" ||
+    values[1].trim().length < 12 ||
+    values[0].trim() === values[1].trim()
+  ) {
+    fail(
+      "conversation markers require a nonempty newest_user_request and a distinct recent_caller_output of at least 12 characters",
+    );
+  }
+  return values.map((value) => value.trim());
+}
+
+// Resolve the caller through live topology, exact conversation evidence, and
+// foreground-process proof. Session bindings are diagnostic metadata only.
 function identify(options) {
-  const agent = callerContext?.agent;
+  if (process.env.HERDR_ENV !== "1") fail("id requires HERDR_ENV=1");
+  const agent = options.as;
   if (!["claude", "codex"].includes(agent ?? "")) {
     fail("id requires --as claude|codex (the agent you are)");
   }
-  if (!options.session) {
-    fail("id requires --session with the caller's exact agent session id");
+  const repoRoot = options["repo-root"];
+  if (!repoRoot || !repoRoot.startsWith("/")) {
+    fail("id requires an absolute --repo-root resolved with git -C <task-repository>");
   }
-  let candidate = callerContext.paneId || null;
-  if (!candidate) {
-    // The caller's own agent session id is the only signal herdr keeps that
-    // survives a stale env AND ignores UI focus. Measured 2026-07-30:
-    // `pane current --current` echoes $HERDR_PANE_ID when set and falls
-    // back to the FOCUSED pane when not — it never resolves the calling
-    // process, so it is never consulted here.
-    const matches = new Map();
-    for (const workspace of result("workspace", "list").workspaces ?? []) {
-      for (const pane of paneList(workspace.workspace_id)) {
-        if (pane.agent_session?.value === options.session) {
-          matches.set(pane.pane_id, pane);
-        }
-      }
+  const markers = conversationMarkers(options["conversation-markers-file"]);
+  const snapshot = sessionSnapshot();
+  const repositoryMatches = snapshot.agents.filter(
+    (pane) =>
+      pane.agent === agent &&
+      (pane.cwd === repoRoot || pane.foreground_cwd === repoRoot),
+  );
+  if (repositoryMatches.length === 0) {
+    fail(`snapshot has no ${agent} agent rooted at ${repoRoot}`);
+  }
+
+  const candidates = [];
+  for (const pane of repositoryMatches) {
+    let info;
+    try {
+      info = processInfo(pane.pane_id);
+    } catch (error) {
+      fail(`cannot prove foreground process for candidate ${pane.pane_id}: ${error.message}`);
     }
-    if (matches.size === 1) {
-      candidate = [...matches.keys()][0];
-    } else if (matches.size > 1) {
-      fail(
-        `session ${options.session} appears on ${matches.size} panes; herdr state is inconsistent — pass --pane explicitly`,
+    if (matchingForegroundProcess(info, agent, repoRoot)) candidates.push(pane);
+  }
+  if (candidates.length === 0) {
+    fail(`no snapshot candidate has a live foreground ${agent} process at ${repoRoot}`);
+  }
+
+  const transcriptMatches = [];
+  for (const pane of candidates) {
+    let transcript;
+    try {
+      transcript = herdr(
+        "agent",
+        "read",
+        pane.pane_id,
+        "--source",
+        "recent-unwrapped",
+        "--lines",
+        "200",
       );
-    } else {
-      fail(
-        `no pane reports session ${options.session}; inherited HERDR_PANE_ID is not a recovery authority — require explicit user confirmation and pass --pane`,
-      );
+    } catch (error) {
+      fail(`cannot read candidate transcript ${pane.pane_id}: ${error.message}`);
+    }
+    if (!transcript.trim()) {
+      fail(`candidate transcript ${pane.pane_id} is empty`);
+    }
+    if (markers.every((marker) => transcript.includes(marker))) {
+      transcriptMatches.push(pane);
     }
   }
-  if (!candidate) {
+  if (transcriptMatches.length !== 1) {
     fail(
-      "no caller pane: pass --pane, or run inside Herdr; find your live pane with `herdr agent list`",
+      `current conversation matched ${transcriptMatches.length} candidate transcripts; require exactly one`,
     );
   }
-  const pane = paneGet(candidate);
-  if (pane.agent !== agent) {
-    fail(
-      `pane ${candidate} hosts ${pane.agent ?? "no agent"}, not ${agent}; find your live pane with \`herdr agent list\` and pass it explicitly`,
-    );
+
+  const pane = transcriptMatches[0];
+  requireForegroundProcess(pane.pane_id, agent, repoRoot);
+  const livePane = paneGet(pane.pane_id);
+  if (
+    livePane.agent !== agent ||
+    livePane.workspace_id !== pane.workspace_id ||
+    livePane.tab_id !== pane.tab_id ||
+    livePane.terminal_id !== pane.terminal_id
+  ) {
+    fail(`caller pane ${pane.pane_id} changed during identity proof`);
   }
+  if (!livePane.terminal_id) {
+    fail(`caller pane ${pane.pane_id} has no terminal_id; cannot pin identity`);
+  }
+  const workspace = workspaceGet(pane.workspace_id);
+
   const sessionId = pane.agent_session?.value ?? null;
-  if (sessionId && sessionId !== options.session) {
-    fail(
-      `pane ${pane.pane_id} hosts session ${sessionId}, not yours (${options.session}); pass your live pane explicitly`,
+  let sessionBindingWarning = null;
+  if (sessionId) {
+    const owners = snapshot.agents.filter(
+      (candidate) => candidate.agent_session?.value === sessionId,
     );
+    if (owners.length !== 1) {
+      sessionBindingWarning =
+        `agent_session ${sessionId} appears on ${owners.length} panes and was ignored`;
+    }
   }
-  if (!sessionId && pane.agent_status !== "working") {
-    fail(
-      `pane ${pane.pane_id} exposes no agent session and is ${pane.agent_status ?? "unknown"}; refusing an uncorroborated identity`,
-    );
-  }
-  const cli = ["--pane", pane.pane_id, "--as", agent];
-  if (sessionId) cli.push("--agent-session-id", sessionId);
+
+  const cli = pinnedCliArguments(livePane, repoRoot);
   if (options.format === "shell") {
-    process.stdout.write(`${cli.join(" ")}\n`);
+    process.stdout.write(`${cli.map(shellQuote).join(" ")}\n`);
     return;
   }
-  // workspace_id and cwd let the caller catch a stale hint that resolved to
-  // a same-kind pane in another workspace — kind alone cannot.
   process.stdout.write(
     `${JSON.stringify(
       {
-        pane: pane.pane_id,
+        pane: livePane.pane_id,
+        workspace_id: livePane.workspace_id,
+        workspace_label: workspace.label ?? null,
+        tab_id: livePane.tab_id,
+        terminal_id: livePane.terminal_id,
         as: agent,
-        agent_session_id: sessionId,
-        workspace_id: pane.workspace_id ?? null,
-        cwd: pane.cwd ?? null,
-        args: cli,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-}
-
-let lastReportSequence = 0n;
-
-function reportSequence(after = 0n) {
-  const clockSequence = BigInt(Date.now() + 1) * 1_000_000n;
-  lastReportSequence =
-    [clockSequence, lastReportSequence + 1n, after + 1n].reduce((highest, value) =>
-      value > highest ? value : highest,
-    );
-  return lastReportSequence.toString();
-}
-
-function normalizedReportState(pane) {
-  if (["idle", "working", "blocked", "unknown"].includes(pane.agent_status)) {
-    return pane.agent_status;
-  }
-  return pane.agent_status === "done" ? "idle" : "unknown";
-}
-
-function exactSessionOwner(pane, source, agent, sessionId) {
-  return (
-    pane.agent_session?.value === sessionId &&
-    pane.agent_session?.source === source &&
-    pane.agent_session?.agent === agent &&
-    pane.agent_session?.kind === "id"
-  );
-}
-
-function claimSession(paneId, source, agent, sessionId) {
-  herdr(
-    "pane",
-    "report-agent-session",
-    paneId,
-    "--source",
-    source,
-    "--agent",
-    agent,
-    "--seq",
-    reportSequence(),
-    "--agent-session-id",
-    sessionId,
-    "--session-start-source",
-    "resume",
-  );
-  const claimed = paneGet(paneId);
-  if (!exactSessionOwner(claimed, source, agent, sessionId)) {
-    fail(`Herdr did not persist session ${sessionId} on confirmed pane ${paneId}`);
-  }
-  return claimed;
-}
-
-async function clearSession(pane, source, agent, sessionId) {
-  const reportSeq = reportSequence();
-  herdr(
-    "pane",
-    "report-agent",
-    pane.pane_id,
-    "--source",
-    source,
-    "--agent",
-    agent,
-    "--state",
-    normalizedReportState(pane),
-    "--seq",
-    reportSeq,
-  );
-  const clearSeq = reportSequence(BigInt(reportSeq));
-  await herdrApi(
-    "pane.clear_agent_authority",
-    { pane_id: pane.pane_id, source },
-    clearSeq,
-  );
-  if (paneGet(pane.pane_id).agent_session?.value === sessionId) {
-    fail(`Herdr did not clear stale session ${sessionId} from ${pane.pane_id}`);
-  }
-}
-
-async function rebindSession(options) {
-  const paneId = options.pane;
-  const agent = options.as;
-  const sessionId = options.session;
-  const confirmedWorkspace = options.workspace;
-  const repoRoot = options["repo-root"];
-  const repoValidation = options["repo-validation"];
-
-  if (process.env.HERDR_ENV !== "1") fail("rebind-session requires HERDR_ENV=1");
-  if (!paneId || !["claude", "codex"].includes(agent ?? "")) {
-    fail("rebind-session requires the explicitly confirmed --pane and --as claude|codex");
-  }
-  if (!sessionId) fail("rebind-session requires the caller's exact --session");
-  if (!confirmedWorkspace) {
-    fail("rebind-session requires the explicitly confirmed --workspace");
-  }
-  if (!repoRoot || !repoRoot.startsWith("/")) {
-    fail("rebind-session requires an absolute --repo-root resolved with git -C <repo>");
-  }
-  if (options["transcript-verified"] !== "true") {
-    fail("rebind-session requires --transcript-verified true after comparing the pane transcript");
-  }
-
-  const target = paneGet(paneId);
-  if (target.agent !== agent) {
-    fail(`confirmed pane ${paneId} hosts ${target.agent ?? "no agent"}, not ${agent}`);
-  }
-  if (target.workspace_id !== confirmedWorkspace) {
-    fail(
-      `confirmed pane ${paneId} belongs to ${target.workspace_id ?? "no workspace"}, not ${confirmedWorkspace}`,
-    );
-  }
-  const workspace = workspaceGet(confirmedWorkspace);
-  const registeredCheckout =
-    workspace.worktree?.checkout_path ?? workspace.worktree?.repo_root ?? null;
-  if (registeredCheckout) {
-    if (repoValidation !== "registered") {
-      fail("rebind-session requires --repo-validation registered for a registered worktree");
-    }
-    if (registeredCheckout !== repoRoot) {
-      fail(
-        `confirmed workspace ${confirmedWorkspace} is registered to checkout ${registeredCheckout}, not ${repoRoot}`,
-      );
-    }
-  } else if (repoValidation !== "transcript") {
-    fail(
-      "rebind-session requires --repo-validation transcript when Herdr has no registered worktree",
-    );
-  }
-
-  const source = `herdr:${agent}`;
-  const targetSession = target.agent_session ?? null;
-  if (targetSession && !exactSessionOwner(target, source, agent, sessionId)) {
-    fail(
-      `confirmed pane ${paneId} already has a non-matching session owner (${targetSession.source ?? "unknown source"} ${targetSession.kind ?? "unknown kind"} ${targetSession.value ?? "unknown value"})`,
-    );
-  }
-  if (!targetSession && target.agent_status !== "working") {
-    fail(
-      `confirmed pane ${paneId} exposes no agent session and is ${target.agent_status ?? "unknown"}`,
-    );
-  }
-
-  const previous = allPanes().filter(
-    (pane) => pane.pane_id !== paneId && pane.agent_session?.value === sessionId,
-  );
-  if (previous.length > 1) {
-    fail(
-      `session ${sessionId} appears on ${previous.length} previous panes; explicit recovery requires one or zero previous owners`,
-    );
-  }
-  for (const pane of previous) {
-    if (pane.agent !== agent) {
-      fail(
-        `session ${sessionId} also appears on ${pane.pane_id} as ${pane.agent ?? "no agent"}, not ${agent}`,
-      );
-    }
-    if (
-      pane.agent_session?.source !== source ||
-      pane.agent_session?.agent !== agent ||
-      pane.agent_session?.kind !== "id"
-    ) {
-      fail(
-        `session ${sessionId} on ${pane.pane_id} lacks the exact ${source} id ownership needed for safe cleanup`,
-      );
-    }
-  }
-
-  let claimedTarget = false;
-  if (!targetSession) {
-    claimSession(paneId, source, agent, sessionId);
-    claimedTarget = true;
-  }
-
-  const cleared = [];
-  const cleanupAttempted = new Set();
-  try {
-    for (const pane of previous) {
-      const live = paneGet(pane.pane_id);
-      if (
-        live.agent_session?.value !== sessionId ||
-        live.agent_session?.source !== source ||
-        live.agent_session?.agent !== agent ||
-        live.agent_session?.kind !== "id"
-      ) {
-        fail(`session ownership changed on ${pane.pane_id} during recovery; refusing cleanup`);
-      }
-      cleanupAttempted.add(pane.pane_id);
-      await clearSession(live, source, agent, sessionId);
-      cleared.push(pane.pane_id);
-    }
-
-    const owners = allPanes().filter((pane) => pane.agent_session?.value === sessionId);
-    if (owners.length !== 1 || owners[0].pane_id !== paneId) {
-      fail(
-        `session ${sessionId} is not uniquely bound to ${paneId} after recovery; found ${owners.length} owners`,
-      );
-    }
-  } catch (error) {
-    const rollbackErrors = [];
-    for (const pane of previous) {
-      if (!cleanupAttempted.has(pane.pane_id)) continue;
-      let live = null;
-      try {
-        live = paneGet(pane.pane_id);
-      } catch (rollbackError) {
-        rollbackErrors.push(`inspect ${pane.pane_id}: ${rollbackError.message}`);
-        continue;
-      }
-      if (!exactSessionOwner(live, source, agent, sessionId)) {
-        if (live.agent_session) {
-          rollbackErrors.push(
-            `restore ${pane.pane_id}: ownership changed to ${live.agent_session.source ?? "unknown source"} ${live.agent_session.kind ?? "unknown kind"} ${live.agent_session.value ?? "unknown value"}`,
-          );
-          continue;
-        }
-        try {
-          await herdrApi(
-            "pane.clear_agent_authority",
-            { pane_id: pane.pane_id, source },
-            reportSequence(),
-          );
-          claimSession(pane.pane_id, source, agent, sessionId);
-        } catch (rollbackError) {
-          rollbackErrors.push(`restore ${pane.pane_id}: ${rollbackError.message}`);
-        }
-      }
-    }
-    if (claimedTarget) {
-      try {
-        await clearSession(paneGet(paneId), source, agent, sessionId);
-      } catch (rollbackError) {
-        rollbackErrors.push(`clear ${paneId}: ${rollbackError.message}`);
-      }
-    }
-    if (rollbackErrors.length > 0) {
-      fail(
-        `session cleanup failed (${error.message}); rollback incomplete: ${rollbackErrors.join("; ")}`,
-      );
-    }
-    fail(
-      `session cleanup failed (${error.message}); rolled back the confirmed-pane claim`,
-    );
-  }
-
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        pane: paneId,
-        as: agent,
-        agent_session_id: sessionId,
-        workspace_id: confirmedWorkspace,
         repo_root: repoRoot,
-        repo_validation: repoValidation,
-        cleared_panes: cleared,
+        agent_session: sessionId,
+        session_binding_warning: sessionBindingWarning,
+        args: cli,
       },
       null,
       2,
@@ -1538,14 +1354,15 @@ async function main() {
   const options = parseOptions(args);
   callerContext = {
     paneId: options.pane ?? null,
+    workspaceId: options.workspace ?? null,
+    tabId: options["tab-id"] ?? null,
     agent: options.as ?? null,
-    agentSessionId: options["agent-session-id"] ?? null,
+    terminalId: options["terminal-id"] ?? null,
+    repoRoot: options["repo-root"] ?? null,
   };
 
   if (command === "id") {
     identify(options);
-  } else if (command === "rebind-session") {
-    await rebindSession(options);
   } else if (command === "discover") {
     process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
   } else if (command === "spawn") {
@@ -1570,7 +1387,9 @@ async function main() {
   } else if (command === "end") {
     await endSession(args);
   } else {
-    fail("usage: herdr-pair.mjs COMMAND --pane PANE_ID --as claude|codex [--agent-session-id ID] [command options]");
+    fail(
+      "usage: herdr-pair.mjs id --as claude|codex --repo-root PATH --conversation-markers-file FILE, or COMMAND --pane ID --workspace ID --tab-id ID --as claude|codex --terminal-id ID --repo-root PATH [options]",
+    );
   }
 }
 

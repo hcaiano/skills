@@ -24,50 +24,17 @@ syntax.
 ## Preconditions
 
 - `herdr` with the agent automation commands (`herdr agent start`,
-  `herdr agent prompt`) and `gh` on `PATH`, and `HERDR_ENV=1`. If any is
-  missing, stop and say so.
-- Resolve the task repository explicitly with
-  `git -C <task repository> rev-parse --show-toplevel`; do not use the
-  caller's inherited cwd as repository identity.
-- For a new run, pin the caller pane and its `workspace_id` by **your own
-  agent session id**, through the herdr-pair helper installed alongside
-  this skill (Claude: the UUID in your own transcript/scratchpad paths;
-  Codex: your rollout session id):
-
-  ```bash
-  node <herdr-pair skill dir>/scripts/herdr-pair.mjs id \
-    --as <claude|codex> --session <your session id>
-  ```
-
-  Before accepting any result, require its exact agent and workspace, validate
-  the workspace repository when registered, and compare that pane's transcript
-  with the current conversation and task repository. A user-declared move or
-  any failed check is a stale binding even when the session lookup is unique.
-
-  It matches `agent_session.value` across live panes — the one signal
-  that survives a stale env and ignores focus — and never falls back to
-  the inherited `HERDR_PANE_ID` hint. If that lookup
-  fails, resolves a stale owner, or identifies a pane that fails those checks,
-  stop and report the stale hint; do not guess a replacement. After the user
-  explicitly confirms the intended pane **and** workspace, read and follow
-  `<herdr-pair skill dir>/references/pane-identity-recovery.md`. Do not
-  provision anything until its final session-based lookup resolves uniquely
-  to the confirmed pane.
-
-  `herdr pane current` never identifies you, in any form — measured
-  2026-07-30: bare
-  it follows UI focus, and `--current` echoes `$HERDR_PANE_ID` (stale or
-  not) or falls back to the focused pane. A pane cwd pointing somewhere other than the task
-  repository is ordinary, not a mismatch — the **workspace**, not the
-  pane, is what must match: read `herdr workspace get <workspace_id>` and
-  require its registered checkout (`worktree.checkout_path`, falling back to
-  `worktree.repo_root` on older metadata) to equal the task repository's
-  explicit root. Equal → name the
-  workspace label to the user and proceed. Different → stop before any
-  provisioning and name both sides. Null → use only the explicit recovery
-  reference above; otherwise stop. This is a gate, not a remark — an
-  agent that noticed the wrong label and carried on has already
-  provisioned a unit into a foreign workspace.
+  `herdr agent prompt`), `gh`, `jq`, and `trash` on `PATH`, plus
+  `HERDR_ENV=1`. If any is missing, stop and say so.
+- Set `PAIR_SCRIPT` to the absolute
+  `<herdr-pair skill dir>/scripts/herdr-pair.mjs` path. Before any GitHub,
+  Project, branch, worktree, tab, pane, agent, or message mutation, read and
+  execute
+  `<herdr-pair skill dir>/references/caller-pane-resolution.md`.
+  That proof resolves the explicit task repository and returns `PAIR_PROOF`
+  plus `PAIR_ID`. Pin `PAIR_PROOF.pane` as the report pane and
+  `PAIR_PROOF.workspace_id` plus `PAIR_PROOF.tab_id` as this run's exact Herdr
+  origin. Stop when the proof does not complete exactly.
 - A unit milestone carries the pinned `workspace_id`; use it to resume the
   run. User navigation never changes the pin and existing runs never resolve
   focus again. A continuation without the pin stops.
@@ -185,31 +152,13 @@ as separate PRs). A unit stays small enough to ship as one reviewable PR;
 when unsure, prefer parallel and flag the judgment call in the phase 4
 summary.
 
-Grade each unit's **effort** — the reasoning level its agents will run at —
-from what the issues demand:
-
-- `low` — mechanical change with an obvious diff: copy tweak, config value,
-  straightforward rename.
-- `medium` — routine feature or fix on an established pattern in one area.
-- `high` — cross-cutting change, ambiguous spec, or unfamiliar subsystem.
-- `xhigh` — architectural or algorithmic work where wrong turns are
-  expensive.
-- `max` — exceptional, close to never: time-to-first-token explodes with
-  effort (references/models.md) and the gains rarely follow. Reach it only
-  when an escalation already failed at `xhigh`.
-
-The working default for delegated work is `high`; drop to `medium` when
-turnaround matters more than depth, and to `low` for the mechanical.
-These are the user's calibration, not a gate — the orchestrator grades
-each unit on its own judgment, and the standing escalation rule redoes
-weak output on a higher tier without asking.
-
-Then grade each unit's **staffing and model(s)** from
-`references/models.md` — model table, selection rules, and the usage-state
-command all live there; run that command before grading each wave and staff
-every unit against the `pace` it reports. The same reading also grades the
-unit's **review gate** (`dual` by default; a pool without headroom degrades it,
-rules in the same reference; ship-it runs the gate at the graded level).
+Grade each unit's **effort**, **staffing**, **model(s)**, and **review gate**
+from `references/models.md`. Its single effort ladder defines the shared
+default and escalation meanings for both pools; its model table, selection
+rules, and usage-state command define the rest. Run that command before
+grading each wave and staff every unit against the `pace` it reports.
+`dual` is the default review gate; a pool without headroom degrades it under
+the rules in that reference, and ship-it runs the graded gate.
 Solo is the default: one implementer, with the orchestrator's scope checks
 and the graded ship-it gate unchanged by staffing. A pair
 needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
