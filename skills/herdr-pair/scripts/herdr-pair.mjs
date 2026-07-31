@@ -81,6 +81,22 @@ function processInfo(paneId) {
   ) {
     fail(`herdr did not return process info for exact pane ${paneId}`);
   }
+  for (const entry of info.foreground_processes) {
+    const validObject =
+      entry !== null &&
+      typeof entry === "object" &&
+      !Array.isArray(entry);
+    const validArgv =
+      Array.isArray(entry?.argv) &&
+      entry.argv.every((argument) => typeof argument === "string");
+    const validStrings = ["name", "argv0", "cwd"].every(
+      (field) =>
+        !Object.hasOwn(entry ?? {}, field) || typeof entry[field] === "string",
+    );
+    if (!validObject || !validArgv || !validStrings) {
+      fail(`herdr returned malformed foreground process for pane ${paneId}`);
+    }
+  }
   return info;
 }
 

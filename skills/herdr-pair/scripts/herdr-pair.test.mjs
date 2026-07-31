@@ -436,6 +436,29 @@ try {
   };
   identityState.workspaces.w2 = { workspace_id: "w2", label: "duplicate-session" };
   identityState.transcripts["w2:p1"] = "A different Codex conversation.";
+  for (const malformedProcess of [
+    null,
+    { argv: { 0: "codex" }, cwd: "/workspace", name: "codex" },
+    { argv: null, cwd: "/workspace", name: "codex" },
+    { argv: ["codex"], cwd: null, name: "codex" },
+  ]) {
+    identityState.processes["w2:p1"] = [malformedProcess];
+    writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
+    assert.throws(
+      () =>
+        runRaw(
+          "id",
+          "--as",
+          "codex",
+          "--repo-root",
+          "/workspace",
+          "--conversation-markers-file",
+          markersFile,
+        ),
+      /herdr returned malformed foreground process for pane w2:p1/u,
+    );
+    identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  }
   identityState.processes["w2:p1"] = [
     { argv: ["codex"], cwd: "/different-repository", name: "codex" },
   ];
