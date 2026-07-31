@@ -408,6 +408,25 @@ try {
   );
 
   let identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  delete identityState.panes["w1:p1"].terminal_id;
+  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
+  assert.throws(
+    () =>
+      runRaw(
+        "id",
+        "--as",
+        "codex",
+        "--repo-root",
+        "/workspace",
+        "--conversation-markers-file",
+        markersFile,
+      ),
+    /caller pane w1:p1 has no terminal_id; cannot pin identity/u,
+  );
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  identityState.panes["w1:p1"].terminal_id = "term-w1-p1";
+  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
+
   identityState.panes["w2:p1"] = {
     ...identityState.panes["w1:p1"],
     pane_id: "w2:p1",
@@ -422,19 +441,18 @@ try {
   ];
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
 
-  assert.throws(
-    () =>
-      runRaw(
-        "id",
-        "--as",
-        "codex",
-        "--repo-root",
-        "/workspace",
-        "--conversation-markers-file",
-        markersFile,
-      ),
-    /snapshot candidate w2:p1 has no live foreground codex process at \/workspace/u,
+  const deadCandidateIgnored = JSON.parse(
+    runRaw(
+      "id",
+      "--as",
+      "codex",
+      "--repo-root",
+      "/workspace",
+      "--conversation-markers-file",
+      markersFile,
+    ),
   );
+  assert.equal(deadCandidateIgnored.pane, "w1:p1");
   identityState = JSON.parse(readFileSync(statePath, "utf8"));
   identityState.processes["w2:p1"][0].cwd = "/workspace";
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);

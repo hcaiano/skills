@@ -22,9 +22,9 @@ the caller transcript:
 }
 ```
 
-Both excerpts must be exact and unique to this conversation; the commentary
-excerpt must be at least 12 characters. Set `MARKERS_FILE` to that file and
-trash it after resolution.
+Both excerpts must be exact and unique to this conversation, and must remain
+different after trimming; the commentary excerpt must be at least 12
+characters. Set `MARKERS_FILE` to that file and trash it after resolution.
 
 ## Run the proof
 
@@ -49,14 +49,15 @@ The helper executes this proof chain:
 7. `herdr workspace get <workspace-id>` from the proven pane
 
 Repository and agent-kind matches create candidates; only the exact current
-transcript proves the caller. The helper hard-stops on zero or multiple
-transcript matches, unreadable or empty candidate transcripts, process
-mismatch, repository mismatch, or live pane drift during the proof.
+transcript proves the caller. The helper hard-stops when no live candidate
+remains, on zero or multiple transcript matches, unreadable or empty live
+candidate transcripts, final process or repository mismatch, or live pane
+drift during the proof.
 
 Inspect `PAIR_PROOF`, name its `workspace_label` to the user, then pin its exact
 pane, workspace, tab, terminal, agent, and repository:
 
-```sh
+```bash
 PAIR_ID=(
   --pane "$(printf '%s' "$PAIR_PROOF" | jq -r .pane)"
   --workspace "$(printf '%s' "$PAIR_PROOF" | jq -r .workspace_id)"

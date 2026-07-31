@@ -73,19 +73,19 @@ function sessionSnapshot() {
 }
 
 function processInfo(paneId) {
-  const process = result("pane", "process-info", "--pane", paneId).process_info;
+  const info = result("pane", "process-info", "--pane", paneId).process_info;
   if (
-    !process ||
-    process.pane_id !== paneId ||
-    !Array.isArray(process.foreground_processes)
+    !info ||
+    info.pane_id !== paneId ||
+    !Array.isArray(info.foreground_processes)
   ) {
     fail(`herdr did not return process info for exact pane ${paneId}`);
   }
-  return process;
+  return info;
 }
 
-function matchingForegroundProcess(process, agent, repoRoot) {
-  return process.foreground_processes.find((entry) => {
+function matchingForegroundProcess(info, agent, repoRoot) {
+  return info.foreground_processes.find((entry) => {
     const executables = [entry.name, entry.argv0, entry.argv?.[0]]
       .filter((value) => typeof value === "string")
       .map((value) => basename(value).toLowerCase());
@@ -94,13 +94,13 @@ function matchingForegroundProcess(process, agent, repoRoot) {
 }
 
 function requireForegroundProcess(paneId, agent, repoRoot) {
-  const process = processInfo(paneId);
-  if (!matchingForegroundProcess(process, agent, repoRoot)) {
+  const info = processInfo(paneId);
+  if (!matchingForegroundProcess(info, agent, repoRoot)) {
     fail(
       `pane ${paneId} has no live foreground ${agent} process rooted at ${repoRoot}`,
     );
   }
-  return process;
+  return info;
 }
 
 function currentPane() {
@@ -1239,18 +1239,13 @@ function identify(options) {
 
   const candidates = [];
   for (const pane of repositoryMatches) {
-    let process;
+    let info;
     try {
-      process = processInfo(pane.pane_id);
+      info = processInfo(pane.pane_id);
     } catch (error) {
       fail(`cannot prove foreground process for candidate ${pane.pane_id}: ${error.message}`);
     }
-    if (!matchingForegroundProcess(process, agent, repoRoot)) {
-      fail(
-        `snapshot candidate ${pane.pane_id} has no live foreground ${agent} process at ${repoRoot}`,
-      );
-    }
-    candidates.push(pane);
+    if (matchingForegroundProcess(info, agent, repoRoot)) candidates.push(pane);
   }
   if (candidates.length === 0) {
     fail(`no snapshot candidate has a live foreground ${agent} process at ${repoRoot}`);
@@ -1295,6 +1290,9 @@ function identify(options) {
     livePane.terminal_id !== pane.terminal_id
   ) {
     fail(`caller pane ${pane.pane_id} changed during identity proof`);
+  }
+  if (!livePane.terminal_id) {
+    fail(`caller pane ${pane.pane_id} has no terminal_id; cannot pin identity`);
   }
   const workspace = workspaceGet(pane.workspace_id);
 
