@@ -16,39 +16,22 @@ Set `SKILL_DIR` to this skill directory and
 path; the project cwd is unrelated to the installed skill path.
 
 Require `herdr` with the agent automation commands (`herdr agent start`,
-`herdr agent prompt`) and `trash` on `PATH`, `HERDR_ENV=1`, and
-an exact caller pane ID. If any command is missing, stop and tell the user to
-install or start (or update) Herdr.
+`herdr agent prompt`), `jq`, and `trash` on `PATH`, plus `HERDR_ENV=1`. If
+any is missing, stop and tell the user to install or start (or update) Herdr.
 
-Derive your identity with the helper, passing your **own agent session
-id** — the one signal herdr keeps that survives a stale env and ignores
-focus (Claude: the UUID in your own transcript/scratchpad paths; Codex:
-your rollout session id):
-
-```bash
-PAIR_ID=($(node "$PAIR_SCRIPT" id --as <claude|codex> \
-  --session <your session id> --format shell))
-```
-
-It finds the unique pane registered to that session across workspaces and
-fails closed on zero, multiple, or mismatched results. It never falls back to
-the inherited `HERDR_PANE_ID` hint. Use `"${PAIR_ID[@]}"` on every helper
-command; validate the returned workspace independently. Pane cwd is never
-identity authority. Validate the exact agent, repository, and pane transcript
-before any mutation; a user-declared move or failed check makes a unique match
-stale. If lookup fails or resolves a stale owner, stop. Recover
-only after the user explicitly confirms the pane and workspace, following
-[references/pane-identity-recovery.md](references/pane-identity-recovery.md)
-exactly. `herdr pane current` never identifies you, in any form — measured:
-bare it follows UI focus, and `--current` echoes `$HERDR_PANE_ID` (stale or
-not) or falls back to the focused pane.
+Before any Herdr mutation, read and execute
+[Caller pane proof](references/caller-pane-resolution.md). It resolves the
+explicit task repository, proves the unique caller through snapshot +
+conversation transcript + foreground process, and returns `PAIR_PROOF` plus
+the pinned `PAIR_ID`, including `--tab-id`. Stop when that proof does not
+complete exactly.
 
 ## Guardrails
 
-1. Scope every pane operation to the caller's exact `workspace_id`, `tab_id`,
-   `pane_id`, agent kind, and recorded terminal identity. Inherited
-   `HERDR_PANE_ID` is not authority. Never address a pane discovered only by
-   workspace, focus, label, cwd, direction, or pane number.
+1. Scope every pane operation to the transcript-proven `workspace_id`,
+   `tab_id`, `pane_id`, agent kind, terminal identity, and repository. Never
+   address a pane discovered only by workspace, focus, label, cwd, direction,
+   session metadata, or pane number.
 2. Use `herdr-pair.mjs send` as the sole partner transport. Reserve normal
    assistant output for a header-free user handoff. `SendMessage`, subagent
    messaging, and direct pane writes are different channels.
@@ -198,9 +181,9 @@ refuses while delivery is pending (wait for the ACK or use the inspected
 clear path). If old pane IDs or a missing partner prevent resume, explain
 the mismatch and use `end "${PAIR_ID[@]}" --sid "<sid>" --stale true` only
 with explicit user approval — a stale end may discard pending state only
-when the partner pane is gone or its recorded binding is stale. Closing the
-Herdr tab ends the panes naturally; stale state is never borrowed by
-another tab.
+when the partner pane is gone, its recorded binding is stale, or its
+foreground agent process/repository no longer matches. Closing the Herdr tab
+ends the panes naturally; stale state is never borrowed by another tab.
 
 ## Workbench tab
 

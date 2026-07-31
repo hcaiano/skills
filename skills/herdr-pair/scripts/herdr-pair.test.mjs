@@ -21,9 +21,6 @@ const home = join(root, "home");
 const bin = join(root, "bin");
 const statePath = join(root, "herdr-state.json");
 const fakeHerdr = join(bin, "herdr");
-const fakeSocketServerPath = join(root, "fake-herdr-socket.mjs");
-const socketPath = join(root, "herdr.sock");
-let socketServer;
 
 mkdirSync(home, { recursive: true });
 mkdirSync(bin, { recursive: true });
@@ -39,6 +36,7 @@ const panes = {
     },
     agent_status: "working",
     cwd: "/workspace",
+    foreground_cwd: "/workspace",
     pane_id: "w1:p1",
     tab_id: "w1:t1",
     terminal_id: "term-w1-p1",
@@ -54,6 +52,7 @@ const panes = {
     },
     agent_status: "idle",
     cwd: "/workspace",
+    foreground_cwd: "/workspace",
     pane_id: "w1:p2",
     tab_id: "w1:t1",
     terminal_id: "term-w1-p2",
@@ -63,7 +62,27 @@ const panes = {
 writeFileSync(
   statePath,
   `${JSON.stringify(
-    { panes, last_message: "", auto_ack: true, mutations: [], report_sequences: [] },
+    {
+      panes,
+      workspaces: { w1: { workspace_id: "w1", label: "workspace" } },
+      transcripts: {
+        "w1:p1": "Newest user request: refactor Herdr identity.\nCaller marker: proving this exact conversation.",
+        "w1:p2": "Different Claude conversation.",
+      },
+      processes: {
+        "w1:p2": [
+          {
+            argv: ["claude"],
+            argv0: "claude",
+            cwd: "/workspace",
+            name: "2.1.220",
+          },
+        ],
+      },
+      last_message: "",
+      auto_ack: true,
+      mutations: [],
+    },
     null,
     2,
   )}\n`,
@@ -91,23 +110,51 @@ const flushAck = () => {
 flushAck();
 if (args[0] === "pane" && args[1] === "get") {
   const paneId = args[2];
-  if (state.change_previous_owner_on_get_pane === paneId) {
-    state.panes[paneId].agent_session.source = "changed:codex";
-    delete state.change_previous_owner_on_get_pane;
-    save();
-  }
   output({ pane: state.panes[paneId] });
 }
 else if (args[0] === "pane" && args[1] === "list") output({ panes: Object.values(state.panes) });
+else if (args[0] === "api" && args[1] === "snapshot") {
+  output({
+    snapshot: {
+      agents: Object.values(state.panes)
+        .filter((pane) => pane.agent)
+        .map((pane) => ({
+          ...pane,
+          foreground_cwd: pane.foreground_cwd ?? pane.cwd,
+        })),
+    },
+  });
+}
+else if (args[0] === "pane" && args[1] === "process-info") {
+  const paneId = args[args.indexOf("--pane") + 1];
+  if (state.fail_process_info_pane === paneId) {
+    process.stderr.write("simulated process-info failure\\n");
+    process.exit(1);
+  }
+  if (state.malformed_process_info_pane === paneId) {
+    output({ process_info: { pane_id: paneId } });
+    process.exit(0);
+  }
+  const pane = state.panes[paneId];
+  const foreground_processes =
+    state.processes?.[paneId] ??
+    (pane?.agent
+      ? [{ argv: [pane.agent], cwd: pane.cwd, name: pane.agent }]
+      : []);
+  output({ process_info: { pane_id: paneId, foreground_processes } });
+}
+else if (args[0] === "agent" && args[1] === "read") {
+  process.stdout.write(state.transcripts?.[args[2]] ?? "");
+}
 else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
   state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
   pane.agent_status = "working";
-  const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*?--sid \\"?([^\\" ]+)\\"? --from \\"?([^\\" ]+)\\"? --seq (\\d+)/);
-  if (control && state.auto_ack !== false) {
-    const sender = control[3];
-    const sequence = Number(control[4]);
+  const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
+  const sender = state.last_message.match(/^\\[agent (claude|codex) ->/)?.[1];
+  if (control && sender && state.auto_ack !== false) {
+    const sequence = Number(control[2]);
     const slug = pane.tab_id.replaceAll(":", "_");
     const sessionPath = path.join(process.env.HOME, ".herdr-coworkers", pane.workspace_id, slug, "session.json");
     state.pending_ack = { sender, sequence, sessionPath };
@@ -121,8 +168,11 @@ else if (args[0] === "agent" && args[1] === "prompt") {
 } else if (args[0] === "pane" && args[1] === "split") {
   const source = state.panes[args[2]];
   state.mutations.push({ command: "pane split", pane: args[2] });
+  const requestedCwd = args.includes("--cwd")
+    ? args[args.indexOf("--cwd") + 1]
+    : source.cwd;
   const pane = {
-    agent: null, agent_status: "unknown", cwd: source.cwd,
+    agent: null, agent_status: "unknown", cwd: requestedCwd,
     pane_id: source.pane_id + "s", tab_id: source.tab_id,
     terminal_id: "term-" + source.pane_id + "s", workspace_id: source.workspace_id,
   };
@@ -160,130 +210,38 @@ else if (args[0] === "agent" && args[1] === "prompt") {
       workspace_id: workspaceId,
     },
   });
-} else if (args[0] === "pane" && args[1] === "report-agent-session") {
-  const paneId = args[2];
-  const pane = state.panes[paneId];
-  const source = args[args.indexOf("--source") + 1];
-  const agent = args[args.indexOf("--agent") + 1];
-  const value = args[args.indexOf("--agent-session-id") + 1];
-  const seq = args[args.indexOf("--seq") + 1];
-  state.mutations.push({ command: "pane report-agent-session", pane: paneId });
-  state.report_sequences.push(seq);
-  if (state.reject_session_report !== true) {
-    pane.agent_session = { agent, kind: "id", source, value };
-  }
-  save();
-  output({});
-} else if (args[0] === "pane" && args[1] === "report-agent") {
-  const paneId = args[2];
-  const pane = state.panes[paneId];
-  const source = args[args.indexOf("--source") + 1];
-  const agent = args[args.indexOf("--agent") + 1];
-  const seq = args[args.indexOf("--seq") + 1];
-  state.mutations.push({ command: "pane report-agent", pane: paneId });
-  state.report_sequences.push(seq);
-  pane.hook_authority = { source, agent };
-  save();
-  output({});
-} else if (args[0] === "pane" && args[1] === "release-agent") {
-  const paneId = args[2];
-  const source = args[args.indexOf("--source") + 1];
-  state.mutations.push({ command: "pane release-agent", pane: paneId });
-  // Herdr 0.7.5 ignores release-agent for official integration sources.
-  if (!source.startsWith("herdr:")) delete state.panes[paneId].agent_session;
-  save();
-  output({});
 } else if (args[0] === "pane" && args[1] === "read") process.stdout.write("");
 else { process.stderr.write("unsupported fake herdr args: " + args.join(" ") + "\\n"); process.exit(1); }
 `,
 );
 chmodSync(fakeHerdr, 0o755);
 
-writeFileSync(
-  fakeSocketServerPath,
-  `import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
-const [statePath, socketPath] = process.argv.slice(2);
-if (existsSync(socketPath)) unlinkSync(socketPath);
-const server = createServer((client) => {
-  let buffer = "";
-  client.on("data", (chunk) => {
-    buffer += chunk.toString("utf8");
-    for (;;) {
-      const newline = buffer.indexOf("\\n");
-      if (newline < 0) break;
-      const line = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      if (!line.trim()) continue;
-      const exactSequence = line.match(/"seq"\\s*:\\s*(\\d+)/)?.[1];
-      const request = JSON.parse(line);
-      if (exactSequence) request.params.seq = exactSequence;
-      const state = JSON.parse(readFileSync(statePath, "utf8"));
-      if (request.method === "pane.clear_agent_authority") {
-        const pane = state.panes[request.params.pane_id];
-        state.mutations.push({
-          command: "pane clear-agent-authority",
-          pane: request.params.pane_id,
-        });
-        state.report_sequences.push(String(request.params.seq));
-        if (
-          state.reject_session_clear_pane !== request.params.pane_id &&
-          pane.hook_authority?.source === request.params.source
-        ) {
-          delete pane.hook_authority;
-          delete pane.agent_session;
-        }
-        writeFileSync(statePath, JSON.stringify(state, null, 2) + "\\n");
-        client.write(JSON.stringify({ id: request.id, result: {} }) + "\\n");
-      } else {
-        client.write(JSON.stringify({
-          id: request.id,
-          error: { message: "unsupported fake method " + request.method },
-        }) + "\\n");
-      }
-    }
-  });
-});
-server.listen(socketPath);
-`,
-);
-socketServer = spawn(process.execPath, [fakeSocketServerPath, statePath, socketPath], {
-  stdio: "ignore",
-});
-await new Promise((resolve, reject) => {
-  const deadline = Date.now() + 3000;
-  const poll = () => {
-    if (existsSync(socketPath)) resolve();
-    else if (Date.now() >= deadline) reject(new Error("fake Herdr socket did not start"));
-    else setTimeout(poll, 10);
-  };
-  poll();
-});
-
 const env = {
   ...process.env,
   FAKE_HERDR_STATE: statePath,
   HERDR_ENV: "1",
   HERDR_PANE_ID: "w1:p1",
-  HERDR_SOCKET_PATH: socketPath,
   HOME: home,
   PATH: `${bin}:${process.env.PATH}`,
 };
-const agentForPane = (paneId) =>
-  JSON.parse(readFileSync(statePath, "utf8")).panes[paneId]?.agent;
-const withCaller = (paneId, args) => [
-  ...args,
-  "--pane",
-  paneId,
-  "--as",
-  agentForPane(paneId),
-  ...(() => {
-    const sessionId = JSON.parse(
-      readFileSync(statePath, "utf8"),
-    ).panes[paneId]?.agent_session?.value;
-    return sessionId ? ["--agent-session-id", sessionId] : [];
-  })(),
-];
+const withCaller = (paneId, args) => {
+  const pane = JSON.parse(readFileSync(statePath, "utf8")).panes[paneId];
+  return [
+    ...args,
+    "--pane",
+    paneId,
+    "--workspace",
+    pane.workspace_id,
+    "--tab-id",
+    pane.tab_id,
+    "--as",
+    pane.agent,
+    "--terminal-id",
+    pane.terminal_id,
+    "--repo-root",
+    pane.cwd,
+  ];
+};
 const runAs = (paneId, ...args) =>
   execFileSync(process.execPath, [helper, ...withCaller(paneId, args)], {
     encoding: "utf8",
@@ -324,697 +282,303 @@ const runRawWithEnv = (overrides, ...args) =>
   });
 
 try {
-  // `id` derives identity only from the exact session or an explicit recovery
-  // pane, and fails closed on a stale hint, wrong kind, or missing session.
+  // Caller identity is proven from live topology, two exact conversation
+  // markers, and a matching foreground process. Session metadata is diagnostic.
+  const markersFile = join(root, "conversation-markers.json");
+  writeFileSync(
+    markersFile,
+    JSON.stringify({
+      newest_user_request: "Newest user request: refactor Herdr identity.",
+      recent_caller_output: "Caller marker: proving this exact conversation.",
+    }),
+  );
   const idHappy = JSON.parse(
     runRawWithEnv(
-      { HERDR_PANE_ID: "w1:p2" },
+      { HERDR_PANE_ID: "stale:pane", HERDR_WORKSPACE_ID: "stale:workspace" },
       "id",
       "--as",
-      "claude",
-      "--session",
-      "claude-session-w1-p2",
+      "codex",
+      "--repo-root",
+      "/workspace",
+      "--conversation-markers-file",
+      markersFile,
     ),
   );
   assert.deepEqual(idHappy, {
-    pane: "w1:p2",
-    as: "claude",
-    agent_session_id: "claude-session-w1-p2",
+    pane: "w1:p1",
     workspace_id: "w1",
-    cwd: "/workspace",
-    args: ["--pane", "w1:p2", "--as", "claude", "--agent-session-id", "claude-session-w1-p2"],
+    workspace_label: "workspace",
+    tab_id: "w1:t1",
+    terminal_id: "term-w1-p1",
+    as: "codex",
+    repo_root: "/workspace",
+    agent_session: "codex-session-w1-p1",
+    session_binding_warning: null,
+    args: [
+      "--pane",
+      "w1:p1",
+      "--workspace",
+      "w1",
+      "--tab-id",
+      "w1:t1",
+      "--as",
+      "codex",
+      "--terminal-id",
+      "term-w1-p1",
+      "--repo-root",
+      "/workspace",
+    ],
   });
   assert.equal(
-    runRawWithEnv(
-      { HERDR_PANE_ID: "w1:p2" },
+    runRaw(
       "id",
       "--as",
-      "claude",
-      "--session",
-      "claude-session-w1-p2",
+      "codex",
+      "--repo-root",
+      "/workspace",
+      "--conversation-markers-file",
+      markersFile,
       "--format",
       "shell",
     ).trim(),
-    "--pane w1:p2 --as claude --agent-session-id claude-session-w1-p2",
+    "'--pane' 'w1:p1' '--workspace' 'w1' '--tab-id' 'w1:t1' '--as' 'codex' '--terminal-id' 'term-w1-p1' '--repo-root' '/workspace'",
   );
-  assert.throws(
-    () =>
-      runRaw(
-        "id",
-        "--pane",
-        "w1:p2",
-        "--as",
-        "codex",
-        "--session",
-        "codex-session-w1-p1",
-      ),
-    /hosts claude, not codex/u,
-  );
-  assert.throws(() => runRaw("id", "--as", "claude"), /requires --session/u);
-  const idExplicit = JSON.parse(
-    runRaw(
-      "id",
-      "--as",
-      "codex",
-      "--pane",
-      "w1:p1",
-      "--session",
-      "codex-session-w1-p1",
-    ),
-  );
-  assert.equal(idExplicit.pane, "w1:p1");
-  // The caller's own session id finds its pane across every workspace —
-  // immune to a stale env hint and to focus. (`pane current` in any form is
-  // never called: the fake has no handler, so a reintroduction fails loud.)
-  const idBySession = JSON.parse(
-    runRaw("id", "--as", "claude", "--session", "claude-session-w1-p2"),
-  );
-  assert.equal(idBySession.pane, "w1:p2");
-  // A hint whose pane hosts a different session of the same kind is refused.
-  assert.throws(
-    () =>
-      runRaw(
-        "id",
-        "--pane",
-        "w1:p2",
-        "--as",
-        "claude",
-        "--session",
-        "not-my-session",
-      ),
-    /hosts session claude-session-w1-p2, not yours/u,
-  );
-
-  let identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  identityState.panes["w9:p1"] = {
-    agent: "claude",
-    agent_status: "idle",
-    cwd: "/other-workspace",
-    pane_id: "w9:p1",
-    tab_id: "w9:t1",
-    terminal_id: "term-w9-p1",
-    workspace_id: "w9",
-  };
-  identityState.panes["w8:p1"] = {
-    agent: "codex",
-    agent_status: "idle",
-    cwd: "/foreign-workspace",
-    pane_id: "w8:p1",
-    tab_id: "w8:t1",
-    terminal_id: "term-w8-p1",
-    workspace_id: "w8",
-  };
-  identityState.panes["w8:p2"] = {
-    agent: "claude",
-    agent_status: "idle",
-    cwd: "/foreign-workspace",
-    pane_id: "w8:p2",
-    tab_id: "w8:t1",
-    terminal_id: "term-w8-p2",
-    workspace_id: "w8",
-  };
-  identityState.panes["w7:p1"] = {
-    agent: "codex",
-    agent_status: "working",
-    cwd: "/foreign-working",
-    pane_id: "w7:p1",
-    tab_id: "w7:t1",
-    terminal_id: "term-w7-p1",
-    workspace_id: "w7",
-  };
-  identityState.panes["w6:p1"] = {
-    agent: "codex",
-    agent_session: {
-      agent: "codex",
-      kind: "id",
-      source: "herdr:codex",
-      value: "moved-codex-session",
-    },
-    agent_status: "idle",
-    cwd: "/previous-workspace",
-    pane_id: "w6:p1",
-    tab_id: "w6:t1",
-    terminal_id: "term-w6-p1",
-    workspace_id: "w6",
-  };
-  identityState.workspaces = {
-    w6: {
-      workspace_id: "w6",
-      worktree: { repo_root: "/previous/repository" },
-    },
-    w7: {
-      workspace_id: "w7",
-      worktree: {
-        checkout_path: "/confirmed/repository",
-        is_linked_worktree: true,
-        repo_root: "/canonical/repository",
-      },
-    },
-  };
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  assert.throws(
-    () =>
-      runRaw(
-        "id",
-        "--as",
-        "codex",
-        "--session",
-        "caller-session-with-missing-pane-metadata",
-      ),
-    /no pane reports session .* inherited HERDR_PANE_ID is not a recovery authority/u,
-  );
-  const recoveredExplicit = JSON.parse(
-    runRaw(
-      "id",
-      "--pane",
-      "w7:p1",
-      "--as",
-      "codex",
-      "--session",
-      "caller-session-with-missing-pane-metadata",
-    ),
-  );
-  assert.equal(recoveredExplicit.pane, "w7:p1");
-  assert.equal(recoveredExplicit.workspace_id, "w7");
-  assert.equal(recoveredExplicit.agent_session_id, null);
-  const mutationsBeforeRecovery = JSON.parse(
-    readFileSync(statePath, "utf8"),
-  ).mutations.length;
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w8",
-        "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
-      ),
-    /belongs to w7, not w8/u,
-  );
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
-        "--repo-root",
-        "/wrong/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
-      ),
-    /registered to checkout .* not \/wrong\/repository/u,
-  );
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
-        "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "false",
-      ),
-    /requires --transcript-verified true/u,
-  );
+  const formatShellMarker = join(root, "unexpected-format-shell-execution");
+  const shellFormatRepo = `/workspace with 'quotes' $(touch ${formatShellMarker}) \`false\``;
+  let quotedState = JSON.parse(readFileSync(statePath, "utf8"));
+  quotedState.panes["w1:p1"].cwd = shellFormatRepo;
+  quotedState.panes["w1:p1"].foreground_cwd = shellFormatRepo;
+  writeFileSync(statePath, `${JSON.stringify(quotedState, null, 2)}\n`);
+  const shellFormatOutput = runRaw(
+    "id",
+    "--as",
+    "codex",
+    "--repo-root",
+    shellFormatRepo,
+    "--conversation-markers-file",
+    markersFile,
+    "--format",
+    "shell",
+  ).trim();
   assert.equal(
-    JSON.parse(readFileSync(statePath, "utf8")).mutations.length,
-    mutationsBeforeRecovery,
+    shellFormatOutput,
+    `'--pane' 'w1:p1' '--workspace' 'w1' '--tab-id' 'w1:t1' '--as' 'codex' '--terminal-id' 'term-w1-p1' '--repo-root' '/workspace with '"'"'quotes'"'"' $(touch ${formatShellMarker}) \`false\`'`,
+  );
+  const shellFormatArgv = execFileSync(
+    "/bin/sh",
+    ["-c", `set -- ${shellFormatOutput}; printf '%s\\n' "$@"`],
+    { encoding: "utf8" },
+  ).trimEnd().split("\n");
+  assert.deepEqual(shellFormatArgv, [
+    "--pane",
+    "w1:p1",
+    "--workspace",
+    "w1",
+    "--tab-id",
+    "w1:t1",
+    "--as",
+    "codex",
+    "--terminal-id",
+    "term-w1-p1",
+    "--repo-root",
+    shellFormatRepo,
+  ]);
+  assert.equal(existsSync(formatShellMarker), false);
+  quotedState = JSON.parse(readFileSync(statePath, "utf8"));
+  quotedState.panes["w1:p1"].cwd = "/workspace";
+  quotedState.panes["w1:p1"].foreground_cwd = "/workspace";
+  writeFileSync(statePath, `${JSON.stringify(quotedState, null, 2)}\n`);
+  assert.throws(
+    () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
+    /requires --conversation-markers-file/u,
   );
   assert.throws(
     () =>
       runRawWithEnv(
         { HERDR_ENV: "0" },
-        "rebind-session",
-        "--pane",
-        "w7:p1",
+        "id",
         "--as",
         "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
         "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
+        "/workspace",
+        "--conversation-markers-file",
+        markersFile,
       ),
     /requires HERDR_ENV=1/u,
   );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  identityState.panes["w7:p1"].agent_session = {
-    agent: "codex",
-    kind: "path",
-    source: "herdr:codex",
-    value: "other-session",
+
+  let identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  identityState.panes["w2:p1"] = {
+    ...identityState.panes["w1:p1"],
+    pane_id: "w2:p1",
+    tab_id: "w2:t1",
+    terminal_id: "term-w2-p1",
+    workspace_id: "w2",
   };
+  identityState.workspaces.w2 = { workspace_id: "w2", label: "duplicate-session" };
+  identityState.transcripts["w2:p1"] = "A different Codex conversation.";
+  identityState.processes["w2:p1"] = [
+    { argv: ["codex"], cwd: "/different-repository", name: "codex" },
+  ];
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
+
   assert.throws(
     () =>
       runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
+        "id",
         "--as",
         "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
         "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
+        "/workspace",
+        "--conversation-markers-file",
+        markersFile,
       ),
-    /already has a non-matching session owner/u,
+    /snapshot candidate w2:p1 has no live foreground codex process at \/workspace/u,
   );
   identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  delete identityState.panes["w7:p1"].agent_session;
-  identityState.panes["w6:p1"].agent_session.source = "custom:codex";
+  identityState.processes["w2:p1"][0].cwd = "/workspace";
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
-        "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
-      ),
-    /lacks the exact herdr:codex id ownership/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  identityState.panes["w6:p1"].agent_session.source = "herdr:codex";
-  identityState.panes["w6:p2"] = {
-    ...identityState.panes["w6:p1"],
-    pane_id: "w6:p2",
-    terminal_id: "term-w6-p2",
-  };
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
-        "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
-      ),
-    /appears on 2 previous panes/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  delete identityState.panes["w6:p2"];
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  identityState.reject_session_report = true;
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
-        "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
-      ),
-    /did not persist session moved-codex-session/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(
-    identityState.panes["w6:p1"].agent_session.value,
-    "moved-codex-session",
-  );
-  assert.equal(identityState.panes["w7:p1"].agent_session, undefined);
-  assert.deepEqual(
-    identityState.mutations.slice(mutationsBeforeRecovery),
-    [{ command: "pane report-agent-session", pane: "w7:p1" }],
-  );
-  identityState.reject_session_report = false;
-  identityState.mutations.length = mutationsBeforeRecovery;
-  identityState.change_previous_owner_on_get_pane = "w6:p1";
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
-        "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
-      ),
-    /session ownership changed .* rolled back the confirmed-pane claim/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(identityState.panes["w6:p1"].agent_session.source, "changed:codex");
-  assert.equal(identityState.panes["w7:p1"].agent_session, undefined);
-  identityState.panes["w6:p1"].agent_session.source = "herdr:codex";
-  identityState.mutations.length = mutationsBeforeRecovery;
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  identityState.reject_session_clear_pane = "w6:p1";
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  assert.throws(
-    () =>
-      runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
-        "--as",
-        "codex",
-        "--session",
-        "moved-codex-session",
-        "--workspace",
-        "w7",
-        "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
-      ),
-    /session cleanup failed .* rolled back the confirmed-pane claim/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(
-    identityState.panes["w6:p1"].agent_session.value,
-    "moved-codex-session",
-  );
-  assert.equal(identityState.panes["w7:p1"].agent_session, undefined);
-  identityState.reject_session_clear_pane = null;
-  identityState.mutations.length = mutationsBeforeRecovery;
-  writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  const sequencesBeforeSuccessfulRecovery = identityState.report_sequences.length;
-  const reboundSession = JSON.parse(
+
+  const duplicateSession = JSON.parse(
     runRaw(
-      "rebind-session",
-      "--pane",
-      "w7:p1",
+      "id",
       "--as",
       "codex",
-      "--session",
-      "moved-codex-session",
-      "--workspace",
-      "w7",
       "--repo-root",
-      "/confirmed/repository",
-      "--repo-validation",
-      "registered",
-      "--transcript-verified",
-      "true",
+      "/workspace",
+      "--conversation-markers-file",
+      markersFile,
     ),
   );
-  assert.deepEqual(reboundSession, {
-    pane: "w7:p1",
-    as: "codex",
-    agent_session_id: "moved-codex-session",
-    workspace_id: "w7",
-    repo_root: "/confirmed/repository",
-    repo_validation: "registered",
-    cleared_panes: ["w6:p1"],
-  });
+  assert.equal(duplicateSession.pane, "w1:p1");
+  assert.match(duplicateSession.session_binding_warning, /appears on 2 panes and was ignored/u);
+
   identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(
-    identityState.panes["w7:p1"].agent_session.value,
-    "moved-codex-session",
-  );
-  assert.equal(identityState.panes["w6:p1"].agent_session, undefined);
-  assert.deepEqual(
-    identityState.mutations.slice(mutationsBeforeRecovery),
-    [
-      { command: "pane report-agent-session", pane: "w7:p1" },
-      { command: "pane report-agent", pane: "w6:p1" },
-      { command: "pane clear-agent-authority", pane: "w6:p1" },
-    ],
-  );
-  const successfulRecoverySequences = identityState.report_sequences
-    .slice(sequencesBeforeSuccessfulRecovery)
-    .map(BigInt);
-  assert.ok(successfulRecoverySequences.length >= 3);
-  for (let index = 1; index < successfulRecoverySequences.length; index += 1) {
-    assert.ok(successfulRecoverySequences[index] > successfulRecoverySequences[index - 1]);
-  }
-  delete identityState.panes["w7:p1"].agent_session;
-  delete identityState.workspaces.w7.worktree;
-  identityState.mutations.length = mutationsBeforeRecovery;
+  identityState.transcripts["w2:p1"] = identityState.transcripts["w1:p1"];
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
   assert.throws(
     () =>
       runRaw(
-        "rebind-session",
-        "--pane",
-        "w7:p1",
+        "id",
         "--as",
         "codex",
-        "--session",
-        "unbound-codex-session",
-        "--workspace",
-        "w7",
         "--repo-root",
-        "/confirmed/repository",
-        "--repo-validation",
-        "registered",
-        "--transcript-verified",
-        "true",
+        "/workspace",
+        "--conversation-markers-file",
+        markersFile,
       ),
-    /requires --repo-validation transcript/u,
+    /matched 2 candidate transcripts/u,
   );
-  const transcriptBound = JSON.parse(
-    runRaw(
-      "rebind-session",
-      "--pane",
-      "w7:p1",
-      "--as",
-      "codex",
-      "--session",
-      "unbound-codex-session",
-      "--workspace",
-      "w7",
-      "--repo-root",
-      "/confirmed/repository",
-      "--repo-validation",
-      "transcript",
-      "--transcript-verified",
-      "true",
-    ),
-  );
-  assert.equal(transcriptBound.repo_validation, "transcript");
-  assert.deepEqual(transcriptBound.cleared_panes, []);
+
   identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  delete identityState.panes["w7:p1"].agent_session;
+  identityState.transcripts["w2:p1"] = "";
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  const mutationsBeforeMismatch = identityState.mutations.length;
-  assert.throws(
-    () => runRaw("spawn", "--pane", "w9:p1", "--as", "codex"),
-    /caller identity mismatch.*is claude, not --as codex/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
-  assert.throws(
-    () => runRaw("spawn", "--pane", "w7:p1", "--as", "codex"),
-    /spawn requires a caller pane with a strong agent session identity/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
-  assert.throws(
-    () => runRaw("spawn", "--pane", "w8:p1", "--as", "codex"),
-    /has no agent session identity and is idle/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
-  const foreignBody = join(root, "foreign-body.txt");
-  writeFileSync(foreignBody, "Do not deliver this message.\n");
   assert.throws(
     () =>
       runRaw(
-        "send",
-        "--pane",
-        "w8:p1",
+        "id",
         "--as",
         "codex",
-        "--sid",
-        "foreign-sid",
-        "--kind",
-        "task",
-        "--body-file",
-        foreignBody,
+        "--repo-root",
+        "/workspace",
+        "--conversation-markers-file",
+        markersFile,
       ),
-    /has no agent session identity and is idle/u,
+    /candidate transcript w2:p1 is empty/u,
   );
+
   identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
-  const foreignSessionPath = join(
-    home,
-    ".herdr-coworkers",
-    "w8",
-    "w8_t1",
-    "session.json",
-  );
-  mkdirSync(dirname(foreignSessionPath), { recursive: true });
-  writeFileSync(
-    foreignSessionPath,
-    `${JSON.stringify({ sid: "foreign-sid", active: true })}\n`,
-  );
-  assert.throws(
-    () =>
-      runRaw(
-        "end",
-        "--pane",
-        "w8:p1",
-        "--as",
-        "codex",
-        "--sid",
-        "foreign-sid",
-        "--stale",
-        "true",
-      ),
-    /has no agent session identity and is idle/u,
-  );
-  assert.equal(existsSync(foreignSessionPath), true);
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  identityState.panes["w8:p1"].agent_status = "working";
+  delete identityState.panes["w2:p1"];
+  delete identityState.workspaces.w2;
+  delete identityState.transcripts["w2:p1"];
+  delete identityState.processes["w2:p1"];
+  identityState.panes["w1:p1"].agent_session.value = "stale-or-duplicated-metadata";
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
-  writeFileSync(
-    foreignSessionPath,
-    `${JSON.stringify({
-      schema_version: 2,
-      sid: "foreign-sid",
-      workspace_id: "w8",
-      tab_id: "w8:t1",
-      initiator: "codex",
-      active: true,
-      participants: {
-        codex: {
-          pane_id: "w8:p1",
-          terminal_id: "term-w8-p1",
-          agent_session_id: null,
-        },
-        claude: {
-          pane_id: "w8:p2",
-          terminal_id: "term-w8-p2",
-          agent_session_id: null,
-        },
-      },
-      round: 0,
-      last_status: { claude: null, codex: null },
-      completed_cycles: 0,
-      no_progress_count: 0,
-      delivery: {
-        next: { claude: 0, codex: 0 },
-        submitted: { claude: 0, codex: 0 },
-        received: { claude: 0, codex: 0 },
-        pending: { claude: null, codex: null },
-      },
-    }, null, 2)}\n`,
-  );
-  assert.throws(
-    () =>
-      runRaw(
-        "send",
-        "--pane",
-        "w8:p1",
-        "--as",
-        "codex",
-        "--sid",
-        "caller-owned-sid",
-        "--kind",
-        "task",
-        "--body-file",
-        foreignBody,
-      ),
-    /send sid caller-owned-sid does not match current-tab session foreign-sid/u,
-  );
-  identityState = JSON.parse(readFileSync(statePath, "utf8"));
-  assert.equal(identityState.mutations.length, mutationsBeforeMismatch);
+
+  // A stale session binding cannot override the pinned pane proof.
+  assert.equal(JSON.parse(runAs("w1:p1", "discover")).self.pane_id, "w1:p1");
   assert.throws(
     () => runRaw("discover", "--as", "codex"),
-    /requires the caller's exact --pane ID/u,
+    /requires the transcript-proven --pane/u,
   );
-  const explicitlyBound = JSON.parse(
-    runRaw(
-      "discover",
-      "--pane",
-      "w1:p1",
-      "--as",
-      "codex",
-      "--agent-session-id",
-      "codex-session-w1-p1",
-    ),
+  assert.throws(
+    () =>
+      runRaw(
+        "discover",
+        "--pane",
+        "w1:p1",
+        "--workspace",
+        "wrong-workspace",
+        "--tab-id",
+        "w1:t1",
+        "--as",
+        "codex",
+        "--terminal-id",
+        "term-w1-p1",
+        "--repo-root",
+        "/workspace",
+      ),
+    /caller workspace mismatch/u,
   );
-  assert.equal(explicitlyBound.self.pane_id, "w1:p1");
-  delete identityState.panes["w9:p1"];
-  delete identityState.panes["w8:p1"];
-  delete identityState.panes["w8:p2"];
-  delete identityState.panes["w7:p1"];
+  assert.throws(
+    () =>
+      runRaw(
+        "discover",
+        "--pane",
+        "w1:p1",
+        "--workspace",
+        "w1",
+        "--tab-id",
+        "w1:other-tab",
+        "--as",
+        "codex",
+        "--terminal-id",
+        "term-w1-p1",
+        "--repo-root",
+        "/workspace",
+      ),
+    /caller tab mismatch/u,
+  );
+  assert.throws(
+    () =>
+      runRaw(
+        "discover",
+        "--pane",
+        "w1:p1",
+        "--workspace",
+        "w1",
+        "--tab-id",
+        "w1:t1",
+        "--as",
+        "codex",
+        "--terminal-id",
+        "recycled-terminal",
+        "--repo-root",
+        "/workspace",
+      ),
+    /caller terminal changed/u,
+  );
+  assert.throws(
+    () =>
+      runRaw(
+        "discover",
+        "--pane",
+        "w1:p1",
+        "--workspace",
+        "w1",
+        "--tab-id",
+        "w1:t1",
+        "--as",
+        "codex",
+        "--terminal-id",
+        "term-w1-p1",
+        "--repo-root",
+        "/other-repository",
+      ),
+    /has no live foreground codex process rooted at \/other-repository/u,
+  );
+  identityState = JSON.parse(readFileSync(statePath, "utf8"));
+  identityState.panes["w1:p1"].agent_session.value = "codex-session-w1-p1";
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
 
   const created = JSON.parse(run("init"));
@@ -1114,6 +678,14 @@ try {
   const body = join(root, "body.txt");
   writeFileSync(body, "Review the persistent pair transport.\n");
   let state = JSON.parse(readFileSync(statePath, "utf8"));
+  const shellExecutionMarker = join(root, "unexpected-shell-execution");
+  const shellMetaRepo = `/workspace with 'quotes' $(touch ${shellExecutionMarker}) \`false\``;
+  for (const pane of Object.values(state.panes)) {
+    pane.cwd = shellMetaRepo;
+    pane.foreground_cwd = shellMetaRepo;
+  }
+  state.processes["w1:p2"][0].cwd = shellMetaRepo;
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
   const sent = run(
     "send",
     "--sid",
@@ -1130,13 +702,51 @@ try {
   const message = fake.last_message;
   assert.match(message, /^\[agent codex -> claude kind=review sid=/u);
   assert.match(message, /\[herdr-pair control seq=1:/u);
-  assert.match(message, /receive --pane "w1:p2" --as "claude"/u);
+  assert.match(
+    message,
+    /receive '--pane' 'w1:p2' '--workspace' 'w1' '--tab-id' 'w1:t1' '--as' 'claude'/u,
+  );
+  assert.equal(
+    message.includes(
+      `'--repo-root' '/workspace with '"'"'quotes'"'"' $(touch ${shellExecutionMarker}) \`false\`'`,
+    ),
+    true,
+  );
+  const receiveCommand = message.match(
+    /\[herdr-pair control seq=1: run (.+) before doing work\./su,
+  )?.[1];
+  assert.ok(receiveCommand);
+  const quoteProbeBin = join(root, "quote-probe-bin");
+  const quoteProbeNode = join(quoteProbeBin, "node");
+  mkdirSync(quoteProbeBin);
+  writeFileSync(quoteProbeNode, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
+  chmodSync(quoteProbeNode, 0o755);
+  const receiveArgv = execFileSync("/bin/sh", ["-c", receiveCommand], {
+    encoding: "utf8",
+    env: { ...env, PATH: `${quoteProbeBin}:${env.PATH}` },
+  }).trimEnd().split("\n");
+  assert.deepEqual(receiveArgv.slice(0, 4), [
+    helper,
+    "receive",
+    "--pane",
+    "w1:p2",
+  ]);
+  assert.equal(receiveArgv[receiveArgv.indexOf("--tab-id") + 1], "w1:t1");
+  assert.equal(receiveArgv[receiveArgv.indexOf("--repo-root") + 1], shellMetaRepo);
+  assert.equal(existsSync(shellExecutionMarker), false);
   assert.match(message, /never as visible text in this pane/u);
   // `agent prompt` pastes without reliably submitting, so a send that skips
   // the Enter leaves the message in the partner's composer and the pair
   // stalls in silence. Guard it here: this has regressed before.
   assert.equal(fake.enter_keys, 1, "send must follow the paste with an Enter");
   assert.deepEqual(fake.last_send_keys, { pane: "w1:p2", key: "enter" });
+  state = JSON.parse(readFileSync(statePath, "utf8"));
+  for (const pane of Object.values(state.panes)) {
+    pane.cwd = "/workspace";
+    pane.foreground_cwd = "/workspace";
+  }
+  state.processes["w1:p2"][0].cwd = "/workspace";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
 
   let session = JSON.parse(readFileSync(sessionPath, "utf8"));
   assert.equal(session.delivery.submitted.codex, 1);
@@ -1556,8 +1166,29 @@ try {
   writeFileSync(sessionPath, `${JSON.stringify(session, null, 2)}\n`);
   const otherTabDirectory = join(home, ".herdr-coworkers", "w1", "other_tab");
   mkdirSync(otherTabDirectory);
-  delete state.panes["w1:p2"];
+  state.fail_process_info_pane = "w1:p2";
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  assert.throws(
+    () => run("end", "--sid", rebound.sid, "--stale", "true"),
+    /herdr pane process-info --pane w1:p2 failed: simulated process-info failure/u,
+  );
+  assert.equal(existsSync(sessionPath), true);
+  delete state.fail_process_info_pane;
+  state.malformed_process_info_pane = "w1:p2";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  assert.throws(
+    () => run("end", "--sid", rebound.sid, "--stale", "true"),
+    /herdr did not return process info for exact pane w1:p2/u,
+  );
+  assert.equal(existsSync(sessionPath), true);
+  delete state.malformed_process_info_pane;
+  state.processes["w1:p2"][0].cwd = "/partner-moved-to-another-repository";
+  writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  assert.throws(
+    () => run("end", "--sid", rebound.sid),
+    /has no live foreground claude process rooted at \/workspace/u,
+  );
+  assert.equal(existsSync(sessionPath), true);
   run("end", "--sid", rebound.sid, "--stale", "true");
   assert.equal(existsSync(sessionPath), false);
   assert.equal(existsSync(otherTabDirectory), true);
@@ -1565,29 +1196,50 @@ try {
   // Spawning derives the peer's agent name from the tab id, and herdr rejects
   // anything but 1-32 lowercase characters. Workspace ids carry uppercase
   // (wY:t1) and long ones overflow the limit — both broke the spawn outright.
-  for (const [paneId, tabId, workspaceId, expected] of [
-    ["wY:p1", "wY:t1", "wY", "pair-claude-wy_t1"],
-    ["w655f3dd90835016:p1", "w655f3dd90835016:t123", "w655f3dd90835016", "pair-claude-f0e59f4e"],
+  for (const [paneId, tabId, workspaceId, expected, paneCwd, repoRoot] of [
+    ["wY:p1", "wY:t1", "wY", "pair-claude-wy_t1", "/workspace", "/workspace"],
+    ["w655f3dd90835016:p1", "w655f3dd90835016:t123", "w655f3dd90835016", "pair-claude-f0e59f4e", "/workspace", "/workspace"],
+    ["wZ:p1", "wZ:t1", "wZ", "pair-claude-wz_t1", "/shell-home", "/workspace"],
   ]) {
     const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
     spawnState.panes = {
       [paneId]: {
         agent: "codex",
         agent_session: { value: `session-${paneId}` },
-        agent_status: "working", cwd: "/workspace",
-        pane_id: paneId, tab_id: tabId, workspace_id: workspaceId,
+        agent_status: "working", cwd: paneCwd,
+        foreground_cwd: repoRoot,
+        pane_id: paneId, tab_id: tabId, terminal_id: `term-${paneId}`,
+        workspace_id: workspaceId,
       },
+    };
+    spawnState.processes = {
+      [paneId]: [{ argv: ["codex"], cwd: repoRoot, name: "codex" }],
     };
     delete spawnState.last_agent_name;
     writeFileSync(statePath, `${JSON.stringify(spawnState, null, 2)}\n`);
-    runAs(paneId, "spawn");
+    runRaw(
+      "spawn",
+      "--pane",
+      paneId,
+      "--workspace",
+      workspaceId,
+      "--tab-id",
+      tabId,
+      "--as",
+      "codex",
+      "--terminal-id",
+      `term-${paneId}`,
+      "--repo-root",
+      repoRoot,
+    );
     const named = JSON.parse(readFileSync(statePath, "utf8")).last_agent_name;
     assert.equal(named, expected, `spawn used an agent name herdr would reject: ${named}`);
     assert.match(named, /^[a-z][a-z0-9_-]{0,31}$/u);
+    const spawned = JSON.parse(readFileSync(statePath, "utf8")).panes[`${paneId}s`];
+    assert.equal(spawned.cwd, repoRoot);
   }
 
   process.stdout.write("herdr-pair tests: PASS\n");
 } finally {
-  socketServer?.kill();
   if (existsSync(root)) execFileSync("trash", [root]);
 }
