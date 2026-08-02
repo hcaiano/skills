@@ -21,50 +21,66 @@ ship it.
    the complete change; never do this to unrelated files. If the worktree is
    on the target branch, create an intentional task branch before step 2.
 
-   Grade the gate before spending either review pool. A reproduced, localized,
-   reversible production hotfix
-   with a focused regression and no migration, auth or permission, payment,
-   destructive-infrastructure, or public-API change uses `single`: skip pool
-   grading and run only the current agent's native review. Otherwise the gate
-   spends both usage pools — Claude (simplify + review) and Codex (review) — so
-   fix its level before anything runs. When an orchestrator names a graded gate,
-   ship-it still owns this hotfix check: `single` overrides that grade; otherwise
-   the orchestrator's grade wins. Read the pools either way: run
+   Read pool capacity before committing either review pool: run
    `node scripts/usage-state.mjs` from the herdr-orchestrate skill
    installed alongside this one; a pool is out of headroom at
    `used_percent` ≥ 90 or when its CLI is observed refusing — a null
-   reading never degrades on its own. Absent an orchestrator grade, both
-   pools with headroom → `dual`. Claude out → `codex-only`. Codex out →
-   `claude-only`. Both out → stop and ask the user whether to ship on
-   whichever harness still responds or wait for a reset. Tell the user the
-   graded level when it is anything but `dual`.
+   reading never degrades on its own.
    A pool inside its headroom but reading `pace` above 2 spends at twice
    what the rest of its window funds, so it empties before its reset. The
    graded reviews still run at that pace; what gives way is the Claude
-   simplify pass, and only to `claude.pace` — a hot Codex pool never skips
-   it (step 3).
+   simplify pass, and only to `claude.pace` (step 3).
    Before starting any simplify or native review command, read and follow
    [Visible Herdr runs](references/visible-herdr-runs.md). An interactive
    slash command in the current agent pane is already visible; every external
    Claude or Codex command runs in a labeled shell pane inside the same
    transcript-proven unit tab. A gate that needs an external process is
-   blocked outside Herdr. This step is complete when the target, complete local
-   diff, graded level, and any required visible-run pin are explicit.
+   blocked outside Herdr. This step is complete when the target, pool state,
+   and any required visible-run pin are explicit.
 2. **Finish the implementation and focused proof.** Keep the branch local.
    Complete the requested scope and run the smallest tests and checks that
    exercise the changed behavior. Fix failures until every intended change is
-   present and the focused proof passes. The complete repository CI belongs to
-   the final push in step 7; this step is complete without running it.
-3. **Simplify pass** — once per review epoch, after the implementation and
-   focused proof pass, and always before the review gate so the
-   reviewers see the simplified diff; a `single` or `codex-only` gate skips
-   it, as does `claude.pace` above 2 (step 1).
+   present and the focused proof passes. The complete repository CI first runs
+   in step 7 on the clean, reviewed final HEAD; keep this step to focused proof
+   and keep the branch local. This step is complete when the requested behavior
+   is present and its focused proof passes.
+3. **Grade, then simplify** — the ship-it driver grades the complete
+   focused-proven diff through a **risk-adaptive** gate:
+   - `skip` — exclusively docs/Markdown/config with no runtime surface.
+   - `single` — the default for a runtime change with no `dual` signal.
+   - `dual` — any auth, permission, security, payment, migration, destructive
+     data, public contract, infrastructure, concurrency, cross-service, or
+     multi-subsystem change; conflicting or ambiguous source requirements; or
+     focused proof that cannot bound the likely blast radius.
+
+   An explicit user grade is a floor. An orchestrator's issue-time grade is
+   provisional: regrade the actual diff here and record why it changed.
+   Uncertainty selects `dual`. `single` prefers a reviewer from the model
+   family that did not implement the change, then the cooler available pool;
+   `dual` requires both families. Claude out converts a Claude-dependent grade
+   to `codex-only`; Codex out converts a Codex-dependent grade to
+   `claude-only`. With a reviewed gate, both out → stop and ask the user
+   whether to use whichever harness still responds or wait for a reset. Tell
+   the user the candidate grade and every capacity degradation.
+
+   The ship-it driver also owns the simplify decision. Name one concrete
+   structural target:
+   duplicated production logic, avoidable cross-file indirection, or complex
+   branching/state orchestration. Run `/simplify` only when that named target
+   makes a behavior-preserving reduction likely; size alone is not a target.
+   Choose a recorded skip when there is no concrete target, or when the
+   change's core surface is docs/Markdown/config, generated output, migrations,
+   schemas/contracts, allowlists, or security/performance guards. A
+   user-requested simplify pass overrides the eligibility skip.
+
+   An eligible pass runs once per review epoch, after focused proof and before
+   review so reviewers see the resulting diff. Claude being unavailable,
+   `claude.pace` above 2, or a `codex-only` capacity grade records a skip.
    Skip an existing receipt only when its `Simplify:` line names the current
    clean review HEAD and the complete diff has not changed, or proves an
-   applicable docs-only skip. A failed/aborted attempt is not success.
-   Otherwise have
-   Claude run its native `/simplify` command on the focused-proven
-   implementation diff:
+   applicable eligibility skip. A failed/aborted attempt is not success.
+   Otherwise have Claude run its native `/simplify` command on the
+   focused-proven implementation diff:
    - When Claude is driving, invoke `/simplify` directly in its visible pane.
      In a live pair, Codex may ask the Claude peer to do the same.
    - Otherwise launch the bundled wrapper through the visible-run contract.
@@ -76,29 +92,38 @@ ship it.
      Exit 0 with `{ok: true}` is the only success. On `{ok: false}` the
      tree is already restored (a `restore_error` means it is NOT — inspect
      before touching anything). Record `failed — <reason>` on the receipt's
-     `Simplify:` line, mark Claude unavailable, and regrade under step 1.
+     `Simplify:` line, mark Claude unavailable, and regrade under step 3.
      Continue only when that regrade is explicitly `codex-only`; otherwise
      stop.
-   On success, keep Claude's changes in the working tree. Skip simplify, like
-   the gate, for docs/markdown/config-only diffs. This step is complete only
-   with a successful receipt, an applicable pre-run skip, or a failed attempt
-   whose recorded regrade is `codex-only`.
-4. **Validate the simplified change.** Inspect every simplify edit and rerun
-   the focused tests and checks affected by it. Create clear, intentional local
-   commits and reach a clean review HEAD without pushing. This step is complete
-   when the simplified diff has focused proof and `git status` contains no
-   intended uncommitted change.
-5. **Review Standards and Spec** on that exact review HEAD. `dual` assigns one
-   native reviewer to **Standards** (correctness, security, regressions,
-   repository conventions, and test quality) and the other to **Spec**
-   (requested behavior, acceptance criteria, scope, and applicable source
-   documents). `single`, `codex-only`, and `claude-only` use their one native
-   review to cover **Standards + Spec**. Two reviews from the same harness do
-   not satisfy `dual`.
+   On success, keep Claude's changes in the working tree. This step is complete
+   only when the candidate review grade is recorded and simplify has a
+   successful receipt naming the structural target, a recorded
+   eligibility/capacity skip, or a failed attempt whose recorded regrade is
+   `codex-only`.
+4. **Finalize the review HEAD.** When simplify ran, inspect every edit and
+   rerun the focused tests and checks affected by it. Create clear,
+   intentional local commits and reach a clean review HEAD without pushing.
+   Reapply step 3's risk grade to this resulting complete diff and record the
+   final grade plus any change from the candidate. This step is complete when
+   the final diff has focused proof, `git status` contains no intended
+   uncommitted change, and the final review grade is explicit.
+5. **Review Standards and Spec** on that exact review HEAD. `skip` records its
+   no-runtime reason and runs no native review. `single`, `codex-only`, and
+   `claude-only` use one native reviewer to cover **Standards + Spec**.
+   `dual` assigns one native reviewer to **Standards** (correctness, security,
+   regressions, repository conventions, and test quality) and the other to
+   **Spec** (requested behavior, acceptance criteria, scope, and applicable
+   source documents). Two reviews from the same harness do not satisfy `dual`.
 
-   Skip only for diffs touching exclusively docs/markdown/config with no
-   runtime surface; the receipt names the graded level. A one-review gate stops
-   if its review cannot complete and never regrades to another agent. A `dual`
+   A `single` reviewer promotes the gate before any correction when it finds
+   a valid material issue that crosses into the other axis, discovers a
+   `dual` signal from step 3, finds conflicting source authority, or cannot
+   confidently close either axis. Run the missing reviewer against the same
+   review HEAD; a local, bounded finding stays `single`. Apply the capacity
+   degradation from step 3 if promotion cannot reach both pools, and record it.
+
+   A one-review gate stops if its review cannot complete and never regrades to
+   another agent. A `dual`
    review that cannot complete regrades to the other harness alone, named in
    the receipt. A review completes on content: a refusal, rate-limit notice, or
    empty payload is a failed review even with exit zero. Rerun it or regrade
@@ -134,12 +159,13 @@ ship it.
      counterpart through the same visible-run contract.
    This step is complete when every required axis has valid findings output
    against the same review HEAD.
-6. **Correct once and re-review once.** Merge and deduplicate the findings,
-   then verify each one against the real code path. Apply every valid, in-scope
-   correction in one batch; discard style nits and out-of-scope suggestions,
-   recording useful follow-ups instead. A correction that requires a new
-   contract or architecture, or roughly doubles the diff, is a follow-up that
-   stops the gate for user direction.
+6. **Correct once and re-review once.** A `skip` gate writes its receipt and
+   proceeds to step 7. Every reviewed gate merges and deduplicates the findings,
+   then verifies each one against the real code path. Apply every valid,
+   in-scope correction in one batch; discard style nits and out-of-scope
+   suggestions, recording useful follow-ups instead. A correction that
+   requires a new contract or architecture, or roughly doubles the diff, is a
+   follow-up that stops the gate for user direction.
 
    Rerun the affected focused proof, commit the correction batch, and perform
    one read-only re-review round of only the correction diff on the applicable
@@ -150,8 +176,10 @@ ship it.
    the clean final HEAD and the bounded re-review has valid content.
 
    Leave a `## Dual-review` receipt for the PR body with `Gate:`
-   (`single — hotfix` / `dual` / degraded level and reason), `Simplify:`
-   (`applied in <sha>` / `already run` / `skipped — <reason>` /
+   (`skip — <reason>` / `single — <reviewer>; <reason>` / `dual` / degraded
+   level and reason), `Simplify:`
+   (`applied in <sha> — target: <target>` / `already run` /
+   `skipped — <reason>` /
    `failed — <reason>`), `Reviewed HEAD: <40-character final SHA>`, each
    reviewer, native command, assigned axis, finding count, and each finding's
    disposition (`fixed in <sha>` / `deferred to #N` / discarded reason).
@@ -159,14 +187,16 @@ ship it.
    matching completion receipt, and confirm that the lead closed each finished
    pane after validating its artifacts. The gate is complete only when this
    receipt describes the clean final HEAD.
-7. **Push the reviewed HEAD.** Push normally. When pre-push runs the complete
-   local CI (for example `bun run ci:local`), require it to pass and use it as
-   the only complete gate on this final HEAD; the push is its first invocation
-   on that SHA. Use the repo's queued/coalesced entrypoint without a manual
-   lease when present; otherwise use its documented `global-ci` lease. If
-   pre-push has no complete gate, run the repository's full command once before
-   pushing and require it to pass. A failure that changes the branch returns
-   to step 2. Record the exact pushed HEAD and successful result. This step is
+7. **Run final CI, then push the reviewed HEAD.** The complete repository CI
+   starts here, after simplify, initial review, correction, and re-review have
+   produced the clean final HEAD. When pre-push runs the complete local CI (for
+   example `bun run ci:local`), push normally, require it to pass, and use it
+   as the only complete gate on this final HEAD; the push is its first
+   invocation on that SHA. Use the repo's queued/coalesced entrypoint without a
+   manual lease when present; otherwise use its documented `global-ci` lease.
+   If pre-push has no complete gate, run the repository's full command once,
+   require it to pass, then push. A failure that changes the branch returns to
+   step 2. Record the exact pushed HEAD and successful result. This step is
    complete only when the remote head equals the reviewed final HEAD and its
    authoritative local CI passed.
 8. **Open or update the PR and verify its receipt.** Maintain one accurate,
@@ -207,6 +237,6 @@ Do not force-push, merge, modify `main`, broaden scope, or change the target
 branch without explicit authorization. When the base moved under the branch,
 merge `origin/<target>` in and re-enter the gate on the merge HEAD — a
 pushed branch is never rebased, so force-push is never needed. Done when the PR is open with the
-dual-review and passing final-CI receipt in its body, green required checks, a
+graded-review and passing final-CI receipt in its body, green required checks, a
 clean timestamped live-review check on the exact head, and the user has the
 report.

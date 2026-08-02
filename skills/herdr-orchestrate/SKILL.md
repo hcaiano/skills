@@ -58,7 +58,8 @@ syntax.
    `/simplify`, no standards passes; its checkpoints are scope scans (the
    issues, the lead's summary, the `--stat` diff). Final approval and the
    merge are the orchestrator's, by standing user authorization, only for
-   a PR carrying the dual-review receipt with green required checks. When
+   a PR carrying the graded `## Dual-review` receipt with green required
+   checks. When
    any checkpoint shows the graded model missing the bar, restaff on a
    smarter model (`references/models.md`) — never polish weak work by
    feedback; a follow-up issue records out-of-scope findings, never
@@ -162,8 +163,9 @@ from `references/models.md`. Its single effort ladder defines the shared
 default and escalation meanings for both pools; its model table, selection
 rules, and usage-state command define the rest. Run that command before
 grading each wave and staff every unit against the `pace` it reports.
-`dual` is the default review gate; a pool without headroom degrades it under
-the rules in that reference, and ship-it runs the graded gate.
+The issue-time review grade is provisional; ship-it owns the risk-adaptive
+final grade from the focused-proven diff and records any change. Pool
+availability degrades that final grade under the rules in the reference.
 Solo is the default: one implementer, with the orchestrator's scope checks
 and the graded ship-it gate unchanged by staffing. A pair
 needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
@@ -320,8 +322,9 @@ units the suggested order and why>
    clean `git status`, nothing untracked or staged. The orchestrator
    scope-checks the branch and either sends scope feedback (address it,
    report ready again) or the go-ahead.
-4. On go-ahead, run the ship-it skill with this unit's graded review
-   gate: <dual | codex-only | claude-only> (ship-it defines the levels).
+4. On go-ahead, run the ship-it skill with this unit's provisional review
+   gate: <skip | single | dual | codex-only | claude-only> (ship-it owns the
+   final risk-adaptive grade).
    Its gate is a fresh review of the final diff — pair acceptance does
    not satisfy it — and must leave its `## Dual-review` receipt in the
    PR body. Open the PR
@@ -382,14 +385,15 @@ merged. Then act by kind:
   Scope wrong → [send](#sending-a-message-to-an-agent) it to the lead as
   feedback and await the next ready. Scope sane → record the approved
   SHA (`git -C <worktree> rev-parse HEAD`) and quote it in the go-ahead
-  message (run the ship-it skill at the unit's graded gate, then report
-  shipped) — the ship-delta check at shipped diffs from it, and quoting
+  message (run ship-it from the unit's provisional gate, let it grade the
+  actual diff, then report shipped) — the ship-delta check at shipped diffs
+  from it, and quoting
   it in the pane makes it recoverable by a fresh orchestrator. Tell the
   user the unit is shipping.
 - `shipped` — verify the graded review and final-CI receipts match the exact PR
-  head. A missing receipt, or one thinner than the graded gate without a
-  recorded reason (a degraded gate or ship-it's own docs-only skip), means
-  the gate did not run — send the unit back to run it and tell the user.
+  head. A missing receipt, or one thinner than the provisional gate without a
+  recorded risk regrade or capacity reason, means the gate did not run — send
+  the unit back to run it and tell the user.
   Then inspect the commits from the ready-approved SHA to that head.
   Review fixes pass; new surfaces or unexplained growth return through `ready`.
   Confirm required checks are green on that head. When another in-flight
