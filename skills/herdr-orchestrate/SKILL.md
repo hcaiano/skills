@@ -102,7 +102,12 @@ For each `#N`-labeled tab of this repository, note its issues, branch, agent
 states (working / blocked / idle), any PR for its branch — check merged and
 closed too, `gh pr list --state all --head <branch>` — and
 the newest `[unit ...]` report line in the lead's pane output — that pane is
-the report channel; treat an unhandled line as just received.
+the report channel; treat an unhandled line as just received. Also map every
+shell pane labeled `ship-it · ...` in that tab: read its foreground process
+and recent unwrapped output, and record whether its
+`SHIP_IT_VISIBLE_DONE ...` marker is present. These panes are the live
+simplify/review status surface, including prompts, stalls, failures, and
+completion.
 
 Sweep the residue while the map is fresh: a `#N` tab whose PR is already
 merged (merged outside the shipped handler, or by the user) gets its
@@ -431,7 +436,8 @@ Done when the report is acted on and the user has the one-line update.
 
 Answer from the phase 0 map so the user never tours the tabs. Three
 buckets, leading with what needs them: **needs you** (blocked, or a
-question waiting in a pane — quote the exact decision), **working** (one
-line each from pane output), **shipped / idle** (PR and CI state;
+question waiting in an agent or `ship-it · ...` pane — quote the exact
+decision), **working** (one line each from agent or visible gate-pane
+output), **shipped / idle** (PR and CI state;
 idle-without-PR is possibly stalled — read the pane and say why). Done
 when every in-flight unit sits in exactly one bucket.

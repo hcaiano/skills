@@ -45,9 +45,11 @@ const runFail = (mode, ...args) => {
 };
 
 test("headless-claude validates content, kills hangs, restores writable trees", () => {
-  const ok = runOk("ok", "/code-review");
+  const receipt = join(root, "claude-receipt.json");
+  const ok = runOk("ok", "/code-review", "--receipt", receipt);
   assert.equal(ok.ok, true);
   assert.equal(ok.result, "3 findings: ...");
+  assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), ok);
 
   // Exit 0 around an empty payload or a refusal is a FAILURE.
   assert.match(runFail("empty", "/code-review").reason, /content validation failed/u);

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Runs one Claude slash command headless with the whole fragile mechanic in
-// code: log-based liveness (stock macOS has no `timeout`), a kill of the PID
+// code: output-based liveness (stock macOS has no `timeout`), live stderr
+// streaming for a visible Herdr pane, a kill of the PID
 // itself (never the group), content validation (exit 0 with an empty or
 // missing result is a FAILURE, not a pass), and for writable runs a baseline
 // patch taken before and a verified restore after any failure — the tree
@@ -14,7 +15,7 @@
 // Exit 1: {ok: false, reason, ...}; writable runs report restore status —
 // a failed restore is called out loudly for the caller to inspect.
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, openSync, closeSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, openSync, closeSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -33,11 +34,14 @@ if (!command || command.startsWith('--')) {
 const writable = opt('writable', 'false') === 'true';
 const cwd = opt('cwd', process.cwd());
 const model = opt('model', 'opus');
+const receiptPath = opt('receipt', null);
 const idleMs = parseFloat(opt('idle-min', '20')) * 60000;
 const totalMs = parseFloat(opt('total-min', '60')) * 60000;
 
 const emit = (obj, code) => {
-  process.stdout.write(JSON.stringify(obj, null, 2) + '\n');
+  const output = JSON.stringify(obj, null, 2) + '\n';
+  if (receiptPath) writeFileSync(receiptPath, output);
+  process.stdout.write(output);
   process.exit(code);
 };
 
@@ -86,8 +90,18 @@ const started = Date.now();
 const child = spawn(
   'claude',
   ['-p', '--model', model, '--permission-mode', writable ? 'acceptEdits' : 'plan', '--strict-mcp-config', '--no-chrome', '--output-format', 'stream-json', '--include-partial-messages', '--verbose', command],
-  { cwd, stdio: ['ignore', logFd, logFd] },
+  { cwd, stdio: ['ignore', 'pipe', 'pipe'] },
 );
+// Liveness is measured here, on the bytes themselves: the parent now sees
+// every chunk, so there is nothing left for a filesystem size poll to learn.
+let lastGrowth = Date.now();
+const mirror = (chunk) => {
+  writeSync(logFd, chunk);
+  process.stderr.write(chunk);
+  lastGrowth = Date.now();
+};
+child.stdout.on('data', mirror);
+child.stderr.on('data', mirror);
 
 const finish = (outcome) => {
   closeSync(logFd);
@@ -104,15 +118,10 @@ const finish = (outcome) => {
 };
 
 let exit = null;
-child.on('exit', (code) => { exit = code ?? -1; });
+child.on('close', (code) => { exit = code ?? -1; });
 child.on('error', () => { exit = -1; });
 
-let lastSize = 0;
-let lastGrowth = Date.now();
 const timer = setInterval(() => {
-  const size = (() => { try { return statSync(logPath).size; } catch { return lastSize; } })();
-  if (size > lastSize) { lastSize = size; lastGrowth = Date.now(); }
-
   if (exit !== null) {
     clearInterval(timer);
     // Complete means exit 0 AND a final result event with is_error false AND
@@ -137,7 +146,7 @@ const timer = setInterval(() => {
   const now = Date.now();
   if (now - lastGrowth > idleMs || now - started > totalMs) {
     clearInterval(timer);
-    const why = now - started > totalMs ? `total budget ${Math.round(totalMs / 60000)}m exceeded` : `no log growth for ${Math.round(idleMs / 60000)}m`;
+    const why = now - started > totalMs ? `total budget ${Math.round(totalMs / 60000)}m exceeded` : `no output for ${Math.round(idleMs / 60000)}m`;
     child.kill('SIGTERM'); // the PID itself, never the group
     setTimeout(() => {
       try { process.kill(child.pid, 0); child.kill('SIGKILL'); } catch { /* already gone */ }
