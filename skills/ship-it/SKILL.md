@@ -12,14 +12,17 @@ Run it only when the user invokes ship-it or another skill (an orchestrator's
 graded gate) delegates to it — finishing a change is not an invitation to
 ship it.
 
-1. Read the repository instructions and inspect the current branch, diff, and
-   working tree. Preserve unrelated user changes. `git fetch origin
-   <target-branch>` first, and take every merge base in this skill against
-   `origin/<target-branch>` — a stale local target reviews another PR's
-   commits. Before review, mark each
-   intended untracked path with `git add --intent-to-add -- <path>` so the
-   complete diff includes its contents; never do this to unrelated files.
-2. **Grade the gate.** A reproduced, localized, reversible production hotfix
+1. **Prepare the local gate.** Read the repository instructions and inspect
+   the current branch, diff, and working tree. Preserve unrelated user changes.
+   `git fetch origin <target-branch>` first, and take every merge base in this
+   skill against `origin/<target-branch>` — a stale local target reviews
+   another PR's commits. Mark each intended untracked path with
+   `git add --intent-to-add -- <path>` so focused proof and simplification see
+   the complete change; never do this to unrelated files. If the worktree is
+   on the target branch, create an intentional task branch before step 2.
+
+   Grade the gate before spending either review pool. A reproduced, localized,
+   reversible production hotfix
    with a focused regression and no migration, auth or permission, payment,
    destructive-infrastructure, or public-API change uses `single`: skip pool
    grading and run only the current agent's native review. Otherwise the gate
@@ -40,130 +43,163 @@ ship it.
    graded reviews still run at that pace; what gives way is the Claude
    simplify pass, and only to `claude.pace` — a hot Codex pool never skips
    it (step 3).
-3. **Simplify pass** — once per PR, always before the review gate so the
+   Before starting any simplify or native review command, read and follow
+   [Visible Herdr runs](references/visible-herdr-runs.md). An interactive
+   slash command in the current agent pane is already visible; every external
+   Claude or Codex command runs in a labeled shell pane inside the same
+   transcript-proven unit tab. A gate that needs an external process is
+   blocked outside Herdr. This step is complete when the target, complete local
+   diff, graded level, and any required visible-run pin are explicit.
+2. **Finish the implementation and focused proof.** Keep the branch local.
+   Complete the requested scope and run the smallest tests and checks that
+   exercise the changed behavior. Fix failures until every intended change is
+   present and the focused proof passes. The complete repository CI belongs to
+   the final push in step 7; this step is complete without running it.
+3. **Simplify pass** — once per review epoch, after the implementation and
+   focused proof pass, and always before the review gate so the
    reviewers see the simplified diff; a `single` or `codex-only` gate skips
-   it, as does `claude.pace` above 2 (step 2).
-   Skip an existing receipt only when its
-   `Simplify:` line proves a successful prior run or an applicable
-   docs-only skip; a failed/aborted attempt is not success. Otherwise have
-   Claude run its native `/simplify` command on this same final diff:
-   - In-session when Claude is driving, invoke `/simplify` directly.
-   - From Codex/headless, run it through the bundled wrapper — it owns the
-     baseline patch, liveness deadline, kill, verified restore, and content
-     validation, and reports leftover untracked files for review:
-
-     ```bash
-     node <skill dir>/scripts/headless-claude.mjs "/simplify" --writable true
-     ```
+   it, as does `claude.pace` above 2 (step 1).
+   Skip an existing receipt only when its `Simplify:` line names the current
+   clean review HEAD and the complete diff has not changed, or proves an
+   applicable docs-only skip. A failed/aborted attempt is not success.
+   Otherwise have
+   Claude run its native `/simplify` command on the focused-proven
+   implementation diff:
+   - When Claude is driving, invoke `/simplify` directly in its visible pane.
+     In a live pair, Codex may ask the Claude peer to do the same.
+   - Otherwise launch the bundled wrapper through the visible-run contract.
+     The wrapper owns the baseline patch, liveness deadline, kill, verified
+     restore, content validation, and leftover-untracked report:
+     `node <skill dir>/scripts/headless-claude.mjs "/simplify" --writable true
+     --receipt <simplify-result.json>`.
 
      Exit 0 with `{ok: true}` is the only success. On `{ok: false}` the
      tree is already restored (a `restore_error` means it is NOT — inspect
-     before touching anything); mark Claude unavailable for this gate
-     (step 4 regrades) and record `failed — <reason>` on the receipt's
-     `Simplify:` line.
-   On success, keep Claude's fixes in the working tree and run focused proof
-   before the review gate. Skip simplify, like the gate, for
-   docs/markdown/config-only diffs.
-4. **Local review gate** at the graded level — `single`: the current agent's
-   native review alone; `dual`: both native reviews below; `codex-only`: the
-   Codex review alone; `claude-only`: the Claude review alone. `dual` means
-   one Claude review plus one Codex review: two reviews from the same
-   harness satisfy only that harness's single level, whatever conservation
-   pressure suggested them. Skip only for
-   diffs touching exclusively
-   docs/markdown/config with no runtime surface; the receipt names the
-   graded level. A one-review gate — `single`, `codex-only`, `claude-only` —
-   stops if that review cannot complete and never regrades to another agent;
-   a `dual` review that cannot complete regrades to the other harness alone,
-   named in the receipt. A review completes on content, not exit code: a
-   clean exit whose output is a refusal, a rate-limit notice, or an empty
-   payload is a failed review — rerun it or regrade per the rules above,
-   never count it. Everything else in this step
-   applies to whichever review(s) run. This is a fresh adversarial
-   review of the FINAL diff — reviews that happened while writing the code
-   (pair acceptance, impeccable, in-flight feedback) are a different thing
-   and leave this gate unrun:
+     before touching anything). Record `failed — <reason>` on the receipt's
+     `Simplify:` line, mark Claude unavailable, and regrade under step 1.
+     Continue only when that regrade is explicitly `codex-only`; otherwise
+     stop.
+   On success, keep Claude's changes in the working tree. Skip simplify, like
+   the gate, for docs/markdown/config-only diffs. This step is complete only
+   with a successful receipt, an applicable pre-run skip, or a failed attempt
+   whose recorded regrade is `codex-only`.
+4. **Validate the simplified change.** Inspect every simplify edit and rerun
+   the focused tests and checks affected by it. Create clear, intentional local
+   commits and reach a clean review HEAD without pushing. This step is complete
+   when the simplified diff has focused proof and `git status` contains no
+   intended uncommitted change.
+5. **Review Standards and Spec** on that exact review HEAD. `dual` assigns one
+   native reviewer to **Standards** (correctness, security, regressions,
+   repository conventions, and test quality) and the other to **Spec**
+   (requested behavior, acceptance criteria, scope, and applicable source
+   documents). `single`, `codex-only`, and `claude-only` use their one native
+   review to cover **Standards + Spec**. Two reviews from the same harness do
+   not satisfy `dual`.
+
+   Skip only for diffs touching exclusively docs/markdown/config with no
+   runtime surface; the receipt names the graded level. A one-review gate stops
+   if its review cannot complete and never regrades to another agent. A `dual`
+   review that cannot complete regrades to the other harness alone, named in
+   the receipt. A review completes on content: a refusal, rate-limit notice, or
+   empty payload is a failed review even with exit zero. Rerun it or regrade
+   under these rules; never count it. In-flight feedback from implementation is
+   not this fresh final-diff gate:
    - Run your own NATIVE review harness against the merge base with the target
      branch. Use each agent's native command surface, not an assumed repository
      skill:
-     - Claude Code: invoke the `/code-review` slash command itself on Opus —
-       in-session when Claude is driving (the same command the user would
-       type), or headless via
-       `node <skill dir>/scripts/headless-claude.mjs "/code-review"`
-       (read-only plan mode; `{ok: true}` with a non-empty result is the
-       only pass). This gate is satisfied only by running `/code-review` in
-       full; nothing improvised stands in for it.
-     - Codex: run `codex review "<final-diff review prompt>"`. Do not use
-       `--base` when the final diff also has staged or unstaged changes because
-       that mode omits them; do not use generic `codex exec` for this gate.
+     - Claude Code: invoke the `/code-review` slash command itself on Opus in
+       Claude's visible agent pane, or launch
+       `node <skill dir>/scripts/headless-claude.mjs "/code-review" --receipt
+       <review-result.json>` through the visible-run contract (read-only plan
+       mode). `{ok: true}` with a non-empty result is the only pass. This gate
+       is satisfied only by running `/code-review` in full; nothing improvised
+       stands in for it.
+     - Codex: launch `codex review "<final-diff review prompt>"` through the
+       visible-run contract; generic `codex exec` does not satisfy this gate.
      The Codex prompt must name the exact complete diff command:
-     `git diff "$(git merge-base HEAD <target-branch>)"`. With intended
-     untracked paths already marked intent-to-add, this covers committed,
-     staged, unstaged, and intended new-file changes from the true merge base.
-     Include the applicable spec sources and read-only output contract. Both
-     harnesses may run focused verification; step 6 owns the complete
+     `git diff "$(git merge-base HEAD origin/<target-branch>)"`. With intended
+     changes committed in step 4, this covers the exact review HEAD from the
+     true merge base. Name the assigned axis, include its applicable sources,
+     and require read-only findings output. Both harnesses may run focused
+     verification; step 7 owns the complete
      repository local-CI gate. An improvised read-through of the diff does not
      count.
      Model budget: Claude uses Opus (`--model opus`), never Fable; Codex uses
      its default model with no extra-high reasoning. Fable is advisor-only.
-   - `dual` only — in parallel, get a second independent review of the same
-     diff from the other agent:
-     - In a herdr-pair session, ask the peer (via `$ask-peer` / the pair
-       channel) to run its native review harness and send back its findings.
-     - Outside a pair, run the counterpart's headless command above on the
-       same diff and collect its findings.
-   - Merge and deduplicate the findings lists. Review output is advisory: a
-     finding is valid only after you verify it against the real code path.
-     Fix valid, in-scope findings in ONE batch. Discard style nits and
-     out-of-scope suggestions (note the interesting ones in the PR description
-     instead of fixing them). A fix that demands a new contract or
-     architecture, or would roughly double the diff, is not a fix — stop and
-     surface it as a follow-up. Re-review only the fix diff once to confirm it
-     is clean — never a third full pass; surface any leftovers to the user
-     instead.
-   - The gate leaves a **receipt**: a `## Dual-review` section for the PR body
-     opening with a `Gate:` line (`single — hotfix` / `dual` / the degraded
-     level and why) and a
-     `Simplify:` line (`applied in <sha>` / `already run` /
-     `skipped — <reason>` / `failed — <reason>`), then naming the exact harness command each
-     reviewer ran, the finding counts,
-     and each valid finding's disposition (fixed in `<sha>` / deferred to
-     `#N`). A skipped
-     gate still leaves one stating the skip reason (e.g. docs-only diff).
-5. Create clear, intentional commits and reach a clean final HEAD. Use focused
-   proof before this point; reserve the complete local-CI gate for the push.
-6. Push normally. When pre-push runs the complete local CI (for example
-   `bun run ci:local`), require it to pass and use it as the only complete gate
-   on this HEAD — do not run it manually first. Use the repo's queued/coalesced
-   CI entrypoint without a manual lease when present; otherwise use its
-   documented `global-ci` lease. If pre-push has no complete gate, run the
-   repo's full command once before pushing and require it to pass. Put the exact
-   HEAD and successful result in the receipt.
-7. Open or update one accurate, ready-for-review PR whose body carries the
-   gate and final-CI receipt — no receipt, no PR. Create new PRs as non-draft;
-   verify after creation that GitHub preserved the intended ready state.
-   Handle current reviews, comments, and unresolved threads. If that changes
-   the branch, return to steps 4–7 before recording the clean live-review
-   baseline time.
-8. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
+   - `dual` only — start the Standards and Spec reviews in distinct panes
+     before waiting for either.
+     In a herdr-pair session, ask the Claude peer through the pair channel to
+     run its visible native slash command when applicable; external commands
+     still use labeled process panes in this unit. Outside a pair, launch the
+     counterpart through the same visible-run contract.
+   This step is complete when every required axis has valid findings output
+   against the same review HEAD.
+6. **Correct once and re-review once.** Merge and deduplicate the findings,
+   then verify each one against the real code path. Apply every valid, in-scope
+   correction in one batch; discard style nits and out-of-scope suggestions,
+   recording useful follow-ups instead. A correction that requires a new
+   contract or architecture, or roughly doubles the diff, is a follow-up that
+   stops the gate for user direction.
+
+   Rerun the affected focused proof, commit the correction batch, and perform
+   one read-only re-review round of only the correction diff on the applicable
+   axes, starting parallel axes together. This is the sole correction/re-review
+   round: surface remaining valid findings instead of starting another fix
+   cycle. With zero valid initial findings, the initial review HEAD is already
+   final. Otherwise this step is complete only when the correction commit is
+   the clean final HEAD and the bounded re-review has valid content.
+
+   Leave a `## Dual-review` receipt for the PR body with `Gate:`
+   (`single — hotfix` / `dual` / degraded level and reason), `Simplify:`
+   (`applied in <sha>` / `already run` / `skipped — <reason>` /
+   `failed — <reason>`), `Reviewed HEAD: <40-character final SHA>`, each
+   reviewer, native command, assigned axis, finding count, and each finding's
+   disposition (`fixed in <sha>` / `deferred to #N` / discarded reason).
+   A skipped gate states its reason. Name every visible process pane and its
+   matching completion receipt, and confirm that the lead closed each finished
+   pane after validating its artifacts. The gate is complete only when this
+   receipt describes the clean final HEAD.
+7. **Push the reviewed HEAD.** Push normally. When pre-push runs the complete
+   local CI (for example `bun run ci:local`), require it to pass and use it as
+   the only complete gate on this final HEAD; the push is its first invocation
+   on that SHA. Use the repo's queued/coalesced entrypoint without a manual
+   lease when present; otherwise use its documented `global-ci` lease. If
+   pre-push has no complete gate, run the repository's full command once before
+   pushing and require it to pass. A failure that changes the branch returns
+   to step 2. Record the exact pushed HEAD and successful result. This step is
+   complete only when the remote head equals the reviewed final HEAD and its
+   authoritative local CI passed.
+8. **Open or update the PR and verify its receipt.** Maintain one accurate,
+   ready-for-review PR whose body carries the review and final-CI receipts —
+   no receipt, no PR. Create new PRs as non-draft and verify GitHub preserved
+   that state. Immediately run the repository's `review:verify` command when
+   it exists (for example `bun run review:verify -- <pr-number>`); repair only
+   PR-body receipt errors and rerun until it passes. Record the live-review
+   baseline timestamp immediately before the first complete paginated fetch of
+   current reviews, comments, and unresolved threads, then handle those
+   surfaces. A branch mutation returns to step 2 and must finish with a new
+   push, PR update, and `review:verify` pass.
+   This step is complete when the live PR, its body, its base, and its head all
+   match the verified final receipt and the baseline is explicit.
+9. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
    never tight loops). Required checks are the only thing waited on: cloud
    auto-review bots are disabled by design — never wait for or solicit one.
    Green means every required check passed; pending is not green. A check
    that cannot run at all (billing, runner outage) is a blocker — report the
    PR blocked on it, never shipped with a waiver. Fix a red check with one
    batched commit and return to
-   steps 4–7; after two red rounds, stop and report. The same brake bounds
+   steps 2–8; after two red rounds, stop and report. The same brake bounds
    the gate itself: a third full review gate on one PR — whoever asks for
    it — stops and surfaces the churn to the user instead of running.
-9. Immediately before reporting shipped, re-fetch complete paginated reviews,
+   Immediately before reporting shipped, re-fetch complete paginated reviews,
    issue comments, inline comments, and review threads, and capture the live
    `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
-   whose required checks passed; any mismatch returns to steps 4–8. Handle
-   every item newer than the baseline and every unresolved thread. If that
-   changes the branch, return to steps 4–8. Require GitHub to report the PR
-   mergeable against its base; a conflict returns to steps 4–8 after a merge
-   from the base. `review:verify` proves only its
-   timestamp. Record the clean check timestamp and head.
+   whose required checks passed; any mismatch returns to steps 2–9. Handle
+   every item newer than the baseline and every unresolved thread. A branch
+   change returns to steps 2–9. Require GitHub to report the PR mergeable
+   against its base; a conflict returns to steps 2–9 after a merge from the
+   base. Rerun `review:verify` after any PR-body or head change. Record the
+   clean check timestamp and head.
 10. Report the outcome to the user: PR link, exact head, CI status, live-review
    timestamp, receipt summary, and any findings discarded or deferred.
 

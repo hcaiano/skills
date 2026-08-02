@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,13 @@ line({ type: "system", subtype: "init" });
 if (mode === "ok") { line({ type: "result", is_error: false, result: "3 findings: ..." }); process.exit(0); }
 if (mode === "empty") { line({ type: "result", is_error: false, result: "" }); process.exit(0); }
 if (mode === "refusal") { line({ type: "result", is_error: true, result: "usage limit reached" }); process.exit(0); }
+if (mode === "epipe") {
+  for (let i = 0; i < 2000; i++) line({ type: "assistant", payload: "x".repeat(1024) });
+  process.stdout.write(
+    JSON.stringify({ type: "result", is_error: false, result: "No findings" }) + "\\n",
+    () => process.exit(0),
+  );
+}
 if (mode === "hang") { setInterval(() => {}, 1000); }
 if (mode === "mutate-and-die") {
   fs.writeFileSync("tracked.txt", "CLOBBERED BY SIMPLIFY\\n");
@@ -45,9 +52,11 @@ const runFail = (mode, ...args) => {
 };
 
 test("headless-claude validates content, kills hangs, restores writable trees", () => {
-  const ok = runOk("ok", "/code-review");
+  const receipt = join(root, "claude-receipt.json");
+  const ok = runOk("ok", "/code-review", "--receipt", receipt);
   assert.equal(ok.ok, true);
   assert.equal(ok.result, "3 findings: ...");
+  assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), ok);
 
   // Exit 0 around an empty payload or a refusal is a FAILURE.
   assert.match(runFail("empty", "/code-review").reason, /content validation failed/u);
@@ -82,4 +91,23 @@ test("headless-claude validates content, kills hangs, restores writable trees", 
   assert.deepEqual(out.leftover_untracked, ["leftover.tmp"]);
   const status = gitIn("status", "--porcelain");
   assert.match(status, /new-intent\.txt/u, "intent-to-add must be re-marked");
+});
+
+test("headless-claude survives a closed visible-output pipe", async () => {
+  const receipt = join(root, "epipe-receipt.json");
+  const child = spawn(
+    process.execPath,
+    [script, "/code-review", "--receipt", receipt],
+    { env: env("epipe"), stdio: ["ignore", "pipe", "pipe"] },
+  );
+  child.stderr.destroy();
+  let stdout = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => {
+    stdout += chunk;
+  });
+  const exit = await new Promise((resolve) => child.on("close", resolve));
+  assert.equal(exit, 0);
+  assert.equal(JSON.parse(stdout).ok, true);
+  assert.equal(JSON.parse(readFileSync(receipt, "utf8")).result, "No findings");
 });
