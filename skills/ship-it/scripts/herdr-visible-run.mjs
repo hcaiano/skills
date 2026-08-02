@@ -171,7 +171,7 @@ const SHELLS = new Set(
 // idle already. Backoff settles the common case on the first probe instead of
 // spending twenty of them.
 const STARTUP_BACKOFF_MS = [25, 50, 100, 200, 400, 800, 1600];
-const LAUNCH_BACKOFF_MS = [25, 50, 100, 200, 400];
+const LAUNCH_BACKOFF_MS = [25, 50, 100, 200, 400, 800, 1600];
 
 const validateTarget = (paneId, caller, repoRoot, allowStartupWait) => {
   const pane = herdrResult("pane", "get", paneId)?.pane;
@@ -203,7 +203,7 @@ const validateTarget = (paneId, caller, repoRoot, allowStartupWait) => {
   fail(`target ${paneId} is busy; wait for its command to finish before reuse`);
 };
 
-const validatePriorReceipt = (path, paneId) => {
+const validatePriorReceipt = (path, paneId, expectedToken) => {
   let receipt;
   try {
     receipt = JSON.parse(readFileSync(path, "utf8"));
@@ -213,7 +213,7 @@ const validatePriorReceipt = (path, paneId) => {
   if (
     !receipt ||
     receipt.pane_id !== paneId ||
-    typeof receipt.token !== "string" ||
+    receipt.token !== expectedToken ||
     !Array.isArray(receipt.command) ||
     typeof receipt.transcript !== "string" ||
     (!Number.isInteger(receipt.exit_code) && typeof receipt.signal !== "string")
@@ -381,9 +381,10 @@ if (mode === "exec") {
   const label = take("label");
   const target = mode === "run" ? take("target-pane") : null;
   const priorReceipt = mode === "run" ? take("prior-receipt") : null;
+  const priorToken = mode === "run" ? take("prior-token") : null;
   const command = commandAfterSeparator();
   const caller = validateCaller(pin);
-  if (target) validatePriorReceipt(priorReceipt, target);
+  if (target) validatePriorReceipt(priorReceipt, target, priorToken);
   // Every failure below routes through fail(), which closes cleanupPane before
   // exiting — so a pane created here is never left behind.
   const targetPane = target ?? createPane(pin);
@@ -392,7 +393,7 @@ if (mode === "exec") {
   cleanupPane = null;
 } else {
   fail(
-    "usage: herdr-visible-run.mjs start|run <caller pin> --label TEXT [--target-pane ID --prior-receipt PATH] -- COMMAND [ARG ...]",
+    "usage: herdr-visible-run.mjs start|run <caller pin> --label TEXT [--target-pane ID --prior-receipt PATH --prior-token TOKEN] -- COMMAND [ARG ...]",
     2,
   );
 }

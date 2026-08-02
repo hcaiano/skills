@@ -30,10 +30,10 @@ RUN_JSON=$(node "$VISIBLE_RUN" start "${PAIR_ID[@]}" \
   -- <command> <args...>)
 ```
 
-Parse `pane_id`, `marker`, `receipt`, and `transcript` from `RUN_JSON`.
-Immediately tell the user which labeled pane is running. The helper streams
-the command's stdout and stderr into that pane and the transcript while the
-calling agent remains free to inspect either surface.
+Parse and retain `pane_id`, `token`, `marker`, `receipt`, and `transcript` from
+`RUN_JSON`. Immediately tell the user which labeled pane is running. The
+helper streams the command's stdout and stderr into that pane and the
+transcript while the calling agent remains free to inspect either surface.
 
 Reuse a completed process pane for the next sequential command:
 
@@ -41,18 +41,22 @@ Reuse a completed process pane for the next sequential command:
 RUN_JSON=$(node "$VISIBLE_RUN" run "${PAIR_ID[@]}" \
   --target-pane "<existing process pane>" \
   --prior-receipt "<that pane's previous completion receipt>" \
+  --prior-token "<that launch's token>" \
   --label "ship-it · <next command>" \
   -- <command> <args...>)
 ```
 
-The prior receipt is the `receipt` path returned when that pane was launched.
-The helper requires its pane and token to match before reuse, waits for the
-shell to regain control, and carries long command arguments through a private
-temporary file instead of terminal injection.
+The prior receipt and token are the `receipt` path and `token` returned by that
+pane's previous launch. The helper requires both values and the pane to match
+before reuse, waits for the shell to regain control, and carries long command
+arguments through a private temporary file instead of terminal injection.
 
 For a dual review, start both commands in distinct visible panes before
-waiting for either. A simplify pane may be reused for the later Claude
-review after simplify has completed.
+waiting for either. Observe their completion concurrently so the lead can
+validate and close each pane as soon as it finishes; do not block on one pane
+while leaving another completed pane open. Close the simplify pane after its
+artifacts are valid because inspection, focused validation, and the local
+review commit occur before any later Claude review.
 
 Wait on each exact completion marker:
 
@@ -69,13 +73,18 @@ process-info`, and `herdr pane read --source recent-unwrapped`; a visible
 prompt, approval, rate limit, stalled output, or crash is the gate's current
 state, not silence.
 
-Keep the labeled panes in the unit through the gate receipt and report their
-IDs. The unit's normal tab dismantle closes them. For a standalone ship-it
-run, close only panes created by this gate after the final outcome has been
-reported and their receipts have been captured.
+After each simplify or review process finishes, validate and capture its
+marker, completion receipt, transcript, and any wrapper receipt. Reuse its
+pane only for an already-planned, immediately sequential command in this gate;
+otherwise the lead closes it with `herdr pane close <pane_id>`. Once simplify
+and all review processes are complete, the lead closes every remaining process
+pane before push. Close only panes created by this gate, never the caller or
+another unit pane. Keep the closed pane IDs and receipt paths in the gate
+receipt.
 
 A long command is complete only when its exact marker is visible, its receipt
-matches and passes, its transcript has valid content, and the gate receipt
-names the pane. If the helper cannot establish or preserve those facts, stop
-and report the pane plus the observed state; do not fall back to an invisible
-process.
+matches and passes, its transcript has valid content, the gate receipt names
+the pane, and the pane is either assigned to its immediate next command or
+closed. Gate cleanup is complete only when every process pane is closed. If the
+helper cannot establish or preserve those facts, stop and report the pane plus
+the observed state; do not fall back to an invisible process.

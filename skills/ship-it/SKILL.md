@@ -156,8 +156,9 @@ ship it.
    reviewer, native command, assigned axis, finding count, and each finding's
    disposition (`fixed in <sha>` / `deferred to #N` / discarded reason).
    A skipped gate states its reason. Name every visible process pane and its
-   matching completion receipt. The gate is complete only when this receipt
-   describes the clean final HEAD.
+   matching completion receipt, and confirm that the lead closed each finished
+   pane after validating its artifacts. The gate is complete only when this
+   receipt describes the clean final HEAD.
 7. **Push the reviewed HEAD.** Push normally. When pre-push runs the complete
    local CI (for example `bun run ci:local`), require it to pass and use it as
    the only complete gate on this final HEAD; the push is its first invocation
@@ -173,10 +174,11 @@ ship it.
    no receipt, no PR. Create new PRs as non-draft and verify GitHub preserved
    that state. Immediately run the repository's `review:verify` command when
    it exists (for example `bun run review:verify -- <pr-number>`); repair only
-   PR-body receipt errors and rerun until it passes. Then handle current
-   reviews, comments, and unresolved threads. A branch mutation returns to
-   step 2 and must finish with a new push, PR update, and `review:verify` pass.
-   Once those surfaces are clean, record the live-review baseline timestamp.
+   PR-body receipt errors and rerun until it passes. Record the live-review
+   baseline timestamp immediately before the first complete paginated fetch of
+   current reviews, comments, and unresolved threads, then handle those
+   surfaces. A branch mutation returns to step 2 and must finish with a new
+   push, PR update, and `review:verify` pass.
    This step is complete when the live PR, its body, its base, and its head all
    match the verified final receipt and the baseline is explicit.
 9. Wait for required checks on the exact PR head (poll at 60–120 s intervals,

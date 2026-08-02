@@ -50,11 +50,13 @@ if (key === "pane get") {
     } });
     process.exit(0);
   }
+  const launchVisible =
+    launched && (!process.env.DELAY_LAUNCH || targetProbes >= 8);
   const command = id === "w1:p1"
     ? ["codex"]
     : process.env.BUSY_TARGET
       ? ["node", "busy.js"]
-      : launched
+      : launchVisible
         ? ["node", "herdr-visible-run.mjs", "exec"]
         : ["zsh"];
   const exe = command[0];
@@ -138,6 +140,19 @@ test("start validates the pin and launches in a visible sibling pane", () => {
   );
 });
 
+test("start tolerates a delayed real-pane command launch", () => {
+  writeFileSync(calls, "");
+  const output = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [script, "start", ...pin, "--label", "delayed review", "--", "printf", "ok"],
+      { encoding: "utf8", env: { ...baseEnv, DELAY_LAUNCH: "1" } },
+    ),
+  );
+  assert.equal(output.started, true);
+  assert.equal(output.pane_id, "w1:p2");
+});
+
 test("caller drift stops before creating a pane", () => {
   writeFileSync(calls, "");
   assert.throws(
@@ -173,6 +188,7 @@ test("run refuses to inject input into a busy process pane", () => {
           ...pin,
           "--target-pane", "w1:p2",
           "--prior-receipt", priorReceipt,
+          "--prior-token", "prior-token",
           "--label", "review",
           "--",
           "printf", "ok",
@@ -204,6 +220,7 @@ test("run reuses only a pane owned by a prior completion receipt", () => {
         ...pin,
         "--target-pane", "w1:p2",
         "--prior-receipt", priorReceipt,
+        "--prior-token", "prior-token",
         "--label", "review",
         "--",
         "printf", "ok",
@@ -224,6 +241,7 @@ test("run reuses only a pane owned by a prior completion receipt", () => {
           ...pin,
           "--target-pane", "w1:p2",
           "--prior-receipt", join(root, "missing.json"),
+          "--prior-token", "prior-token",
           "--label", "review",
           "--",
           "printf", "ok",
@@ -232,6 +250,33 @@ test("run reuses only a pane owned by a prior completion receipt", () => {
       ),
     /Command failed/u,
   );
+
+  writeFileSync(calls, "");
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          script,
+          "run",
+          ...pin,
+          "--target-pane", "w1:p2",
+          "--prior-receipt", priorReceipt,
+          "--prior-token", "wrong-token",
+          "--label", "review",
+          "--",
+          "printf", "ok",
+        ],
+        { encoding: "utf8", env: baseEnv, stdio: ["ignore", "pipe", "pipe"] },
+      ),
+    /Command failed/u,
+  );
+  const seen = readFileSync(calls, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map(JSON.parse);
+  assert.ok(!seen.some((args) => args[0] === "pane" && args[1] === "run"));
 });
 
 test("exec streams output and writes transcript plus completion receipt", () => {
