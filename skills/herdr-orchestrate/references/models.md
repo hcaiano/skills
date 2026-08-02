@@ -125,32 +125,31 @@ but they open on different days, so the raw percentages are not comparable.
   on that pool can stall or rate-limit at start — stagger the wave's kickoffs
   or start it on the other pool.
 
-## Review gate by pool state
+## Review gate capacity
 
-Ship-it's full gate spends both pools — a Claude review plus simplify, and
-a Codex review — so grade each unit's **review gate** from the same
-usage-state reading as its models. A pool is **out of headroom** when its
-`used_percent` is 90 or higher, or its CLI is observed refusing or
-rate-limiting at start; a null pool never degrades the gate by itself —
-degrade on evidence, not absence of signal:
+Before assigning a provisional review grade, read step 3 of ship-it's
+[risk-adaptive gate](../../ship-it/SKILL.md). That
+rubric is the single source of truth. Apply it to the issue's expected
+surface at kickoff, name the reason, and let ship-it regrade the
+focused-proven diff. A pool is **out of headroom** when its `used_percent` is
+90 or higher, or its CLI refuses or rate-limits at start; a null pool never
+degrades the gate by itself.
 
-- `dual` (default) — both pools have headroom: dual review + simplify,
-  unchanged.
-- `codex-only` — the Claude pool is out of headroom: a single Codex review
-  satisfies the gate; Claude simplify and review are skipped.
-- `claude-only` — the Codex pool is out of headroom: run Claude simplify,
-  then a single Claude code review.
-- Both pools out → queue the unit, per the out-of-headroom rule above. A
-  genuinely urgent unit that runs anyway takes a single review on
-  whichever harness still responds when tried (prefer the pool its lead
-  did not implement on); if neither responds, the unit's merge policy
-  becomes `hold` — it stops at shipped for the user's own review.
+- `skip` spends neither review pool.
+- `single` spends one pool, preferring the model family that did not
+  implement the change and then the cooler available pool. If that pool is
+  out, use the other and name the capacity choice.
+- `dual` spends both pools. Claude out degrades it to `codex-only`; Codex out
+  degrades it to `claude-only`.
+- Simplify is independent of the review grade. Ship-it runs it only when the
+  actual diff has a concrete eligible target and Claude has headroom; a
+  `claude.pace` above 2 records a skip.
+- Both pools out → queue the unit. A genuinely urgent unit that runs anyway
+  takes a single review on whichever harness still responds, preferring the
+  family that did not implement it. If neither responds, the merge policy
+  becomes `hold`.
 
-Pace alone never drops a review: a pool burning hot but still under 90%
-throttles how many units run and which pool staffs them (ship-it trims its
-simplify pass on the same signal). A degraded gate is a capacity decision,
-not a quality discount — the orchestrator's scope checks (ready, ship delta)
-still run in full.
-Name the graded gate in the kickoff and in the phase 4 summary, and check
-the shipped receipt against it: a `codex-only` receipt with one review is
-complete for that unit.
+Pace alone never lowers the review grade: it routes staffing and trims an
+eligible simplify pass. Name the provisional grade in the kickoff and the
+final grade in the phase 4 summary. At `shipped`, accept a thinner final gate
+only when its receipt records the actual-diff regrade or capacity degradation.
