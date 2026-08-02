@@ -89,15 +89,23 @@ const logFd = openSync(logPath, 'w');
 const started = Date.now();
 const child = spawn(
   'claude',
-  ['-p', '--model', model, '--permission-mode', writable ? 'acceptEdits' : 'plan', '--strict-mcp-config', '--no-chrome', '--output-format', 'stream-json', '--include-partial-messages', '--verbose', command],
+  ['-p', '--model', model, '--permission-mode', writable ? 'acceptEdits' : 'plan', '--strict-mcp-config', '--no-chrome', '--output-format', 'stream-json', '--verbose', command],
   { cwd, stdio: ['ignore', 'pipe', 'pipe'] },
 );
 // Liveness is measured here, on the bytes themselves: the parent now sees
 // every chunk, so there is nothing left for a filesystem size poll to learn.
 let lastGrowth = Date.now();
+let visibleOutputOpen = true;
+process.stderr.on('error', (error) => {
+  if (error.code === 'EPIPE') {
+    visibleOutputOpen = false;
+    return;
+  }
+  throw error;
+});
 const mirror = (chunk) => {
   writeSync(logFd, chunk);
-  process.stderr.write(chunk);
+  if (visibleOutputOpen) process.stderr.write(chunk);
   lastGrowth = Date.now();
 };
 child.stdout.on('data', mirror);

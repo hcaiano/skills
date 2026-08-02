@@ -70,7 +70,8 @@ ship it.
    - Otherwise launch the bundled wrapper through the visible-run contract.
      The wrapper owns the baseline patch, liveness deadline, kill, verified
      restore, content validation, and leftover-untracked report:
-     `node <skill dir>/scripts/headless-claude.mjs "/simplify" --writable true`.
+     `node <skill dir>/scripts/headless-claude.mjs "/simplify" --writable true
+     --receipt <simplify-result.json>`.
 
      Exit 0 with `{ok: true}` is the only success. On `{ok: false}` the
      tree is already restored (a `restore_error` means it is NOT — inspect
@@ -108,10 +109,11 @@ ship it.
      skill:
      - Claude Code: invoke the `/code-review` slash command itself on Opus in
        Claude's visible agent pane, or launch
-       `node <skill dir>/scripts/headless-claude.mjs "/code-review"` through
-       the visible-run contract (read-only plan mode). `{ok: true}` with a
-       non-empty result is the only pass. This gate is satisfied only by
-       running `/code-review` in full; nothing improvised stands in for it.
+       `node <skill dir>/scripts/headless-claude.mjs "/code-review" --receipt
+       <review-result.json>` through the visible-run contract (read-only plan
+       mode). `{ok: true}` with a non-empty result is the only pass. This gate
+       is satisfied only by running `/code-review` in full; nothing improvised
+       stands in for it.
      - Codex: launch `codex review "<final-diff review prompt>"` through the
        visible-run contract; generic `codex exec` does not satisfy this gate.
      The Codex prompt must name the exact complete diff command:
@@ -174,8 +176,9 @@ ship it.
    PR-body receipt errors and rerun until it passes. Then handle current
    reviews, comments, and unresolved threads. A branch mutation returns to
    step 2 and must finish with a new push, PR update, and `review:verify` pass.
+   Once those surfaces are clean, record the live-review baseline timestamp.
    This step is complete when the live PR, its body, its base, and its head all
-   match the verified final receipt.
+   match the verified final receipt and the baseline is explicit.
 9. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
    never tight loops). Required checks are the only thing waited on: cloud
    auto-review bots are disabled by design — never wait for or solicit one.

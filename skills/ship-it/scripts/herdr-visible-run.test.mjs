@@ -36,11 +36,32 @@ if (key === "pane get") {
   } });
 } else if (key === "pane process-info") {
   const id = args.at(-1);
-  const exe = id === "w1:p1" ? "codex" : process.env.BUSY_TARGET ? "node" : "zsh";
+  const calls = fs.readFileSync(process.env.HERDR_TEST_CALLS, "utf8")
+    .trim().split("\\n").filter(Boolean).map(JSON.parse);
+  const launched = calls
+    .some((call) => call[0] === "pane" && call[1] === "run");
+  const targetProbes = calls.filter(
+    (call) => call[0] === "pane" && call[1] === "process-info" && call.at(-1) === "w1:p2"
+  ).length;
+  if (id === "w1:p2" && process.env.TRANSIENT_TARGET && targetProbes === 1) {
+    result({ process_info: {
+      pane_id: id,
+      foreground_processes: [{ name: null, argv0: null, argv: null, cwd: null }]
+    } });
+    process.exit(0);
+  }
+  const command = id === "w1:p1"
+    ? ["codex"]
+    : process.env.BUSY_TARGET
+      ? ["node", "busy.js"]
+      : launched
+        ? ["node", "herdr-visible-run.mjs", "exec"]
+        : ["zsh"];
+  const exe = command[0];
   result({ process_info: {
     pane_id: id,
     foreground_processes: [
-      { name: exe, argv0: exe, argv: [exe], cwd: process.env.HERDR_TEST_REPO }
+      { name: exe, argv0: exe, argv: command, cwd: process.env.HERDR_TEST_REPO }
     ]
   } });
 } else if (key === "pane layout") {
@@ -78,14 +99,28 @@ const pin = [
   "--as", "codex",
   "--repo-root", repo,
 ];
+const priorReceipt = join(root, "prior-receipt.json");
+writeFileSync(
+  priorReceipt,
+  JSON.stringify({
+    ok: true,
+    pane_id: "w1:p2",
+    token: "prior-token",
+    command: ["printf", "done"],
+    exit_code: 0,
+    signal: null,
+    transcript: join(root, "prior.log"),
+  }),
+);
 
 test("start validates the pin and launches in a visible sibling pane", () => {
   writeFileSync(calls, "");
+  const longPrompt = "review-spec ".repeat(800);
   const output = JSON.parse(
     execFileSync(
       process.execPath,
-      [script, "start", ...pin, "--label", "ship-it · codex review", "--", "printf", "ok"],
-      { encoding: "utf8", env: baseEnv },
+      [script, "start", ...pin, "--label", "ship-it · codex review", "--", "printf", longPrompt],
+      { encoding: "utf8", env: { ...baseEnv, TRANSIENT_TARGET: "1" } },
     ),
   );
   assert.equal(output.started, true);
@@ -97,6 +132,10 @@ test("start validates the pin and launches in a visible sibling pane", () => {
     .map(JSON.parse);
   assert.ok(seen.some((args) => args[0] === "pane" && args[1] === "split"));
   assert.ok(seen.some((args) => args[0] === "pane" && args[1] === "run"));
+  assert.ok(
+    !seen.find((args) => args[0] === "pane" && args[1] === "run").join(" ").includes(longPrompt),
+    "long command argv must travel through a private command file",
+  );
 });
 
 test("caller drift stops before creating a pane", () => {
@@ -133,6 +172,7 @@ test("run refuses to inject input into a busy process pane", () => {
           "run",
           ...pin,
           "--target-pane", "w1:p2",
+          "--prior-receipt", priorReceipt,
           "--label", "review",
           "--",
           "printf", "ok",
@@ -153,9 +193,59 @@ test("run refuses to inject input into a busy process pane", () => {
   assert.ok(!seen.some((args) => args[0] === "pane" && args[1] === "run"));
 });
 
+test("run reuses only a pane owned by a prior completion receipt", () => {
+  writeFileSync(calls, "");
+  const output = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        script,
+        "run",
+        ...pin,
+        "--target-pane", "w1:p2",
+        "--prior-receipt", priorReceipt,
+        "--label", "review",
+        "--",
+        "printf", "ok",
+      ],
+      { encoding: "utf8", env: baseEnv },
+    ),
+  );
+  assert.equal(output.pane_id, "w1:p2");
+
+  writeFileSync(calls, "");
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [
+          script,
+          "run",
+          ...pin,
+          "--target-pane", "w1:p2",
+          "--prior-receipt", join(root, "missing.json"),
+          "--label", "review",
+          "--",
+          "printf", "ok",
+        ],
+        { encoding: "utf8", env: baseEnv, stdio: ["ignore", "pipe", "pipe"] },
+      ),
+    /Command failed/u,
+  );
+});
+
 test("exec streams output and writes transcript plus completion receipt", () => {
   const receipt = join(root, "receipt.json");
   const transcript = join(root, "transcript.log");
+  const commandFile = join(root, "command.json");
+  writeFileSync(
+    commandFile,
+    JSON.stringify([
+      process.execPath,
+      "-e",
+      "process.stdout.write('progress\\\\n'); process.stderr.write('detail\\\\n')",
+    ]),
+  );
   const output = execFileSync(
     process.execPath,
     [
@@ -166,10 +256,7 @@ test("exec streams output and writes transcript plus completion receipt", () => 
       "--token", "token-1",
       "--receipt", receipt,
       "--transcript", transcript,
-      "--",
-      process.execPath,
-      "-e",
-      "process.stdout.write('progress\\\\n'); process.stderr.write('detail\\\\n')",
+      "--command-file", commandFile,
     ],
     { encoding: "utf8" },
   );

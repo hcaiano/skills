@@ -40,9 +40,15 @@ Reuse a completed process pane for the next sequential command:
 ```bash
 RUN_JSON=$(node "$VISIBLE_RUN" run "${PAIR_ID[@]}" \
   --target-pane "<existing process pane>" \
+  --prior-receipt "<that pane's previous completion receipt>" \
   --label "ship-it · <next command>" \
   -- <command> <args...>)
 ```
+
+The prior receipt is the `receipt` path returned when that pane was launched.
+The helper requires its pane and token to match before reuse, waits for the
+shell to regain control, and carries long command arguments through a private
+temporary file instead of terminal injection.
 
 For a dual review, start both commands in distinct visible panes before
 waiting for either. A simplify pane may be reused for the later Claude
@@ -55,7 +61,9 @@ herdr pane wait-output "<pane_id>" --match "<marker>" --timeout 3600000
 ```
 
 Then require the JSON receipt's token and pane to match the launch, require
-exit zero, and validate the transcript under ship-it's content rules. A
+exit zero, and validate the transcript under ship-it's content rules. For
+`headless-claude.mjs`, also require its separate `--receipt` JSON to contain
+`{ok: true}` and non-empty validated content. A
 marker timeout triggers an immediate `herdr pane get`, `herdr pane
 process-info`, and `herdr pane read --source recent-unwrapped`; a visible
 prompt, approval, rate limit, stalled output, or crash is the gate's current

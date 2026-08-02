@@ -10,8 +10,11 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
+  existsSync,
   openSync,
+  readFileSync,
   realpathSync,
+  unlinkSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
@@ -23,8 +26,13 @@ const scriptPath = fileURLToPath(import.meta.url);
 const argv = process.argv.slice(2);
 const mode = argv.shift();
 let cleanupPane = null;
+let cleanupCommandFile = null;
 
 const fail = (message, code = 1) => {
+  if (cleanupCommandFile && existsSync(cleanupCommandFile)) {
+    unlinkSync(cleanupCommandFile);
+    cleanupCommandFile = null;
+  }
   if (cleanupPane) {
     spawnSync("herdr", ["pane", "close", cleanupPane], {
       encoding: "utf8",
@@ -94,27 +102,32 @@ const doneMarker = (token) => `SHIP_IT_VISIBLE_DONE ${token}`;
 
 // The caller and target checks differ only in what they assert, so the fetch,
 // the malformed-record hard stop, and the executable extraction live here once.
-const foregroundProcesses = (paneId, role) => {
+const foregroundProcesses = (paneId, role, allowTransient = false) => {
   const info = herdrResult("pane", "process-info", "--pane", paneId)?.process_info;
   if (!info || info.pane_id !== paneId || !Array.isArray(info.foreground_processes)) {
+    if (allowTransient) return null;
     fail(`herdr returned malformed process info for ${role} ${paneId}`);
   }
-  return info.foreground_processes.map((entry) => {
+  const processes = [];
+  for (const entry of info.foreground_processes) {
     if (
       entry === null ||
       typeof entry !== "object" ||
       !Array.isArray(entry.argv) ||
       !entry.argv.every((part) => typeof part === "string")
     ) {
+      if (allowTransient) return null;
       fail(`herdr returned malformed foreground process for ${role} ${paneId}`);
     }
-    return {
+    processes.push({
+      argv: entry.argv,
       cwd: entry.cwd,
       executables: [entry.name, entry.argv0, entry.argv[0]]
         .filter((value) => typeof value === "string")
         .map((value) => basename(value).toLowerCase()),
-    };
-  });
+    });
+  }
+  return processes;
 };
 
 const validateCaller = ({ pane, workspace, tabId, terminalId, agent, repoRoot }) => {
@@ -158,6 +171,7 @@ const SHELLS = new Set(
 // idle already. Backoff settles the common case on the first probe instead of
 // spending twenty of them.
 const STARTUP_BACKOFF_MS = [25, 50, 100, 200, 400, 800, 1600];
+const LAUNCH_BACKOFF_MS = [25, 50, 100, 200, 400];
 
 const validateTarget = (paneId, caller, repoRoot, allowStartupWait) => {
   const pane = herdrResult("pane", "get", paneId)?.pane;
@@ -173,7 +187,8 @@ const validateTarget = (paneId, caller, repoRoot, allowStartupWait) => {
   }
   const backoff = allowStartupWait ? STARTUP_BACKOFF_MS : [];
   for (let attempt = 0; ; attempt++) {
-    const foreground = foregroundProcesses(paneId, "target");
+    const foreground =
+      foregroundProcesses(paneId, "target", allowStartupWait) ?? [];
     const available =
       foreground.length > 0 &&
       foreground.every(
@@ -186,6 +201,41 @@ const validateTarget = (paneId, caller, repoRoot, allowStartupWait) => {
     sleepSync(backoff[attempt]);
   }
   fail(`target ${paneId} is busy; wait for its command to finish before reuse`);
+};
+
+const validatePriorReceipt = (path, paneId) => {
+  let receipt;
+  try {
+    receipt = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    fail(`cannot read prior completion receipt: ${path}`);
+  }
+  if (
+    !receipt ||
+    receipt.pane_id !== paneId ||
+    typeof receipt.token !== "string" ||
+    !Array.isArray(receipt.command) ||
+    typeof receipt.transcript !== "string" ||
+    (!Number.isInteger(receipt.exit_code) && typeof receipt.signal !== "string")
+  ) {
+    fail(`prior completion receipt does not own pane ${paneId}`);
+  }
+};
+
+const confirmLaunch = (paneId, receipt) => {
+  for (let attempt = 0; ; attempt++) {
+    if (existsSync(receipt)) return;
+    const running = (foregroundProcesses(paneId, "launched command", true) ?? []).some(
+      (entry) =>
+        entry.executables.includes("node") &&
+        entry.argv.some((part) => basename(part) === basename(scriptPath)) &&
+        entry.argv.includes("exec"),
+    );
+    if (running) return;
+    if (attempt >= LAUNCH_BACKOFF_MS.length) break;
+    sleepSync(LAUNCH_BACKOFF_MS[attempt]);
+  }
+  fail(`pane ${paneId} did not start the requested command`);
 };
 
 const createPane = (pin) => {
@@ -219,6 +269,9 @@ const launch = (targetPane, cwd, label, command) => {
   const token = randomUUID();
   const receipt = join(tmpdir(), `ship-it-visible-${token}.json`);
   const transcript = join(tmpdir(), `ship-it-visible-${token}.log`);
+  const commandFile = join(tmpdir(), `ship-it-command-${token}.json`);
+  writeFileSync(commandFile, `${JSON.stringify(command)}\n`, { mode: 0o600 });
+  cleanupCommandFile = commandFile;
   const childCommand = [
     process.execPath,
     scriptPath,
@@ -233,13 +286,15 @@ const launch = (targetPane, cwd, label, command) => {
     receipt,
     "--transcript",
     transcript,
-    "--",
-    ...command,
+    "--command-file",
+    commandFile,
   ]
     .map(shellQuote)
     .join(" ");
   herdrResult("pane", "rename", targetPane, label);
   herdrCommand("pane", "run", targetPane, childCommand);
+  confirmLaunch(targetPane, receipt);
+  cleanupCommandFile = null;
   process.stdout.write(
     `${JSON.stringify(
       {
@@ -263,7 +318,24 @@ if (mode === "exec") {
   const token = take("token");
   const receipt = take("receipt");
   const transcript = take("transcript");
-  const command = commandAfterSeparator();
+  const commandFile = take("command-file");
+  cleanupCommandFile = commandFile;
+  let command;
+  try {
+    command = JSON.parse(readFileSync(commandFile, "utf8"));
+  } catch {
+    fail(`cannot read command file: ${commandFile}`);
+  }
+  if (
+    !Array.isArray(command) ||
+    command.length === 0 ||
+    !command.every((part) => typeof part === "string")
+  ) {
+    fail(`command file contains invalid argv: ${commandFile}`);
+  }
+  unlinkSync(commandFile);
+  cleanupCommandFile = null;
+  if (argv.length) fail(`unexpected arguments: ${argv.join(" ")}`, 2);
   const started = Date.now();
   const transcriptFd = openSync(transcript, "w");
   const child = spawn(command[0], command.slice(1), {
@@ -308,17 +380,19 @@ if (mode === "exec") {
   };
   const label = take("label");
   const target = mode === "run" ? take("target-pane") : null;
+  const priorReceipt = mode === "run" ? take("prior-receipt") : null;
   const command = commandAfterSeparator();
   const caller = validateCaller(pin);
+  if (target) validatePriorReceipt(priorReceipt, target);
   // Every failure below routes through fail(), which closes cleanupPane before
   // exiting — so a pane created here is never left behind.
   const targetPane = target ?? createPane(pin);
-  validateTarget(targetPane, caller, pin.repoRoot, mode === "start");
+  validateTarget(targetPane, caller, pin.repoRoot, true);
   launch(targetPane, pin.repoRoot, label, command);
   cleanupPane = null;
 } else {
   fail(
-    "usage: herdr-visible-run.mjs start|run <caller pin> --label TEXT [--target-pane ID] -- COMMAND [ARG ...]",
+    "usage: herdr-visible-run.mjs start|run <caller pin> --label TEXT [--target-pane ID --prior-receipt PATH] -- COMMAND [ARG ...]",
     2,
   );
 }
