@@ -151,5 +151,6 @@ degrades the gate by itself.
 
 Pace alone never lowers the review grade: it routes staffing and trims an
 eligible simplify pass. Name the provisional grade in the kickoff and the
-final grade in the phase 4 summary. At `shipped`, accept a thinner final gate
-only when its receipt records the actual-diff regrade or capacity degradation.
+phase 4 summary. Name the final grade in the `shipped` milestone and later
+per-unit summaries. At `shipped`, accept a thinner final gate only when its
+receipt records the actual-diff regrade or capacity degradation.

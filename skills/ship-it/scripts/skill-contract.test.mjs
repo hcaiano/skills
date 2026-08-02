@@ -55,5 +55,9 @@ test("review and simplify decisions are risk-adaptive and auditable", () => {
     models,
     /\[risk-adaptive gate\]\(\.\.\/\.\.\/ship-it\/SKILL\.md\)/u,
   );
+  assert.match(
+    models,
+    /Name the final grade in the `shipped` milestone/u,
+  );
   assert.doesNotMatch(models, /`dual` \(default\)/u);
 });
