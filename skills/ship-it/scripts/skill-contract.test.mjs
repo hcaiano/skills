@@ -59,5 +59,10 @@ test("review and simplify decisions are risk-adaptive and auditable", () => {
     models,
     /Name the final grade in the `shipped` milestone/u,
   );
+  assert.match(
+    models,
+    /Name the provisional grade in the kickoff and the\s+phase 4 summary/u,
+  );
+  assert.doesNotMatch(models, /final grade in the phase 4 summary/u);
   assert.doesNotMatch(models, /`dual` \(default\)/u);
 });
