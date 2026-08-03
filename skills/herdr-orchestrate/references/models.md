@@ -54,13 +54,17 @@ squeezing cheaper models.
   keeping two model families in play.
 - **One effort ladder for both pools.** Choose the model for capability and
   pool balance, then grade its reasoning separately: `medium` is the working
-  default for normal scoped work; `high` requires cross-cutting scope,
-  ambiguity, an unfamiliar subsystem, or material risk; `low` is mechanical;
-  `xhigh` is architectural or otherwise expensive to get wrong; `max` is
-  close to never and only follows a failed `xhigh` escalation. Apply these
-  meanings equally to Opus and Sol and to their fast-lane peers. TTFT scales
-  hard with effort (terra: 1.3 s `medium` → 19 s `xhigh` → 155 s `max`;
-  sol `max`: 131 s), so delegation or workhorse selection alone never
+  default for normal scoped work; `high` covers broad or cross-cutting changes,
+  visual work, ambiguity, an unfamiliar subsystem, or material risk; `low` is
+  mechanical. Reserve `xhigh` for architectural decisions that are difficult
+  to reverse or failures whose structural cost would be exceptionally high.
+  Breadth, cross-cutting scope, and visual surface alone never justify
+  `xhigh`: when the scope is closed and the review and hold gates bound the
+  risk, stay at `high`. `max` is never an initial grade; use it only after a
+  failed `xhigh` attempt when the same `xhigh` criterion still applies. Apply
+  these meanings equally to Opus and Sol and to their fast-lane peers. TTFT
+  scales hard with effort (terra: 1.3 s `medium` → 19 s `xhigh` → 155 s
+  `max`; sol `max`: 131 s), so delegation or workhorse selection alone never
   justifies raising the tier.
 
 ## Weekly usage state
