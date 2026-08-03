@@ -259,6 +259,11 @@ node <skill dir>/scripts/send.mjs <pane_id> "<text>"
 node <skill dir>/scripts/send.mjs <pane_id> @<file>   # kickoffs: no quoting
 ```
 
+The `@<file>` form is mandatory for runtime-native skill invocations. Write
+the complete invocation to a temporary file without shell interpolation, send
+that file, and `trash` it only after the landed receipt; a Codex `$skill`
+token passed as inline shell text can be expanded before `send.mjs` sees it.
+
 Exit 0 carries a `landed: true` receipt; exit 1 means the message never
 landed and that pane goes to the user. The script owns the paste-and-Enter
 dance — `agent prompt` alone strands messages unsubmitted in the composer,
@@ -322,9 +327,11 @@ units the suggested order and why>
    clean `git status`, nothing untracked or staged. The orchestrator
    scope-checks the branch and either sends scope feedback (address it,
    report ready again) or the go-ahead.
-4. On go-ahead, run the ship-it skill with this unit's provisional review
-   gate: <skip | single | dual | codex-only | claude-only> (ship-it owns the
-   final risk-adaptive grade).
+4. On go-ahead, follow the explicitly invoked ship-it skill that the
+   orchestrator submits directly in this pane; do not auto-select it. The
+   invocation carries this unit's provisional review gate:
+   <skip | single | dual | codex-only | claude-only> (ship-it owns the final
+   risk-adaptive grade).
    Its gate is a fresh review of the final diff — pair acceptance does
    not satisfy it — and must leave its `## Dual-review` receipt in the
    PR body. Open the PR
@@ -385,11 +392,17 @@ merged. Then act by kind:
   Scope wrong → [send](#sending-a-message-to-an-agent) it to the lead as
   feedback and await the next ready. Scope sane → record the approved
   SHA (`git -C <worktree> rev-parse HEAD`) and quote it in the go-ahead
-  message (run ship-it from the unit's provisional gate, let it grade the
-  actual diff, then report shipped) — the ship-delta check at shipped diffs
-  from it, and quoting
-  it in the pane makes it recoverable by a fresh orchestrator. Tell the
-  user the unit is shipping.
+  invocation. Because ship-it is manual-only, submit the runtime-native
+  explicit invocation through `send.mjs @<temporary-file>`, never inline
+  shell text or prose asking the lead to select the skill. The file's first
+  line is Claude lead → `/ship-it Run the gate for this unit from <provisional
+  gate>; ready-approved SHA: <sha>; grade the actual diff, then report
+  shipped`; Codex lead → `$ship-it Run the gate for this unit from
+  <provisional gate>; ready-approved SHA: <sha>; grade the actual diff, then
+  report shipped`. Require the landed receipt, then `trash` the file. This
+  invocation is the go-ahead and handled marker. The ship-delta check at
+  shipped diffs from its quoted SHA, and the pane makes it recoverable by a
+  fresh orchestrator. Tell the user the unit is shipping.
 - `shipped` — verify the graded review and final-CI receipts match the exact PR
   head. A missing receipt, or one thinner than the provisional gate without a
   recorded risk regrade or capacity reason, means the gate did not run — send

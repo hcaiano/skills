@@ -19,7 +19,14 @@ spawnSync("mkdir", ["-p", binDir]);
 // `needs_enter`: the composer holds the text until an Enter arrives (the real
 // bug). `ignores_enter`: nothing ever submits, so send.mjs must fail loudly.
 function installFakeHerdr(mode, status = "idle") {
-  writeFileSync(statePath, JSON.stringify({ mode, status, composer: null, enters: 0, prompts: 0 }));
+  writeFileSync(statePath, JSON.stringify({
+    mode,
+    status,
+    composer: null,
+    last_prompt: null,
+    enters: 0,
+    prompts: 0,
+  }));
   writeFileSync(
     join(binDir, "herdr"),
     `#!/usr/bin/env node
@@ -33,6 +40,7 @@ if (a[0] === "agent" && a[1] === "get") {
 } else if (a[0] === "agent" && a[1] === "prompt") {
   s.prompts += 1;
   s.composer = a[3].split("\\n").find((l) => l.trim()) ?? "";
+  s.last_prompt = s.composer;
   save();
   process.stdout.write("{}");
 } else if (a[0] === "agent" && a[1] === "send-keys") {
@@ -86,6 +94,28 @@ r = run("w1:p1", `@${kickoff}`);
 assert.equal(r.status, 0, r.stdout + r.stderr);
 assert.equal(JSON.parse(r.stdout).landed, true);
 assert.ok(state().enters >= 1);
+
+// A runtime-native Codex invocation must cross a real shell without expanding
+// `$ship`. The mandatory @file transport keeps the literal skill token intact.
+installFakeHerdr("needs_enter");
+const skillInvocation = join(root, "skill-invocation.txt");
+writeFileSync(
+  skillInvocation,
+  "$ship-it Run the gate for this unit from single; ready-approved SHA: abc123\n",
+);
+r = spawnSync(
+  "/bin/zsh",
+  ["-fc", '"$1" "$2" "$3" "$4"', "send-shell", process.execPath, sendScript, "w1:p1", `@${skillInvocation}`],
+  {
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${binDir}:${process.env.PATH}` },
+  },
+);
+assert.equal(r.status, 0, r.stdout + r.stderr);
+assert.equal(
+  state().last_prompt,
+  "$ship-it Run the gate for this unit from single; ready-approved SHA: abc123",
+);
 
 // A composer that never submits must fail loudly, never silently report landed.
 installFakeHerdr("ignores_enter");
