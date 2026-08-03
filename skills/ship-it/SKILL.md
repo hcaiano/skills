@@ -1,12 +1,12 @@
 ---
 name: ship-it
-description: "Ship finished work: the graded local review gate, then one PR carried to green CI. Use when the user wants to ship, open, or update a PR, or when another skill needs that graded gate."
+description: "Ship finished work: one graded local review round, one material correction batch, deterministic final-HEAD validation, then delivery. Use when the user wants to ship, open, or update a PR, or when another skill needs that graded gate."
 ---
 
 # Ship It
 
-Open or update a PR for the current work. Quality is enforced locally, before
-the PR exists.
+Open or update a PR for the current work, then carry an authorized delivery
+through merge and deploy. Quality is enforced locally, before the PR exists.
 
 Run it only when the user invokes ship-it or another skill (an orchestrator's
 graded gate) delegates to it — finishing a change is not an invitation to
@@ -41,7 +41,7 @@ ship it.
    Complete the requested scope and run the smallest tests and checks that
    exercise the changed behavior. Fix failures until every intended change is
    present and the focused proof passes. The complete repository CI first runs
-   in step 7 on the clean, reviewed final HEAD; keep this step to focused proof
+   in step 7 on the clean final HEAD; keep this step to focused proof
    and keep the branch local. This step is complete when the requested behavior
    is present and its focused proof passes.
 3. **Grade, then simplify** — the ship-it driver grades the complete
@@ -73,7 +73,7 @@ ship it.
    schemas/contracts, allowlists, or security/performance guards. A
    user-requested simplify pass overrides the eligibility skip.
 
-   An eligible pass runs once per review epoch, after focused proof and before
+   An eligible pass runs once per delivery, after focused proof and before
    review so reviewers see the resulting diff. Claude being unavailable,
    `claude.pace` above 2, or a `codex-only` capacity grade records a skip.
    Skip an existing receipt only when its `Simplify:` line names the current
@@ -100,13 +100,13 @@ ship it.
    successful receipt naming the structural target, a recorded
    eligibility/capacity skip, or a failed attempt whose recorded regrade is
    `codex-only`.
-4. **Finalize the review HEAD.** When simplify ran, inspect every edit and
-   rerun the focused tests and checks affected by it. Create clear,
+4. **Finalize the initial review HEAD.** When simplify ran, inspect every edit
+   and rerun the focused tests and checks affected by it. Create clear,
    intentional local commits and reach a clean review HEAD without pushing.
    Reapply step 3's risk grade to this resulting complete diff and record the
    final grade plus any change from the candidate. This step is complete when
    the final diff has focused proof, `git status` contains no intended
-   uncommitted change, and the final review grade is explicit.
+   uncommitted change, and the initial review grade is explicit.
 5. **Review Standards and Spec** on that exact review HEAD. `skip` records its
    no-runtime reason and runs no native review. `single`, `codex-only`, and
    `claude-only` use one native reviewer to cover **Standards + Spec**.
@@ -159,46 +159,60 @@ ship it.
      counterpart through the same visible-run contract.
    This step is complete when every required axis has valid findings output
    against the same review HEAD.
-6. **Correct once and re-review once.** A `skip` gate writes its receipt and
-   proceeds to step 7. Every reviewed gate merges and deduplicates the findings,
-   then verifies each one against the real code path. Apply every valid,
-   in-scope correction in one batch; discard style nits and out-of-scope
-   suggestions, recording useful follow-ups instead. A correction that
-   requires a new contract or architecture, or roughly doubles the diff, is a
-   follow-up that stops the gate for user direction.
+6. **Correct material findings in one batch.** A `skip` gate writes its
+   receipt and proceeds to step 7. Every reviewed gate merges and deduplicates
+   the findings, verifies each against the real code path, and applies every
+   valid, material, in-scope correction in one batch. Discard style nits and
+   out-of-scope suggestions, recording useful follow-ups instead. A correction
+   that requires a new contract or architecture, or roughly doubles the diff,
+   is a follow-up that stops the gate for user direction.
 
-   Rerun the affected focused proof, commit the correction batch, and perform
-   one read-only re-review round of only the correction diff on the applicable
-   axes, starting parallel axes together. This is the sole correction/re-review
-   round: surface remaining valid findings instead of starting another fix
-   cycle. With zero valid initial findings, the initial review HEAD is already
-   final. Otherwise this step is complete only when the correction commit is
-   the clean final HEAD and the bounded re-review has valid content.
+   The delivery gets one LLM review round. A second, final review round happens
+   only when the correction batch substantially changes behavior, expands the
+   authorized scope, or introduces a new security or architectural risk. Run
+   that conditional review against the complete corrected diff on the
+   applicable axes. A changed SHA, ordinary implementation edits, or the
+   possibility of further polish does not trigger it.
+
+   Apply any valid, material, in-scope findings from that conditional review in
+   one batch without a third review. If those corrections themselves require
+   another qualifying behavior, scope, security, or architecture change, stop
+   for user direction instead of opening another review cycle. Rerun the
+   affected focused proof, commit all corrections, and reach a clean final
+   HEAD. Every later branch mutation in this delivery follows the same trigger:
+   retain the existing review when the change is bounded, or spend the single
+   conditional review when it qualifies and has not already run.
+   This step is complete when every finding has a disposition, the conditional
+   review decision is recorded, focused proof passes, and the final HEAD is
+   clean.
+7. **Validate the final HEAD, then push it.** On the clean final HEAD, run every
+   applicable repository-defined test, lint, typecheck, and complete local-CI
+   entrypoint. One aggregate command may satisfy its included checks; do not
+   duplicate them. Use the repo's queued/coalesced entrypoint without a manual
+   lease when present; otherwise use its documented `global-ci` lease. Fix a
+   failure in one batch under step 6's review trigger, then rerun this complete
+   deterministic gate on the resulting HEAD.
+
+   After it passes, push normally. Mandatory pre-push checks must also pass,
+   but do not replace the already-recorded final-HEAD validation. Record the
+   exact pushed HEAD and successful results. This step is complete only when
+   the remote head equals the final validated HEAD and all applicable
+   deterministic gates passed on that SHA.
 
    Leave a `## Dual-review` receipt for the PR body with `Gate:`
    (`skip — <reason>` / `single — <reviewer>; <reason>` / `dual` / degraded
    level and reason), `Simplify:`
    (`applied in <sha> — target: <target>` / `already run` /
-   `skipped — <reason>` /
-   `failed — <reason>`), `Reviewed HEAD: <40-character final SHA>`, each
-   reviewer, native command, assigned axis, finding count, and each finding's
-   disposition (`fixed in <sha>` / `deferred to #N` / discarded reason).
-   A skipped gate states its reason. Name every visible process pane and its
-   matching completion receipt, and confirm that the lead closed each finished
-   pane after validating its artifacts. The gate is complete only when this
-   receipt describes the clean final HEAD.
-7. **Run final CI, then push the reviewed HEAD.** The complete repository CI
-   starts here, after simplify, initial review, correction, and re-review have
-   produced the clean final HEAD. When pre-push runs the complete local CI (for
-   example `bun run ci:local`), push normally, require it to pass, and use it
-   as the only complete gate on this final HEAD; the push is its first
-   invocation on that SHA. Use the repo's queued/coalesced entrypoint without a
-   manual lease when present; otherwise use its documented `global-ci` lease.
-   If pre-push has no complete gate, run the repository's full command once,
-   require it to pass, then push. A failure that changes the branch returns to
-   step 2. Record the exact pushed HEAD and successful result. This step is
-   complete only when the remote head equals the reviewed final HEAD and its
-   authoritative local CI passed.
+   `skipped — <reason>` / `failed — <reason>`),
+   `Reviewed HEAD: <40-character last gate-reviewed SHA>`,
+   `Final validated HEAD: <40-character final SHA>`, the deterministic commands
+   and results, whether the conditional review ran and why, each reviewer,
+   native command, assigned axis, finding count, and each finding's disposition
+   (`fixed in <sha>` / `deferred to #N` / discarded reason). A skipped gate
+   states its reason. Name every visible process pane and its matching
+   completion receipt, and confirm that the lead closed each finished pane
+   after validating its artifacts. The receipt is complete when it truthfully
+   distinguishes review evidence from deterministic final-HEAD proof.
 8. **Open or update the PR and verify its receipt.** Maintain one accurate,
    ready-for-review PR whose body carries the review and final-CI receipts —
    no receipt, no PR. Create new PRs as non-draft and verify GitHub preserved
@@ -207,8 +221,11 @@ ship it.
    PR-body receipt errors and rerun until it passes. Record the live-review
    baseline timestamp immediately before the first complete paginated fetch of
    current reviews, comments, and unresolved threads, then handle those
-   surfaces. A branch mutation returns to step 2 and must finish with a new
-   push, PR update, and `review:verify` pass.
+   surfaces. A branch mutation returns to steps 6–8 and must finish with a new
+   deterministic gate, push, PR update, and `review:verify` pass. An older
+   verifier that requires the final SHA to have fresh LLM review contradicts
+   this one-review policy: report that repository-contract blocker instead of
+   manufacturing a receipt or running another review.
    This step is complete when the live PR, its body, its base, and its head all
    match the verified final receipt and the baseline is explicit.
 9. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
@@ -217,26 +234,36 @@ ship it.
    Green means every required check passed; pending is not green. A check
    that cannot run at all (billing, runner outage) is a blocker — report the
    PR blocked on it, never shipped with a waiver. Fix a red check with one
-   batched commit and return to
-   steps 2–8; after two red rounds, stop and report. The same brake bounds
-   the gate itself: a third full review gate on one PR — whoever asks for
-   it — stops and surfaces the churn to the user instead of running.
+   batched commit under step 6's review trigger and return to steps 7–8; after
+   two red rounds, stop and report.
    Immediately before reporting shipped, re-fetch complete paginated reviews,
    issue comments, inline comments, and review threads, and capture the live
    `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
-   whose required checks passed; any mismatch returns to steps 2–9. Handle
+   whose required checks passed; any mismatch returns to steps 6–9. Handle
    every item newer than the baseline and every unresolved thread. A branch
-   change returns to steps 2–9. Require GitHub to report the PR mergeable
-   against its base; a conflict returns to steps 2–9 after a merge from the
-   base. Rerun `review:verify` after any PR-body or head change. Record the
-   clean check timestamp and head.
-10. Report the outcome to the user: PR link, exact head, CI status, live-review
-   timestamp, receipt summary, and any findings discarded or deferred.
+   change returns to steps 6–9. Require GitHub to report the PR mergeable
+   against its base; a conflict merges the base into the branch and returns to
+   steps 6–9. Rerun `review:verify` after any PR-body or head change. Record
+   the clean check timestamp and head.
+10. **Merge and deploy when authorized.** A ship-it invocation authorizes its
+    local gate, push, and PR work; merge and deployment require explicit user
+    authorization or an enclosing workflow with standing authorization. When
+    that authority is already present, proceed directly without another LLM
+    review or confirmation. Merge with the repository's documented method,
+    verify the merged commit and base state, then run the repository's
+    documented deployment path when deployment is in scope. Verify the
+    deployment with its required rollout, health, or canary evidence. Without
+    merge or deploy authority, stop at the corresponding ready state and name
+    the missing authorization.
+11. Report the outcome to the user: PR link, exact head, deterministic and
+    required-check status, live-review timestamp, receipt summary, merge and
+    deployment evidence when applicable, and any findings discarded or
+    deferred.
 
-Do not force-push, merge, modify `main`, broaden scope, or change the target
-branch without explicit authorization. When the base moved under the branch,
-merge `origin/<target>` in and re-enter the gate on the merge HEAD — a
-pushed branch is never rebased, so force-push is never needed. Done when the PR is open with the
-graded-review and passing final-CI receipt in its body, green required checks, a
-clean timestamped live-review check on the exact head, and the user has the
-report.
+Do not force-push, modify `main`, broaden scope, or change the target branch
+without explicit authorization. When the base moved under the branch, merge
+`origin/<target>` in and apply step 6's review trigger to the merge HEAD — a
+pushed branch is never rebased, so force-push is never needed. Done when the PR
+has truthful review and passing final-validation receipts, required checks and
+live-review surfaces are clean on the exact head, every authorized merge or
+deployment is verified, and the user has the report.

@@ -46,8 +46,9 @@ Run the same command to update the installed copies after changing this repo.
 
 ### Delivery
 
-- `ship-it` — run the graded local review gate, commit and push intentional
-  changes, open or update one PR, and wait for green CI.
+- `ship-it` — run one graded local review round, batch material fixes, validate
+  the final HEAD deterministically, and carry the authorized PR delivery
+  forward.
 - `review-pr-comments` — handle feedback that actually appears on an existing
   PR, batching valid fixes and leaving the PR merge-ready.
 
