@@ -43,7 +43,7 @@ test("ship-it keeps final validation after simplify and every review phase", () 
 test("final proof stays proportional and delegates native-platform coverage", () => {
   assert.match(
     shipIt,
-    /A consumer is direct only when it imports, calls,\s+builds against, or relies on the changed contract/u,
+    /A changed direct consumer is a path in the\s+final diff that imports, calls, builds against, or relies on the changed\s+contract/u,
   );
   assert.match(
     shipIt,
@@ -61,10 +61,20 @@ test("final proof stays proportional and delegates native-platform coverage", ()
     shipIt,
     /run the complete local-CI entrypoint only when repository\s+instructions or branch policy name it as the delivery authority/u,
   );
+  assert.doesNotMatch(shipIt, /or when no\s+native PR CI covers an applicable risk/u);
   assert.match(
     shipIt,
     /every native-CI delegation is named for step 9/u,
   );
+  assert.match(
+    shipIt,
+    /Delegated checks are delivery-required even when branch protection does not\s+mark them required/u,
+  );
+  assert.match(
+    shipIt,
+    /Missing native\s+coverage for an applicable risk blocks delivery/u,
+  );
+  assert.doesNotMatch(shipIt, /step 7 owns the complete\s+repository local-CI gate/u);
 });
 
 test("review and simplify decisions are risk-adaptive and auditable", () => {

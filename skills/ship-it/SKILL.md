@@ -39,14 +39,14 @@ ship it.
    and any required visible-run pin are explicit.
 2. **Finish the implementation and proportional focused proof.** Keep the
    branch local. Map each changed runtime contract to its changed behavior and
-   direct consumers, then run the smallest repository-defined tests and checks
-   that exercise that map. A consumer is direct only when it imports, calls,
-   builds against, or relies on the changed contract; sharing a path or
-   subsystem does not make it part of the proof.
+   changed direct consumers, then run the smallest repository-defined tests and
+   checks that exercise that map. A changed direct consumer is a path in the
+   final diff that imports, calls, builds against, or relies on the changed
+   contract; sharing a path or subsystem does not make it part of the proof.
 
    Treat path migrations as a focused branch: prove applicable old references
    are gone, new paths resolve, moved artifacts preserve their invariants, and
-   direct consumers pass. The PR's native CI owns broader subsystem and
+   changed direct consumers pass. The PR's native CI owns broader subsystem and
    platform coverage.
 
    When the local platform blocks a focused command, make one focused attempt
@@ -159,9 +159,9 @@ ship it.
      changes committed in step 4, this covers the exact review HEAD from the
      true merge base. Name the assigned axis, include its applicable sources,
      and require read-only findings output. Both harnesses may run focused
-     verification; step 7 owns the complete
-     repository local-CI gate. An improvised read-through of the diff does not
-     count.
+     verification; step 7 owns proportional final-HEAD validation; step 9 owns
+     native PR-CI proof. An
+     improvised read-through of the diff does not count.
      Model budget: Claude uses Opus (`--model opus`), never Fable; Codex uses
      its default model with no extra-high reasoning. Fable is advisor-only.
    - `dual` only — start the Standards and Spec reviews in distinct panes
@@ -201,15 +201,16 @@ ship it.
 7. **Validate the final HEAD, then push it.** On the clean final HEAD, rerun
    step 2's proportional validation map for the final diff: repository-defined
    test, lint, typecheck, and build entries covering the changed contracts and
-   their direct consumers. One aggregate command may satisfy its included
-   checks; run the complete local-CI entrypoint only when repository
-   instructions or branch policy name it as the delivery authority, or when no
-   native PR CI covers an applicable risk. Use the repo's queued/coalesced
-   entrypoint without a manual lease when present; otherwise use its documented
-   `global-ci` lease. Fix a code failure in one batch under step 6's review
-   trigger, then rerun the affected proportional gate on the resulting HEAD.
-   Preserve a platform incompatibility already delegated in step 2 as an
-   explicit pending PR-CI obligation.
+   their changed direct consumers. One aggregate command may satisfy its
+   included checks; run the complete local-CI entrypoint only when repository
+   instructions or branch policy name it as the delivery authority. Use the
+   repo's queued/coalesced entrypoint without a manual lease when present;
+   otherwise use its documented `global-ci` lease. Fix a code failure in one
+   batch under step 6's review trigger, then rerun the affected proportional
+   gate on the resulting HEAD. Preserve a platform incompatibility already
+   delegated in step 2 as an explicit pending PR-CI obligation. Missing native
+   coverage for an applicable risk blocks delivery; it does not expand the
+   local validation map.
 
    After it passes, push normally. Mandatory pre-push checks must also pass,
    but do not replace the already-recorded final-HEAD validation. Record the
@@ -247,23 +248,25 @@ ship it.
    manufacturing a receipt or running another review.
    This step is complete when the live PR, its body, its base, and its head all
    match the verified final receipt and the baseline is explicit.
-9. Wait for required checks on the exact PR head (poll at 60–120 s intervals,
-   never tight loops). Required checks are the only thing waited on: cloud
-   auto-review bots are disabled by design — never wait for or solicit one.
-   Green means every required check passed; pending is not green. A check
-   that cannot run at all (billing, runner outage) is a blocker — report the
-   PR blocked on it, never shipped with a waiver. Fix a red check with one
-   batched commit under step 6's review trigger and return to steps 7–8; after
-   two red rounds, stop and report.
+9. Wait for required checks and every native-CI check delegated in steps 2 or
+   7 on the exact PR head (poll at 60–120 s intervals, never tight loops).
+   Delegated checks are delivery-required even when branch protection does not
+   mark them required. Cloud auto-review bots are disabled by design — never
+   wait for or solicit one. Green means every required and delegated check
+   passed; pending is not green. A check that cannot run at all (billing,
+   runner outage, missing native coverage) is a blocker — report the PR blocked
+   on it, never shipped with a waiver. Fix a red check with one batched commit
+   under step 6's review trigger and return to steps 7–8; after two red rounds,
+   stop and report.
    Immediately before reporting shipped, re-fetch complete paginated reviews,
    issue comments, inline comments, and review threads, and capture the live
    `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
-   whose required checks passed; any mismatch returns to steps 6–9. Handle
-   every item newer than the baseline and every unresolved thread. A branch
-   change returns to steps 6–9. Require GitHub to report the PR mergeable
-   against its base; a conflict merges the base into the branch and returns to
-   steps 6–9. Rerun `review:verify` after any PR-body or head change. Record
-   the clean check timestamp and head.
+   whose required and delegated checks passed; any mismatch returns to steps
+   6–9. Handle every item newer than the baseline and every unresolved thread.
+   A branch change returns to steps 6–9. Require GitHub to report the PR
+   mergeable against its base; a conflict merges the base into the branch and
+   returns to steps 6–9. Rerun `review:verify` after any PR-body or head change.
+   Record the clean check timestamp and head.
 10. **Merge and deploy when authorized.** A ship-it invocation authorizes its
     local gate, push, and PR work; merge and deployment require explicit user
     authorization or an enclosing workflow with standing authorization. When
