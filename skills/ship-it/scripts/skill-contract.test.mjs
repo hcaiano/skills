@@ -14,29 +14,56 @@ const models = readFileSync(
   "utf8",
 );
 
-test("ship-it keeps final CI after simplify and every review phase", () => {
+test("ship-it keeps final validation after simplify and every review phase", () => {
   const steps = [
-    "2. **Finish the implementation and focused proof.**",
+    "2. **Finish the implementation and proportional focused proof.**",
     "3. **Grade, then simplify**",
-    "4. **Finalize the review HEAD.**",
+    "4. **Finalize the initial review HEAD.**",
     "5. **Review Standards and Spec**",
-    "6. **Correct once and re-review once.**",
-    "7. **Run final CI, then push the reviewed HEAD.**",
+    "6. **Correct material findings in one batch.**",
+    "7. **Validate the final HEAD, then push it.**",
   ].map((heading) => shipIt.indexOf(heading));
 
   assert.ok(steps.every((index) => index >= 0), "every gate step must exist");
   assert.deepEqual(steps, [...steps].sort((a, b) => a - b));
   assert.match(
     shipIt.slice(steps[0], steps[1]),
-    /complete repository CI first runs\s+in step 7 on the clean, reviewed final HEAD/u,
+    /every mapped local check passes, and each platform-delegated check\s+is explicit/u,
   );
   assert.match(
-    shipIt.slice(steps[5], steps[5] + 600),
-    /complete repository CI\s+starts here, after simplify, initial review, correction, and re-review/u,
+    shipIt.slice(steps[4], steps[5]),
+    /reach a clean final\s+HEAD/u,
   );
   assert.match(
     orchestrate,
-    /reserve the complete\s+local-CI gate for ship-it's final push/u,
+    /reserve ship-it's\s+proportional final-HEAD validation gate for its final push/u,
+  );
+});
+
+test("final proof stays proportional and delegates native-platform coverage", () => {
+  assert.match(
+    shipIt,
+    /A consumer is direct only when it imports, calls,\s+builds against, or relies on the changed contract/u,
+  );
+  assert.match(
+    shipIt,
+    /Treat path migrations as a focused branch: prove applicable old references\s+are gone, new paths resolve, moved artifacts preserve their invariants/u,
+  );
+  assert.match(
+    shipIt,
+    /When the local platform blocks a focused command, make one focused attempt/u,
+  );
+  assert.match(
+    shipIt,
+    /an unrelated passing suite does not compensate for missing\s+platform proof/u,
+  );
+  assert.match(
+    shipIt,
+    /run the complete local-CI entrypoint only when repository\s+instructions or branch policy name it as the delivery authority/u,
+  );
+  assert.match(
+    shipIt,
+    /every native-CI delegation is named for step 9/u,
   );
 });
 

@@ -315,8 +315,8 @@ units the suggested order and why>
    lease on your own scopes, and review each other's ready.
 2. Implement the issue(s) with the project's implement skill (pair:
    coordinating through the pair protocol — write leases, review,
-   ready/accepted). Use focused proof while implementing; reserve the complete
-   local-CI gate for ship-it's final push.
+   ready/accepted). Use focused proof while implementing; reserve ship-it's
+   proportional final-HEAD validation gate for its final push.
 3. When the work is complete (pair: accepted by both), report ready and
    wait. Report ready only after all work is committed on the branch —
    clean `git status`, nothing untracked or staged. The orchestrator

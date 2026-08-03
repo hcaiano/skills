@@ -37,13 +37,26 @@ ship it.
    transcript-proven unit tab. A gate that needs an external process is
    blocked outside Herdr. This step is complete when the target, pool state,
    and any required visible-run pin are explicit.
-2. **Finish the implementation and focused proof.** Keep the branch local.
-   Complete the requested scope and run the smallest tests and checks that
-   exercise the changed behavior. Fix failures until every intended change is
-   present and the focused proof passes. The complete repository CI first runs
-   in step 7 on the clean final HEAD; keep this step to focused proof
-   and keep the branch local. This step is complete when the requested behavior
-   is present and its focused proof passes.
+2. **Finish the implementation and proportional focused proof.** Keep the
+   branch local. Map each changed runtime contract to its changed behavior and
+   direct consumers, then run the smallest repository-defined tests and checks
+   that exercise that map. A consumer is direct only when it imports, calls,
+   builds against, or relies on the changed contract; sharing a path or
+   subsystem does not make it part of the proof.
+
+   Treat path migrations as a focused branch: prove applicable old references
+   are gone, new paths resolve, moved artifacts preserve their invariants, and
+   direct consumers pass. The PR's native CI owns broader subsystem and
+   platform coverage.
+
+   When the local platform blocks a focused command, make one focused attempt
+   through the repository's existing command or configuration. If the same
+   incompatibility remains, record the command and evidence, then assign that
+   check to the PR's native CI. Keep the local validation map closed to changed
+   surfaces: an unrelated passing suite does not compensate for missing
+   platform proof. This step is complete when the requested behavior is
+   present, every mapped local check passes, and each platform-delegated check
+   is explicit.
 3. **Grade, then simplify** — the ship-it driver grades the complete
    focused-proven diff through a **risk-adaptive** gate:
    - `skip` — exclusively docs/Markdown/config with no runtime surface.
@@ -185,19 +198,24 @@ ship it.
    This step is complete when every finding has a disposition, the conditional
    review decision is recorded, focused proof passes, and the final HEAD is
    clean.
-7. **Validate the final HEAD, then push it.** On the clean final HEAD, run every
-   applicable repository-defined test, lint, typecheck, and complete local-CI
-   entrypoint. One aggregate command may satisfy its included checks; do not
-   duplicate them. Use the repo's queued/coalesced entrypoint without a manual
-   lease when present; otherwise use its documented `global-ci` lease. Fix a
-   failure in one batch under step 6's review trigger, then rerun this complete
-   deterministic gate on the resulting HEAD.
+7. **Validate the final HEAD, then push it.** On the clean final HEAD, rerun
+   step 2's proportional validation map for the final diff: repository-defined
+   test, lint, typecheck, and build entries covering the changed contracts and
+   their direct consumers. One aggregate command may satisfy its included
+   checks; run the complete local-CI entrypoint only when repository
+   instructions or branch policy name it as the delivery authority, or when no
+   native PR CI covers an applicable risk. Use the repo's queued/coalesced
+   entrypoint without a manual lease when present; otherwise use its documented
+   `global-ci` lease. Fix a code failure in one batch under step 6's review
+   trigger, then rerun the affected proportional gate on the resulting HEAD.
+   Preserve a platform incompatibility already delegated in step 2 as an
+   explicit pending PR-CI obligation.
 
    After it passes, push normally. Mandatory pre-push checks must also pass,
    but do not replace the already-recorded final-HEAD validation. Record the
    exact pushed HEAD and successful results. This step is complete only when
-   the remote head equals the final validated HEAD and all applicable
-   deterministic gates passed on that SHA.
+   the remote head equals the final validated HEAD, its proportional local gate
+   passed on that SHA, and every native-CI delegation is named for step 9.
 
    Leave a `## Dual-review` receipt for the PR body with `Gate:`
    (`skip — <reason>` / `single — <reviewer>; <reason>` / `dual` / degraded
@@ -206,13 +224,14 @@ ship it.
    `skipped — <reason>` / `failed — <reason>`),
    `Reviewed HEAD: <40-character last gate-reviewed SHA>`,
    `Final validated HEAD: <40-character final SHA>`, the deterministic commands
-   and results, whether the conditional review ran and why, each reviewer,
-   native command, assigned axis, finding count, and each finding's disposition
-   (`fixed in <sha>` / `deferred to #N` / discarded reason). A skipped gate
-   states its reason. Name every visible process pane and its matching
-   completion receipt, and confirm that the lead closed each finished pane
-   after validating its artifacts. The receipt is complete when it truthfully
-   distinguishes review evidence from deterministic final-HEAD proof.
+   and results, every check delegated to native PR CI and why, whether the
+   conditional review ran and why, each reviewer, native command, assigned
+   axis, finding count, and each finding's disposition (`fixed in <sha>` /
+   `deferred to #N` / discarded reason). A skipped gate states its reason.
+   Name every visible process pane and its matching completion receipt, and
+   confirm that the lead closed each finished pane after validating its
+   artifacts. The receipt is complete when it truthfully distinguishes review
+   evidence, proportional final-HEAD proof, and pending native-CI obligations.
 8. **Open or update the PR and verify its receipt.** Maintain one accurate,
    ready-for-review PR whose body carries the review and final-CI receipts —
    no receipt, no PR. Create new PRs as non-draft and verify GitHub preserved
