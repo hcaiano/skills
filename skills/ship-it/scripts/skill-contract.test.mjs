@@ -13,6 +13,19 @@ const models = readFileSync(
   join(here, "../../herdr-orchestrate/references/models.md"),
   "utf8",
 );
+const openai = readFileSync(join(here, "../agents/openai.yaml"), "utf8");
+
+test("ship-it stays manual-only across model runtimes", () => {
+  assert.match(shipIt, /^description: "Manual-only /mu);
+  assert.match(shipIt, /^disable-model-invocation: true$/mu);
+  assert.match(openai, /^  allow_implicit_invocation: false$/mu);
+  assert.match(
+    orchestrate,
+    /Because ship-it is manual-only, submit the runtime-native\s+explicit invocation through `send\.mjs`/u,
+  );
+  assert.match(orchestrate, /Claude lead → `\/ship-it Run this unit's gate/u);
+  assert.match(orchestrate, /Codex lead → `\$ship-it Run this unit's gate/u);
+});
 
 test("ship-it keeps final validation after simplify and every review phase", () => {
   const steps = [

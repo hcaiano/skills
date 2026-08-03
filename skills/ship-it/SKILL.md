@@ -1,6 +1,7 @@
 ---
 name: ship-it
-description: "Ship finished work: one graded local review round, one material correction batch, deterministic final-HEAD validation, then delivery. Use when the user wants to ship, open, or update a PR, or when another skill needs that graded gate."
+description: "Manual-only delivery gate for finished work: one graded local review round, one material correction batch, deterministic final-HEAD validation, then delivery. Invoke only when the user explicitly names ship-it or another explicitly invoked workflow delegates its graded gate."
+disable-model-invocation: true
 ---
 
 # Ship It
