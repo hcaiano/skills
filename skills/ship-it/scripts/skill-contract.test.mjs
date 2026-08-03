@@ -21,10 +21,14 @@ test("ship-it stays manual-only across model runtimes", () => {
   assert.match(openai, /^  allow_implicit_invocation: false$/mu);
   assert.match(
     orchestrate,
-    /Because ship-it is manual-only, submit the runtime-native\s+explicit invocation through `send\.mjs`/u,
+    /Because ship-it is manual-only, submit the runtime-native\s+explicit invocation through `send\.mjs @<temporary-file>`/u,
   );
-  assert.match(orchestrate, /Claude lead → `\/ship-it Run this unit's gate/u);
-  assert.match(orchestrate, /Codex lead → `\$ship-it Run this unit's gate/u);
+  assert.match(
+    orchestrate,
+    /The `@<file>` form is mandatory for runtime-native skill invocations/u,
+  );
+  assert.match(orchestrate, /Claude lead → `\/ship-it Run the gate/u);
+  assert.match(orchestrate, /Codex lead → `\$ship-it Run the gate/u);
 });
 
 test("ship-it keeps final validation after simplify and every review phase", () => {

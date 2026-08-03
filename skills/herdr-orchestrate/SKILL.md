@@ -259,6 +259,11 @@ node <skill dir>/scripts/send.mjs <pane_id> "<text>"
 node <skill dir>/scripts/send.mjs <pane_id> @<file>   # kickoffs: no quoting
 ```
 
+The `@<file>` form is mandatory for runtime-native skill invocations. Write
+the complete invocation to a temporary file without shell interpolation, send
+that file, and `trash` it only after the landed receipt; a Codex `$skill`
+token passed as inline shell text can be expanded before `send.mjs` sees it.
+
 Exit 0 carries a `landed: true` receipt; exit 1 means the message never
 landed and that pane goes to the user. The script owns the paste-and-Enter
 dance — `agent prompt` alone strands messages unsubmitted in the composer,
@@ -388,14 +393,16 @@ merged. Then act by kind:
   feedback and await the next ready. Scope sane → record the approved
   SHA (`git -C <worktree> rev-parse HEAD`) and quote it in the go-ahead
   invocation. Because ship-it is manual-only, submit the runtime-native
-  explicit invocation through `send.mjs`, never prose asking the lead to
-  select the skill: Claude lead → `/ship-it Run this unit's gate from
+  explicit invocation through `send.mjs @<temporary-file>`, never inline
+  shell text or prose asking the lead to select the skill. The file's first
+  line is Claude lead → `/ship-it Run the gate for this unit from <provisional
+  gate>; ready-approved SHA: <sha>; grade the actual diff, then report
+  shipped`; Codex lead → `$ship-it Run the gate for this unit from
   <provisional gate>; ready-approved SHA: <sha>; grade the actual diff, then
-  report shipped`; Codex lead → `$ship-it Run this unit's gate from
-  <provisional gate>; ready-approved SHA: <sha>; grade the actual diff, then
-  report shipped`. This invocation is the go-ahead and handled marker. The
-  ship-delta check at shipped diffs from its quoted SHA, and the pane makes it
-  recoverable by a fresh orchestrator. Tell the user the unit is shipping.
+  report shipped`. Require the landed receipt, then `trash` the file. This
+  invocation is the go-ahead and handled marker. The ship-delta check at
+  shipped diffs from its quoted SHA, and the pane makes it recoverable by a
+  fresh orchestrator. Tell the user the unit is shipping.
 - `shipped` — verify the graded review and final-CI receipts match the exact PR
   head. A missing receipt, or one thinner than the provisional gate without a
   recorded risk regrade or capacity reason, means the gate did not run — send
