@@ -95,7 +95,17 @@ const unitKey = spec.unit === undefined || spec.unit === null ? null : String(sp
 if (unitKey !== null && !/^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(unitKey)) {
   emit({ created: false, error: `spec.unit ${JSON.stringify(spec.unit)} must match [A-Za-z0-9][A-Za-z0-9_.+-]{0,63}` }, 2);
 }
-const reportPane = spec.report_pane ?? null;
+// A unit whose milestones reach nobody fails silently: it looks provisioned,
+// works, and is never heard from again. So a tagged unit must name a report
+// pane, and that pane is proven live before anything is created — a well-formed
+// typo or a pane in another workspace is exactly as fatal as an empty string,
+// and lexical validation catches neither.
+const reportPane = spec.report_pane === undefined || spec.report_pane === null
+  ? null
+  : String(spec.report_pane);
+if (unitKey !== null && reportPane === null) {
+  emit({ created: false, error: 'spec.unit requires spec.report_pane; a unit with no report pane loses every milestone' }, 2);
+}
 if (reportPane !== null && unitKey === null) {
   emit({ created: false, error: 'spec.report_pane requires spec.unit' }, 2);
 }
@@ -118,6 +128,27 @@ const tagPane = (paneId, role) => {
 
 let tabId = null;
 try {
+  // Prove the report pane before provisioning: it must exist, sit in the pinned
+  // workspace, and still host an agent. A shell pane swallows every milestone
+  // pushed to it, so "exists" is not enough.
+  if (reportPane !== null) {
+    let target;
+    try {
+      target = herdr('pane', 'get', reportPane)?.pane;
+    } catch (error) {
+      throw new Error(`spec.report_pane ${reportPane} does not resolve: ${error.message}`);
+    }
+    if (!target || target.pane_id !== reportPane) {
+      throw new Error(`spec.report_pane ${reportPane} does not resolve to that exact pane`);
+    }
+    if (target.workspace_id !== spec.workspace) {
+      throw new Error(`spec.report_pane ${reportPane} is in workspace ${target.workspace_id}, not the pinned ${spec.workspace}`);
+    }
+    if (!target.agent) {
+      throw new Error(`spec.report_pane ${reportPane} hosts no agent; milestones pushed there would be swallowed`);
+    }
+  }
+
   const created = herdr('tab', 'create', '--workspace', spec.workspace, '--cwd', spec.cwd, '--label', spec.label, ...unitEnv, '--no-focus');
   const root = created?.root_pane ?? created?.tab?.root_pane;
   tabId = created?.tab?.tab_id ?? root?.tab_id;

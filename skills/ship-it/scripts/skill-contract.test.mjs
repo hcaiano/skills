@@ -161,4 +161,13 @@ test("review and simplify decisions are risk-adaptive and auditable", () => {
     models,
     /Simplify is independent of staffing, model, pair use, and reviewer count/u,
   );
+  assert.match(
+    shipIt,
+    /A user-requested simplify pass\s+overrides every one of those eligibility skips, at any grade including\s+`skip`/u,
+  );
+  assert.match(
+    models,
+    /An explicit user request overrides every eligibility skip at any grade,\s+including `skip`/u,
+  );
+  assert.doesNotMatch(models, /`skip` spends neither review pool and runs no simplify/u);
 });

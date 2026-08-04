@@ -42,6 +42,10 @@ if (key === "tab create") {
   out({ agent: { name: args[2] } });
 } else if (key === "pane split") {
   out({ pane: { pane_id: args[2] + "s", tab_id: state.tab_create.tab.tab_id } });
+} else if (key === "pane get") {
+  const pane = state.panes_by_id?.[args[2]];
+  if (!pane) { process.stderr.write("pane_not_found: " + args[2] + "\\n"); process.exit(1); }
+  out({ pane });
 } else if (key === "pane list") {
   out({ panes: state.panes });
 } else if (key === "pane report-metadata") {
@@ -106,6 +110,8 @@ const baseState = () => ({
     root_pane: { pane_id: "w1:p9", tab_id: "w1:t9", workspace_id: "w1", cwd: "/repo/wt" },
   },
   panes: [{ pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude" }],
+  // The orchestrator's own pane, which unit specs name as their report pane.
+  panes_by_id: { "w1:pO": { pane_id: "w1:pO", workspace_id: "w1", agent: "claude" } },
 });
 
 const soloSpec = JSON.stringify({
@@ -239,14 +245,14 @@ test("create-unit tags panes and injects unit env when spec.unit is given", () =
 
   // `0` is a real unit key, not an absent one.
   const zero = baseState();
-  zero.panes = [{ pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude", tokens: { unit: "0", role: "lead" } }];
+  zero.panes = [{ pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude", tokens: { unit: "0", role: "lead", report_pane: "w1:pO" } }];
   writeState(zero);
   const zeroUnit = runScript(
     createUnit,
     "--spec",
-    JSON.stringify({ ...JSON.parse(soloSpec), unit: 0 }),
+    JSON.stringify({ ...JSON.parse(soloSpec), unit: 0, report_pane: "w1:pO" }),
   );
-  assert.deepEqual(zeroUnit.tokens, { "w1:p9": { unit: "0", role: "lead" } });
+  assert.deepEqual(zeroUnit.tokens, { "w1:p9": { unit: "0", role: "lead", report_pane: "w1:pO" } });
   assert.ok(
     readState().calls.find((c) => c[1] === "tab" && c[2] === "create").includes("HERDR_UNIT=0"),
     "unit 0 must still be injected",
@@ -257,6 +263,37 @@ test("create-unit tags panes and injects unit env when spec.unit is given", () =
   const bad = runScriptFail(createUnit, "--spec", unitSpec({ unit: "#7 fix" }));
   assert.match(bad.error, /must match/u);
   assert.equal(readState().calls.length, 0, "a rejected spec must not touch Herdr");
+
+  // A tagged unit with no report pane loses every milestone, so it is refused
+  // before anything is created.
+  writeState(baseState());
+  const noReportPane = runScriptFail(
+    createUnit,
+    "--spec",
+    JSON.stringify({ ...JSON.parse(soloSpec), unit: "7" }),
+  );
+  assert.match(noReportPane.error, /requires spec.report_pane/u);
+  assert.equal(readState().calls.length, 0, "a unit with no report pane must not touch Herdr");
+
+  // A well-formed report pane still has to exist, live in the pinned
+  // workspace, and host an agent — lexical validation proves none of that.
+  const reportPaneCases = [
+    { pane: undefined, error: /does not resolve/u, label: "missing pane" },
+    { pane: { pane_id: "w1:pO", workspace_id: "w2", agent: "claude" }, error: /not the pinned w1/u, label: "cross-workspace" },
+    { pane: { pane_id: "w1:pO", workspace_id: "w1", agent: null }, error: /hosts no agent/u, label: "shell pane" },
+  ];
+  for (const testCase of reportPaneCases) {
+    const state = baseState();
+    state.panes_by_id = testCase.pane ? { "w1:pO": testCase.pane } : {};
+    writeState(state);
+    const rejected = runScriptFail(createUnit, "--spec", unitSpec());
+    assert.match(rejected.error, testCase.error, `report pane ${testCase.label}`);
+    assert.equal(
+      readState().calls.some((c) => c[1] === "tab" && c[2] === "create"),
+      false,
+      `${testCase.label} must be caught before the tab is created`,
+    );
+  }
 
   // A report pane with no unit has nothing to tag, and is a caller mistake.
   writeState(baseState());

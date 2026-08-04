@@ -97,12 +97,30 @@ state rather than from memory or from parsing a label.
 
 Using the pinned `workspace_id`, list only its tabs and panes
 (`herdr tab list --workspace <id>`; `herdr pane list --workspace <id>`). Each
-pane row carries its `tokens` and agent state: keep only the rows whose
-`tokens.report_pane` is this run's pinned report pane, then group those by
-`tokens.unit` and take the lead from `tokens.role`. A unit whose panes carry
-another run's `report_pane`, or disagree among themselves, belongs to that
-run — ignore it and report it; one workspace can hold units from more than one
-run and more than one repo, and `tokens.unit` alone does not tell them apart.
+pane row carries its `tokens` and agent state. Group the rows by the pair
+(`tokens.unit`, `tokens.report_pane`) — never by `tokens.unit` alone, which
+would merge two runs that happened to pick the same key — and require every
+pane in a group to agree on repository and to hold distinct `tokens.role`
+values before treating it as one unit. Then classify each group by its
+`report_pane`:
+
+- it is this run's pinned report pane → the unit is ours;
+- it is another pane that is live and still hosts an agent → the unit belongs
+  to that run: ignore it and report it;
+- it no longer resolves to a live agent pane → the unit is **orphaned**, its
+  orchestrator gone. Adopt it, which is what lets an orchestrator restarted in
+  a new pane (the restaff path in guardrail 3) recover its own units instead of
+  disowning them.
+
+Adoption is not a re-tag. The delegate captured `HERDR_UNIT_REPORT_PANE` in its
+environment when its tab was created, so re-tagging tokens alone leaves it
+pushing milestones into a dead pane and the unit stays silent. Adopt in this
+order: re-tag the unit's panes with this run's `report_pane`, then
+[send](#sending-a-message-to-an-agent) each live agent in the unit a one-line
+re-route naming the new pane id and requiring it to use that value from now on
+instead of its captured variable, and treat the unit as adopted only once that
+message has a landed receipt. A unit whose agents cannot be reached is reported
+to the user, not silently adopted.
 Skip a unit whose pane cwd resolves to another repository. Target later agent
 reads by pane ID. For each unit of this repository, note its issues, branch,
 agent states (working / blocked / idle), any PR for its branch — check merged
@@ -308,7 +326,10 @@ you hit it —
   node <absolute path to send.mjs> "$HERDR_UNIT_REPORT_PANE" \
     "[unit workspace=$HERDR_UNIT_WORKSPACE unit=$HERDR_UNIT] <kind>: <detail>"
 All three variables are already in this tab's environment — read them rather
-than retyping an id you might lose.
+than retyping an id you might lose. If a message ever tells you this unit's
+report pane has moved, that new pane id wins over the variable for the rest of
+the run: your environment was captured when this tab was created and cannot be
+updated in place.
 — push unconditionally, even if the orchestrator is mid-turn; the script
 queues it and confirms it landed. Never substitute `herdr agent prompt`: it
 returns before its Enter takes effect, and an unlanded milestone stalls this

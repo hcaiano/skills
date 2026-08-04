@@ -346,11 +346,18 @@ function normalizeSession(session, live) {
 function discover({ allowMissing = false, allowStalePartner = false } = {}) {
   const self = currentPane();
   const partnerAgent = opposite(self.agent);
+  // A short-lived process pane (a ship-it review or simplify run) is detected
+  // by Herdr as a third agent in this tab and would otherwise make the pair
+  // look ambiguous, silencing the channel for as long as the run lasts. Such a
+  // pane declares itself with a `role=process-pane` token, so it is excluded by
+  // its own declaration — an undeclared third agent is still ambiguous and
+  // still fails.
   const tabAgents = paneList(self.workspace_id).filter(
     (pane) =>
       pane.tab_id === self.tab_id &&
       pane.workspace_id === self.workspace_id &&
-      ["claude", "codex"].includes(pane.agent),
+      ["claude", "codex"].includes(pane.agent) &&
+      pane.tokens?.role !== "process-pane",
   );
   const selfMatches = tabAgents.filter((pane) => pane.pane_id === self.pane_id);
   const candidates = tabAgents.filter(
@@ -1208,10 +1215,65 @@ async function reconcileSession(args) {
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
 }
 
+// The caller's own process ancestry is the one signal nothing can forge or
+// stale out: it comes from the live process table, not from anything Herdr
+// injected at start. `HERDR_PANE_ID` and the `agent_session` binding both
+// derive from the same injected variable — the integration hook reports the
+// session *to* `$HERDR_PANE_ID` — so after a pane move they agree on the wrong
+// pane together. A parent process cannot be wrong about who its child is.
+function ancestorPids() {
+  const chain = new Set();
+  let pid = process.pid;
+  for (let depth = 0; depth < 16 && pid > 1; depth += 1) {
+    chain.add(String(pid));
+    let parent;
+    try {
+      parent = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      break;
+    }
+    if (!/^\d+$/u.test(parent)) break;
+    pid = Number(parent);
+  }
+  return chain;
+}
+
+// Panes share ancestors further up (every pane descends from the Herdr server),
+// so a chain that matches more than one pane proves nothing and must fall back.
+function identifyByAncestry(snapshot, agent, repoRoot) {
+  const chain = ancestorPids();
+  const matches = snapshot.agents.filter((pane) => {
+    let info;
+    try {
+      info = processInfo(pane.pane_id);
+    } catch {
+      return false;
+    }
+    return info.foreground_processes.some(
+      (entry) => entry.pid !== undefined && chain.has(String(entry.pid)),
+    );
+  });
+  if (matches.length !== 1) return null;
+  const pane = matches[0];
+  if (pane.agent !== agent) {
+    fail(
+      `the caller's process runs in a ${pane.agent} pane; --as ${agent} does not match`,
+    );
+  }
+  if (pane.cwd !== repoRoot && pane.foreground_cwd !== repoRoot) {
+    fail(
+      `caller pane ${pane.pane_id} is rooted at ${pane.cwd}, not the declared --repo-root ${repoRoot}`,
+    );
+  }
+  return pane;
+}
+
 function conversationMarkers(path) {
   if (!path) {
     fail(
-      "id could not resolve the caller from its own session id ($CLAUDE_CODE_SESSION_ID / $CODEX_THREAD_ID matched zero or several panes) and therefore requires --conversation-markers-file",
+      "id could not resolve the caller from its own process ancestry (it matched zero or several panes) and therefore requires --conversation-markers-file",
     );
   }
   let markers;
@@ -1238,43 +1300,9 @@ function conversationMarkers(path) {
   return values.map((value) => value.trim());
 }
 
-// The agent's own session id is the cheapest exact caller proof: herdr binds
-// `agent_session.value` per pane to the Claude session UUID / Codex rollout id,
-// and the agent reads its own from the environment. It is authoritative only
-// while it resolves to exactly one pane — a resumed or stale binding can put
-// one id on several panes, so anything other than a single owner falls back to
-// the conversation-marker proof below.
-function ownSessionId(agent, options) {
-  if (options["session-id"]) return options["session-id"];
-  const fromEnvironment =
-    agent === "claude"
-      ? process.env.CLAUDE_CODE_SESSION_ID
-      : process.env.CODEX_THREAD_ID;
-  return fromEnvironment && fromEnvironment.trim() ? fromEnvironment.trim() : null;
-}
-
-function identifyBySession(snapshot, agent, repoRoot, sessionId) {
-  const owners = snapshot.agents.filter(
-    (pane) => pane.agent_session?.value === sessionId,
-  );
-  if (owners.length !== 1) return null;
-  const pane = owners[0];
-  if (pane.agent !== agent) {
-    fail(
-      `agent_session ${sessionId} is bound to a ${pane.agent} pane; --as ${agent} does not match the caller`,
-    );
-  }
-  if (pane.cwd !== repoRoot && pane.foreground_cwd !== repoRoot) {
-    fail(
-      `caller pane ${pane.pane_id} is rooted at ${pane.cwd}, not the declared --repo-root ${repoRoot}`,
-    );
-  }
-  requireForegroundProcess(pane.pane_id, agent, repoRoot);
-  return pane;
-}
-
-// Resolve the caller through live topology and either its own session binding
-// or exact conversation evidence, then confirm it with foreground-process proof.
+// Resolve the caller from its own process ancestry, falling back to exact
+// conversation evidence, and confirm it with foreground-process proof. Session
+// bindings are diagnostic metadata only.
 function identify(options) {
   if (process.env.HERDR_ENV !== "1") fail("id requires HERDR_ENV=1");
   const agent = options.as;
@@ -1287,12 +1315,10 @@ function identify(options) {
   }
   const snapshot = sessionSnapshot();
 
-  const sessionId = ownSessionId(agent, options);
-  const bySession = sessionId
-    ? identifyBySession(snapshot, agent, repoRoot, sessionId)
-    : null;
-  if (bySession) {
-    reportIdentity(snapshot, bySession, agent, repoRoot, options, "agent-session");
+  const byAncestry = identifyByAncestry(snapshot, agent, repoRoot);
+  if (byAncestry) {
+    requireForegroundProcess(byAncestry.pane_id, agent, repoRoot);
+    reportIdentity(snapshot, byAncestry, agent, repoRoot, options, "process-ancestry");
     return;
   }
 

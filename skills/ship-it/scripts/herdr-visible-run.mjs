@@ -266,6 +266,19 @@ const createPane = (pin) => {
   )?.pane;
   if (!created?.pane_id) fail("herdr pane split returned no pane ID");
   cleanupPane = created.pane_id;
+  // Herdr detects the agent this pane is about to run as a real agent in the
+  // caller's tab, which makes a live herdr-pair look ambiguous and silences the
+  // pair channel for the whole gate. Declare the pane for what it is so the
+  // pair helper can skip it; an undeclared extra agent must still be ambiguous.
+  herdrResult(
+    "pane",
+    "report-metadata",
+    created.pane_id,
+    "--source",
+    "ship-it",
+    "--token",
+    "role=process-pane",
+  );
   return created.pane_id;
 };
 

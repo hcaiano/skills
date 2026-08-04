@@ -21,14 +21,14 @@ any is missing, stop and tell the user to install or start (or update) Herdr.
 
 Before any Herdr mutation, read and execute
 [Caller pane proof](references/caller-pane-resolution.md). It resolves the
-explicit task repository, proves the unique caller from its own session id —
-falling back to conversation markers when that id does not own exactly one
-pane — and returns `PAIR_PROOF` plus the pinned `PAIR_ID`, including
-`--tab-id`. Stop when that proof does not complete exactly.
+explicit task repository, proves the unique caller from its own process
+ancestry — falling back to conversation markers when that ancestry matches
+anything other than exactly one pane — and returns `PAIR_PROOF` plus the pinned
+`PAIR_ID`, including `--tab-id`. Stop when that proof does not complete exactly.
 
 ## Guardrails
 
-1. Scope every pane operation to the proven `workspace_id`,
+1. Scope every pane operation to the transcript-proven `workspace_id`,
    `tab_id`, `pane_id`, agent kind, terminal identity, and repository. Never
    address a pane discovered only by workspace, focus, label, cwd, direction,
    session metadata, or pane number.

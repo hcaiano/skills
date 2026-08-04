@@ -141,7 +141,8 @@ they only route the reviewers required by that semantic grade. A pool is **out
 of headroom** when its `used_percent` is 90 or higher, or its CLI refuses or
 rate-limits at start; a null pool never degrades the gate by itself.
 
-- `skip` spends neither review pool and runs no simplify or LLM review.
+- `skip` spends neither review pool and runs no LLM review. It omits simplify
+  unless the user explicitly requested that pass.
 - `single` spends one pool, preferring the model family that did not
   implement the change and then the cooler available pool only after ship-it
   has fixed the one-review grade. If that pool is out, use the other and name
@@ -150,9 +151,10 @@ rate-limits at start; a null pool never degrades the gate by itself.
   codex-only`; Codex out records `dual — degraded to claude-only`; the
   semantic grade remains `dual`.
 - Simplify is independent of staffing, model, pair use, and reviewer count.
-  Ship-it omits it for `skip`; for reviewed grades it runs only when the actual
-  diff has a concrete eligible target and Claude has headroom. A `claude.pace`
-  above 2 records a skip.
+  An explicit user request overrides every eligibility skip at any grade,
+  including `skip`. Otherwise ship-it omits it for `skip`; for reviewed grades
+  it runs only when the actual diff has a concrete eligible target and Claude
+  has headroom. A `claude.pace` above 2 records a skip.
 - Both pools out → queue the unit. A genuinely urgent unit that runs anyway
   takes a single review on whichever harness still responds, preferring the
   family that did not implement it. If neither responds, the merge policy

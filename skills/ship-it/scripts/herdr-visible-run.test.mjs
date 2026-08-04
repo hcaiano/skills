@@ -75,7 +75,7 @@ if (key === "pane get") {
   result({ pane: { pane_id: "w1:p2" } });
 } else if (key === "pane run") {
   process.exit(0);
-} else if (key === "pane rename" || key === "pane close") {
+} else if (key === "pane rename" || key === "pane close" || key === "pane report-metadata") {
   result({ ok: true });
 } else {
   process.stderr.write("unexpected " + args.join(" "));
@@ -134,6 +134,11 @@ test("start validates the pin and launches in a visible sibling pane", () => {
     .map(JSON.parse);
   assert.ok(seen.some((args) => args[0] === "pane" && args[1] === "split"));
   assert.ok(seen.some((args) => args[0] === "pane" && args[1] === "run"));
+  // The pane must declare itself a process pane, or a live herdr-pair in this
+  // tab counts it as a third agent and its channel goes silent for the gate.
+  const declared = seen.find((args) => args[0] === "pane" && args[1] === "report-metadata");
+  assert.ok(declared, "a process pane must declare its role");
+  assert.ok(declared.includes("role=process-pane"), "declaration must carry role=process-pane");
   assert.ok(
     !seen.find((args) => args[0] === "pane" && args[1] === "run").join(" ").includes(longPrompt),
     "long command argv must travel through a private command file",

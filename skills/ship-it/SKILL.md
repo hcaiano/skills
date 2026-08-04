@@ -93,8 +93,9 @@ ship it.
    Choose a recorded simplify skip when there is no concrete target, when the
    delivery grade is `skip`, or when the change's core surface is
    docs/Markdown/config, generated output, migrations, schemas/contracts,
-   allowlists, or security/performance guards. For reviewed grades, a
-   user-requested simplify pass overrides the other eligibility skips.
+   allowlists, or security/performance guards. A user-requested simplify pass
+   overrides every one of those eligibility skips, at any grade including
+   `skip` — the user asking for it is the target.
 
    Simplify is independent of reviewer count. An eligible pass runs once per
    delivery, after focused proof and before review so reviewers see the

@@ -3,23 +3,57 @@
 Run this proof before any Herdr mutation. It is the single caller-identity
 contract for `herdr-pair` and `herdr-orchestrate`.
 
-Resolve the task repository explicitly, then run the proof:
+## Resolve
 
 ```sh
 TASK_REPO=$(git -C <task-repository> rev-parse --show-toplevel)
 PAIR_PROOF=$(node "$PAIR_SCRIPT" id --as <claude|codex> --repo-root "$TASK_REPO")
 ```
 
-The helper reads your own session id — `$CLAUDE_CODE_SESSION_ID` for Claude,
-`$CODEX_THREAD_ID` for Codex — and matches it against the `agent_session.value`
-that Herdr binds to each pane. Owning exactly one pane proves the caller
-outright; the helper then confirms that pane's live foreground agent process and
-repository and reports `proof: "agent-session"`. Nothing else identifies you:
-`pane current --current` merely echoes `$HERDR_PANE_ID`, an environment value
-captured at process start that goes stale across pane moves, and with that
-variable unset it falls back to whichever pane the UI has focused.
+The helper walks your own process ancestry and looks for a pane whose live
+foreground processes include one of your ancestors. A parent process cannot be
+wrong about which pane its own child runs in, and that fact comes from the live
+process table rather than from anything Herdr injected at start — which is why
+it, and not the environment, is the proof. `$HERDR_PANE_ID` and the
+`agent_session` binding both derive from the same injected variable (the
+integration hook reports the session *to* `$HERDR_PANE_ID`), so after a pane
+move they agree on the wrong pane together and neither is evidence. `pane
+current --current` merely echoes that same variable, and falls back to the
+UI-focused pane when it is unset.
 
-Inspect `PAIR_PROOF`, name its `workspace_label` to the user, then pin it:
+Matching exactly one pane reports `proof: "process-ancestry"`. Panes share
+ancestors further up — every pane descends from the Herdr server — so a chain
+matching more than one pane proves nothing and falls back to the marker proof
+below.
+
+## When the helper asks for conversation markers
+
+Write one distinctive commentary sentence about the newest user request. Create
+a temporary JSON file with two exact, high-entropy excerpts already visible in
+the caller transcript:
+
+```json
+{
+  "newest_user_request": "<exact excerpt from the newest user request>",
+  "recent_caller_output": "<exact excerpt from that commentary>"
+}
+```
+
+Both excerpts must be exact and unique to this conversation, and must remain
+different after trimming; the commentary excerpt must be at least 12
+characters. Set `MARKERS_FILE` to that file and trash it after resolution.
+
+Re-run the proof with `--conversation-markers-file "$MARKERS_FILE"`, then trash
+the file. That path narrows to candidate panes whose agent kind matches and
+whose `cwd` or `foreground_cwd` equals `TASK_REPO`, keeps those with a live
+foreground agent process, reads each one's transcript, and requires exactly one
+to contain both markers. It reports `proof: "conversation-markers"`, and
+hard-stops when no live candidate remains, on zero or multiple transcript
+matches, on unreadable or empty candidate transcripts, on a final process or
+repository mismatch, or on live pane drift during the proof.
+
+Inspect `PAIR_PROOF`, name its `workspace_label` to the user, then pin its exact
+pane, workspace, tab, terminal, agent, and repository:
 
 ```bash
 PAIR_ID=(
@@ -35,34 +69,7 @@ PAIR_ID=(
 Use `"${PAIR_ID[@]}"` on every helper command. The helper rechecks the pinned
 workspace, tab, terminal, agent process, and repository before acting.
 
-## When the helper asks for conversation markers
-
-A session id can land on more than one pane (a resumed session, a stale
-binding), and a pane predating session reporting has none at all. The helper
-refuses to guess: it stops and asks for `--conversation-markers-file`. Only
-then, write one distinctive commentary sentence about the newest user request
-and build a temporary JSON file with two exact, high-entropy excerpts already
-visible in this conversation:
-
-```json
-{
-  "newest_user_request": "<exact excerpt from the newest user request>",
-  "recent_caller_output": "<exact excerpt from that commentary>"
-}
-```
-
-Both excerpts must be exact and unique to this conversation, must remain
-different after trimming, and the commentary excerpt must be at least 12
-characters. Re-run the proof with `--conversation-markers-file <path>`, then
-trash the file. The helper matches those markers against the live transcript of
-every same-repository candidate pane and reports `proof:
-"conversation-markers"`.
-
-It hard-stops when no live candidate remains, on zero or multiple transcript
-matches, on unreadable or empty candidate transcripts, on a final process or
-repository mismatch, or on live pane drift during the proof.
-
-`agent_session` is reported as supporting metadata on this path, and a
-duplicated binding is named in `session_binding_warning`; neither selects or
-redirects the pane. Session paths, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`, UI
-focus, and `pane.current` are never caller proof.
+`agent_session` is supporting metadata in `PAIR_PROOF`. A duplicated binding is
+reported in `session_binding_warning`; it never selects or redirects the pane.
+`CODEX_THREAD_ID`, session paths, `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`, UI
+focus, and `pane.current` are not caller proof.

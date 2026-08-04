@@ -141,6 +141,12 @@ else if (args[0] === "pane" && args[1] === "process-info") {
     (pane?.agent
       ? [{ argv: [pane.agent], cwd: pane.cwd, name: pane.agent }]
       : []);
+  // The caller proves itself by process ancestry, so panes listed in
+  // state.ancestor_panes report a pid the test process really is an ancestor
+  // of — anything else would not exercise the real check.
+  if ((state.ancestor_panes ?? []).includes(paneId) && foreground_processes[0]) {
+    foreground_processes[0].pid = Number(process.env.TEST_ANCESTOR_PID);
+  }
   output({ process_info: { pane_id: paneId, foreground_processes } });
 }
 else if (args[0] === "agent" && args[1] === "read") {
@@ -219,6 +225,7 @@ chmodSync(fakeHerdr, 0o755);
 const env = {
   ...process.env,
   FAKE_HERDR_STATE: statePath,
+  TEST_ANCESTOR_PID: String(process.pid),
   HERDR_ENV: "1",
   HERDR_PANE_ID: "w1:p1",
   HOME: home,
@@ -330,69 +337,6 @@ try {
       "/workspace",
     ],
   });
-  // The agent's own session id resolves the caller with no markers at all,
-  // as long as it owns exactly one pane.
-  const idBySession = JSON.parse(
-    runRawWithEnv(
-      { CODEX_THREAD_ID: "codex-session-w1-p1", HERDR_PANE_ID: "stale:pane" },
-      "id",
-      "--as",
-      "codex",
-      "--repo-root",
-      "/workspace",
-    ),
-  );
-  assert.equal(idBySession.pane, "w1:p1");
-  assert.equal(idBySession.proof, "agent-session");
-  assert.equal(idBySession.session_binding_warning, null);
-  assert.deepEqual(idBySession.args, [
-    "--pane",
-    "w1:p1",
-    "--workspace",
-    "w1",
-    "--tab-id",
-    "w1:t1",
-    "--as",
-    "codex",
-    "--terminal-id",
-    "term-w1-p1",
-    "--repo-root",
-    "/workspace",
-  ]);
-  // An explicit --session-id is equivalent to the environment reading.
-  assert.equal(
-    JSON.parse(
-      runRaw("id", "--as", "codex", "--repo-root", "/workspace", "--session-id", "codex-session-w1-p1"),
-    ).proof,
-    "agent-session",
-  );
-  // A session id bound to the other harness's pane is a caller mismatch, not a
-  // reason to guess.
-  assert.throws(
-    () =>
-      runRawWithEnv(
-        { CLAUDE_CODE_SESSION_ID: "codex-session-w1-p1" },
-        "id",
-        "--as",
-        "claude",
-        "--repo-root",
-        "/workspace",
-      ),
-    /is bound to a codex pane; --as claude does not match the caller/u,
-  );
-  // Resolving the caller never silently accepts a different repository.
-  assert.throws(
-    () =>
-      runRawWithEnv(
-        { CODEX_THREAD_ID: "codex-session-w1-p1" },
-        "id",
-        "--as",
-        "codex",
-        "--repo-root",
-        "/another-repository",
-      ),
-    /is rooted at \/workspace, not the declared --repo-root \/another-repository/u,
-  );
   assert.equal(
     runRaw(
       "id",
@@ -456,6 +400,53 @@ try {
     () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
     /requires --conversation-markers-file/u,
   );
+
+  // Process ancestry proves the caller with no markers at all: a parent cannot
+  // be wrong about which pane its own child runs in.
+  let ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  ancestryState.ancestor_panes = ["w1:p1"];
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
+  const byAncestry = JSON.parse(
+    runRawWithEnv(
+      { HERDR_PANE_ID: "stale:pane" },
+      "id",
+      "--as",
+      "codex",
+      "--repo-root",
+      "/workspace",
+    ),
+  );
+  assert.equal(byAncestry.pane, "w1:p1");
+  assert.equal(byAncestry.proof, "process-ancestry");
+
+  // Claiming to be the other harness is a caller mismatch, not a reason to guess.
+  assert.throws(
+    () => runRaw("id", "--as", "claude", "--repo-root", "/workspace"),
+    /runs in a codex pane; --as claude does not match/u,
+  );
+
+  // Panes share ancestors further up, so a chain matching two panes proves
+  // nothing and must fall all the way back to the marker proof.
+  ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  ancestryState.ancestor_panes = ["w1:p1", "w1:p2"];
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
+  assert.equal(
+    JSON.parse(
+      runRaw(
+        "id", "--as", "codex", "--repo-root", "/workspace",
+        "--conversation-markers-file", markersFile,
+      ),
+    ).proof,
+    "conversation-markers",
+    "an ambiguous ancestry must never select a pane on its own",
+  );
+  assert.throws(
+    () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
+    /process ancestry \(it matched zero or several panes\)/u,
+  );
+  ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  delete ancestryState.ancestor_panes;
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
   assert.throws(
     () =>
       runRawWithEnv(
@@ -557,36 +548,6 @@ try {
   );
   assert.equal(duplicateSession.pane, "w1:p1");
   assert.match(duplicateSession.session_binding_warning, /appears on 2 panes and was ignored/u);
-
-  // A session id on two panes cannot select either; the caller must fall all
-  // the way back to the conversation-marker proof, not pick one.
-  const duplicateFallsBack = JSON.parse(
-    runRawWithEnv(
-      { CODEX_THREAD_ID: "codex-session-w1-p1" },
-      "id",
-      "--as",
-      "codex",
-      "--repo-root",
-      "/workspace",
-      "--conversation-markers-file",
-      markersFile,
-    ),
-  );
-  assert.equal(duplicateFallsBack.pane, "w1:p1");
-  assert.equal(duplicateFallsBack.proof, "conversation-markers");
-  // Without markers there is nothing left to fall back to, so it must stop.
-  assert.throws(
-    () =>
-      runRawWithEnv(
-        { CODEX_THREAD_ID: "codex-session-w1-p1" },
-        "id",
-        "--as",
-        "codex",
-        "--repo-root",
-        "/workspace",
-      ),
-    /requires --conversation-markers-file/u,
-  );
 
   identityState = JSON.parse(readFileSync(statePath, "utf8"));
   identityState.transcripts["w2:p1"] = identityState.transcripts["w1:p1"];
