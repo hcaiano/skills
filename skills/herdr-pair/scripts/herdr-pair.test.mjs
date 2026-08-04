@@ -141,9 +141,16 @@ else if (args[0] === "pane" && args[1] === "process-info") {
     (pane?.agent
       ? [{ argv: [pane.agent], cwd: pane.cwd, name: pane.agent }]
       : []);
-  // The caller proves itself by process ancestry, so panes listed in
-  // state.ancestor_panes report a pid the test process really is an ancestor
-  // of — anything else would not exercise the real check.
+  // Real herdr reports a pid on every foreground process, and the caller
+  // proves itself by ancestry, so panes listed in state.ancestor_panes report a
+  // pid the test process really is an ancestor of; every other pane still gets
+  // a pid, just an unrelated one.
+  let nextFakePid = 900000;
+  for (const entry of foreground_processes) {
+    if (entry && typeof entry === "object" && entry.pid === undefined) {
+      entry.pid = (nextFakePid += 1);
+    }
+  }
   if ((state.ancestor_panes ?? []).includes(paneId) && foreground_processes[0]) {
     foreground_processes[0].pid = Number(process.env.TEST_ANCESTOR_PID);
   }
@@ -444,7 +451,57 @@ try {
     () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
     /process ancestry \(it matched zero or several panes\)/u,
   );
+  // A `role=process-pane` token is written by whoever asks, so it must not be
+  // able to hide a real agent from the exact-two invariant on its own: only a
+  // pane actually running the gate helper is excluded.
+  let tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  tokenState.panes["w1:p3"] = {
+    ...tokenState.panes["w1:p1"],
+    pane_id: "w1:p3",
+    terminal_id: "term-w1-p3",
+    tokens: { role: "process-pane" },
+  };
+  tokenState.processes["w1:p3"] = [
+    { argv: ["codex"], cwd: "/workspace", name: "codex", pid: 999001 },
+  ];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+  assert.throws(
+    () => runAs("w1:p2", "discover"),
+    /expected exactly two agent panes/u,
+    "a forged process-pane token must not hide a real agent",
+  );
+  // The same pane, now genuinely running the gate helper, is excluded.
+  tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  tokenState.processes["w1:p3"] = [
+    {
+      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec"],
+      cwd: "/workspace",
+      name: "node",
+      pid: 999001,
+    },
+  ];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+  const withGatePane = JSON.parse(runAs("w1:p2", "discover"));
+  assert.equal(withGatePane.partner.pane_id, "w1:p1");
+  tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  delete tokenState.panes["w1:p3"];
+  delete tokenState.processes["w1:p3"];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+
+  // One match plus one unreadable pane is not uniqueness: the unknown pane
+  // could have been the real caller, so ancestry must abandon the path rather
+  // than authorize the pane it happened to read.
   ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  ancestryState.ancestor_panes = ["w1:p1"];
+  ancestryState.fail_process_info_pane = "w1:p2";
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
+  assert.throws(
+    () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
+    /process ancestry \(it matched zero or several panes\)/u,
+    "an unreadable candidate must never leave a false unique match",
+  );
+  ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  delete ancestryState.fail_process_info_pane;
   delete ancestryState.ancestor_panes;
   writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
   assert.throws(

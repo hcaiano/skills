@@ -97,12 +97,15 @@ state rather than from memory or from parsing a label.
 
 Using the pinned `workspace_id`, list only its tabs and panes
 (`herdr tab list --workspace <id>`; `herdr pane list --workspace <id>`). Each
-pane row carries its `tokens` and agent state. Group the rows by the pair
-(`tokens.unit`, `tokens.report_pane`) — never by `tokens.unit` alone, which
-would merge two runs that happened to pick the same key — and require every
-pane in a group to agree on repository and to hold distinct `tokens.role`
-values before treating it as one unit. Then classify each group by its
-`report_pane`:
+pane row carries its `tokens` and agent state. Consider only rows whose
+metadata is complete — a `unit`, a `report_pane`, and a `role` of `lead` or
+`peer`; a pane carrying some of those but not all is inconsistent state that
+stops the survey and goes to the user, and a pane carrying none (a gate's
+`process-pane`, a shell) is simply not a unit pane. Group what remains by the
+pair (`tokens.unit`, `tokens.report_pane`) — never by `tokens.unit` alone,
+which would merge two runs that happened to pick the same key — and require
+every pane in a group to agree on repository and to hold distinct roles before
+treating it as one unit. Then classify each group by its `report_pane`:
 
 - it is this run's pinned report pane → the unit is ours;
 - it is another pane that is live and still hosts an agent → the unit belongs
@@ -115,12 +118,22 @@ values before treating it as one unit. Then classify each group by its
 Adoption is not a re-tag. The delegate captured `HERDR_UNIT_REPORT_PANE` in its
 environment when its tab was created, so re-tagging tokens alone leaves it
 pushing milestones into a dead pane and the unit stays silent. Adopt in this
-order: re-tag the unit's panes with this run's `report_pane`, then
-[send](#sending-a-message-to-an-agent) each live agent in the unit a one-line
-re-route naming the new pane id and requiring it to use that value from now on
-instead of its captured variable, and treat the unit as adopted only once that
-message has a landed receipt. A unit whose agents cannot be reached is reported
-to the user, not silently adopted.
+order, and only in this order:
+
+1. [Send](#sending-a-message-to-an-agent) each live agent in the unit a
+   one-line re-route naming the new report pane and requiring it to use that
+   value from now on instead of its captured variable.
+2. Wait for each of those agents to acknowledge **through the new report
+   pane**. A landed receipt proves the message was submitted, not that a busy
+   delegate has processed it, and a delegate that has not yet read it is still
+   pushing into the dead pane.
+3. Only then re-tag the unit's panes with this run's `report_pane`.
+
+Re-tagging last is what makes the adoption honest: until every agent has
+answered on the new channel, the tokens still say the unit belongs to the old
+run, so an orchestrator restarted mid-adoption finds it unadopted and retries
+rather than assuming a routing change that never took. A unit whose agents
+cannot be reached is reported to the user, never silently adopted.
 Skip a unit whose pane cwd resolves to another repository. Target later agent
 reads by pane ID. For each unit of this repository, note its issues, branch,
 agent states (working / blocked / idle), any PR for its branch — check merged
@@ -439,12 +452,13 @@ merged. Then act by kind:
   shipped diffs from its quoted SHA, and the pane makes it recoverable by a
   fresh orchestrator. Tell the user the unit is shipping.
 - `shipped` — verify the graded review and final-CI receipts match the exact PR
-  head. A missing receipt means the gate did not run. A receipt whose execution
-  is thinner than the provisional gate is accepted only when its `Gate:`,
-  `Risk:`, and `Regrade:` lines justify either a semantic regrade of the actual
-  diff or a capacity-degraded execution of the same grade; a receipt matching
-  the provisional gate needs no such justification. Otherwise the gate did not
-  run — send the unit back to run it and tell the user.
+  head. Every receipt must carry `Gate:`, `Risk:`, `Focused proof:`, and
+  `Regrade:` — that is ship-it's contract regardless of how the grade landed,
+  and a receipt missing any of them means the gate did not run. On top of that,
+  a receipt whose execution is thinner than the provisional gate is accepted
+  only when those lines justify either a semantic regrade of the actual diff or
+  a capacity-degraded execution of the same grade. Either failure sends the
+  unit back to run the gate, and the user is told.
   Then inspect the commits from the ready-approved SHA to that head.
   Review fixes pass; new surfaces or unexplained growth return through `ready`.
   Confirm required checks are green on that head. When another in-flight

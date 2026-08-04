@@ -343,21 +343,39 @@ function normalizeSession(session, live) {
   return { session: normalized, changed };
 }
 
+// A ship-it review or simplify run is detected by Herdr as a third agent in
+// this tab, which would make the pair look ambiguous and silence its channel
+// for the whole gate. Such a pane declares itself with a `role=process-pane`
+// token — but a token is written by whoever asks, so a stale or forged one
+// must never be able to hide a real agent from the exact-two invariant. The
+// declaration only says where to look; the authority is the pane's own live
+// foreground process being the gate helper that owns those panes. Never
+// exclude the caller.
+function isGateProcessPane(pane, selfPaneId) {
+  if (pane.pane_id === selfPaneId) return false;
+  if (pane.tokens?.role !== "process-pane") return false;
+  let info;
+  try {
+    info = processInfo(pane.pane_id);
+  } catch {
+    return false;
+  }
+  return info.foreground_processes.some((entry) =>
+    [entry.cmdline, ...(entry.argv ?? [])]
+      .filter((value) => typeof value === "string")
+      .some((value) => /herdr-visible-run\.mjs|headless-claude\.mjs/u.test(value)),
+  );
+}
+
 function discover({ allowMissing = false, allowStalePartner = false } = {}) {
   const self = currentPane();
   const partnerAgent = opposite(self.agent);
-  // A short-lived process pane (a ship-it review or simplify run) is detected
-  // by Herdr as a third agent in this tab and would otherwise make the pair
-  // look ambiguous, silencing the channel for as long as the run lasts. Such a
-  // pane declares itself with a `role=process-pane` token, so it is excluded by
-  // its own declaration — an undeclared third agent is still ambiguous and
-  // still fails.
   const tabAgents = paneList(self.workspace_id).filter(
     (pane) =>
       pane.tab_id === self.tab_id &&
       pane.workspace_id === self.workspace_id &&
       ["claude", "codex"].includes(pane.agent) &&
-      pane.tokens?.role !== "process-pane",
+      !isGateProcessPane(pane, self.pane_id),
   );
   const selfMatches = tabAgents.filter((pane) => pane.pane_id === self.pane_id);
   const candidates = tabAgents.filter(
@@ -1244,17 +1262,25 @@ function ancestorPids() {
 // so a chain that matches more than one pane proves nothing and must fall back.
 function identifyByAncestry(snapshot, agent, repoRoot) {
   const chain = ancestorPids();
-  const matches = snapshot.agents.filter((pane) => {
+  const matches = [];
+  for (const pane of snapshot.agents) {
     let info;
     try {
       info = processInfo(pane.pane_id);
     } catch {
-      return false;
+      // A pane we cannot read is not a pane we can rule out. Treating it as a
+      // non-match would turn "one match plus one unknown" into false
+      // uniqueness and authorize the remaining pane, so an unreadable
+      // candidate abandons this path entirely.
+      return null;
     }
-    return info.foreground_processes.some(
-      (entry) => entry.pid !== undefined && chain.has(String(entry.pid)),
-    );
-  });
+    // Same for a pane whose processes report no pid: nothing here can say
+    // whether we descend from it.
+    if (info.foreground_processes.some((entry) => entry.pid === undefined)) return null;
+    if (info.foreground_processes.some((entry) => chain.has(String(entry.pid)))) {
+      matches.push(pane);
+    }
+  }
   if (matches.length !== 1) return null;
   const pane = matches[0];
   if (pane.agent !== agent) {
