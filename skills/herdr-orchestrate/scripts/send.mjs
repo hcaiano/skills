@@ -1,10 +1,22 @@
 #!/usr/bin/env node
 // Sends a message to a Herdr agent and does not exit until it has LANDED —
-// pasted AND submitted. `herdr agent prompt` owns the Enter in theory, but it
-// returns before that Enter takes effect and does not always deliver it, so a
+// pasted AND submitted. `herdr agent prompt` owns the Enter in theory, but a
 // caller that trusts its exit code eventually leaves a message sitting in a
-// composer and stalls the run in silence. Until herdr closes that gap, the
-// Enter is sent here, unconditionally, after letting the paste settle.
+// composer and stalls the run in silence. So the Enter is sent here,
+// unconditionally, after letting the paste settle.
+//
+// Measured against herdr 0.8.0 on 2026-08-04, receiver by receiver:
+//   Claude — `agent prompt` IS atomic now. Single-line, a 19-line body with
+//     fences and blank lines, and a prompt to a mid-turn agent all landed in
+//     one call with no Enter of ours.
+//   Codex  — multi-line SILENTLY DOES NOT LAND. Reproduced twice: the same
+//     19-line body returned `agent_status: done`, `error: null`, while the
+//     pane kept an empty composer, `Context 100% left`, and no rollout file
+//     was ever written. A single-line prompt to that same pane landed fine.
+//     The same body through this script landed on enter_attempts=1.
+// Every kickoff and milestone is multi-line, so the loop below is still the
+// only thing standing between a Codex delegate and silence. Do not remove it
+// because the Claude half now works.
 //
 // This has been re-broken by four prose rewrites of the skill. Keeping the
 // behaviour in code is the point: a rewrite cannot shave off a step it does

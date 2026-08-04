@@ -58,22 +58,30 @@ ship it.
    platform proof. This step is complete when the requested behavior is
    present, every mapped local check passes, and each platform-delegated check
    is explicit.
-3. **Grade, then simplify** — the ship-it driver grades the complete
-   focused-proven diff through a **risk-adaptive** gate:
-   - `skip` — exclusively docs/Markdown/config with no runtime surface.
-   - `single` — the default for a runtime change with no `dual` signal.
-   - `dual` — any auth, permission, security, payment, migration, destructive
-     data, public contract, infrastructure, concurrency, cross-service, or
-     multi-subsystem change; conflicting or ambiguous source requirements; or
-     focused proof that cannot bound the likely blast radius.
+3. **Grade, then simplify** — ship-it is the primary authority for the
+   delivery gate. Grade the complete focused-proven diff by its semantics:
+   - `skip` — a non-runtime change, or a mechanical low-risk runtime change,
+     whose specification is closed and whose focused proof covers every
+     altered behavior. It runs no simplify and no LLM review, proceeding only
+     through exact final-HEAD validation, required and delegated CI, PR receipt
+     verification, and live-review surfaces.
+   - `single` — a normal runtime change contained within one subsystem.
+   - `dual` — auth, permissions, security, payments, migrations, destructive
+     data, infrastructure, concurrency, public contracts, cross-service or
+     multi-subsystem changes; ambiguous requirements; or a blast radius that
+     focused proof cannot bound.
 
-   An explicit user grade is a floor. An orchestrator's issue-time grade is
-   provisional: regrade the actual diff here and record why it changed.
-   Uncertainty selects `dual`. `single` prefers a reviewer from the model
-   family that did not implement the change, then the cooler available pool;
-   `dual` requires both families. Claude out converts a Claude-dependent grade
-   to `codex-only`; Codex out converts a Codex-dependent grade to
-   `claude-only`. With a reviewed gate, both out → stop and ask the user
+   Staffing, implementing model, and use of a pair never choose the grade or
+   number of reviews. An explicit user grade is a floor. An orchestrator's
+   issue-time grade is provisional: regrade the actual diff here and record
+   why it stayed the same, rose, or fell. Any uncertainty about satisfying
+   `skip` promotes to `single`; any uncertainty about subsystem containment,
+   requirements, or blast radius promotes to `dual`. After the semantic grade
+   is fixed, `single` prefers a reviewer from the model family that did not
+   implement the change, then the cooler available pool; `dual` requires both
+   families. Claude out records `dual — degraded to codex-only`; Codex out
+   records `dual — degraded to claude-only`; capacity changes execution, not
+   the semantic grade. With a reviewed gate, both out → stop and ask the user
    whether to use whichever harness still responds or wait for a reset. Tell
    the user the candidate grade and every capacity degradation.
 
@@ -82,14 +90,16 @@ ship it.
    duplicated production logic, avoidable cross-file indirection, or complex
    branching/state orchestration. Run `/simplify` only when that named target
    makes a behavior-preserving reduction likely; size alone is not a target.
-   Choose a recorded skip when there is no concrete target, or when the
-   change's core surface is docs/Markdown/config, generated output, migrations,
-   schemas/contracts, allowlists, or security/performance guards. A
-   user-requested simplify pass overrides the eligibility skip.
+   Choose a recorded simplify skip when there is no concrete target, when the
+   delivery grade is `skip`, or when the change's core surface is
+   docs/Markdown/config, generated output, migrations, schemas/contracts,
+   allowlists, or security/performance guards. For reviewed grades, a
+   user-requested simplify pass overrides the other eligibility skips.
 
-   An eligible pass runs once per delivery, after focused proof and before
-   review so reviewers see the resulting diff. Claude being unavailable,
-   `claude.pace` above 2, or a `codex-only` capacity grade records a skip.
+   Simplify is independent of reviewer count. An eligible pass runs once per
+   delivery, after focused proof and before review so reviewers see the
+   resulting diff. Claude being unavailable or `claude.pace` above 2 records a
+   skip.
    Skip an existing receipt only when its `Simplify:` line names the current
    clean review HEAD and the complete diff has not changed, or proves an
    applicable eligibility skip. A failed/aborted attempt is not success.
@@ -106,14 +116,15 @@ ship it.
      Exit 0 with `{ok: true}` is the only success. On `{ok: false}` the
      tree is already restored (a `restore_error` means it is NOT — inspect
      before touching anything). Record `failed — <reason>` on the receipt's
-     `Simplify:` line, mark Claude unavailable, and regrade under step 3.
-     Continue only when that regrade is explicitly `codex-only`; otherwise
-     stop.
+     `Simplify:` line, mark Claude unavailable, and apply step 3's capacity
+     rules without changing the semantic grade. Continue only when Codex can
+     execute the reviewed gate as `single — Codex` or `dual — degraded to
+     codex-only`; otherwise stop.
    On success, keep Claude's changes in the working tree. This step is complete
    only when the candidate review grade is recorded and simplify has a
    successful receipt naming the structural target, a recorded
-   eligibility/capacity skip, or a failed attempt whose recorded regrade is
-   `codex-only`.
+   eligibility/capacity skip, or a failed attempt whose recorded capacity
+   disposition preserves the semantic grade.
 4. **Finalize the initial review HEAD.** When simplify ran, inspect every edit
    and rerun the focused tests and checks affected by it. Create clear,
    intentional local commits and reach a clean review HEAD without pushing.
@@ -122,8 +133,8 @@ ship it.
    the final diff has focused proof, `git status` contains no intended
    uncommitted change, and the initial review grade is explicit.
 5. **Review Standards and Spec** on that exact review HEAD. `skip` records its
-   no-runtime reason and runs no native review. `single`, `codex-only`, and
-   `claude-only` use one native reviewer to cover **Standards + Spec**.
+   semantic reason and runs no native review. `single` and a capacity-degraded
+   `dual` use one native reviewer to cover **Standards + Spec**.
    `dual` assigns one native reviewer to **Standards** (correctness, security,
    regressions, repository conventions, and test quality) and the other to
    **Spec** (requested behavior, acceptance criteria, scope, and applicable
@@ -137,12 +148,12 @@ ship it.
    degradation from step 3 if promotion cannot reach both pools, and record it.
 
    A one-review gate stops if its review cannot complete and never regrades to
-   another agent. A `dual`
-   review that cannot complete regrades to the other harness alone, named in
+   another agent. A `dual` review that cannot complete preserves its semantic
+   grade and records degraded execution on the other harness alone, named in
    the receipt. A review completes on content: a refusal, rate-limit notice, or
-   empty payload is a failed review even with exit zero. Rerun it or regrade
-   under these rules; never count it. In-flight feedback from implementation is
-   not this fresh final-diff gate:
+   empty payload is a failed review even with exit zero. Rerun it or apply the
+   capacity degradation under these rules; never count it. In-flight feedback
+   from implementation is not this fresh final-diff gate:
    - Run your own NATIVE review harness against the merge base with the target
      branch. Use each agent's native command surface, not an assumed repository
      skill:
@@ -219,9 +230,13 @@ ship it.
    the remote head equals the final validated HEAD, its proportional local gate
    passed on that SHA, and every native-CI delegation is named for step 9.
 
-   Leave a `## Dual-review` receipt for the PR body with `Gate:`
-   (`skip — <reason>` / `single — <reviewer>; <reason>` / `dual` / degraded
-   level and reason), `Simplify:`
+   Leave a `## Delivery gate` receipt for the PR body. Include `Gate:`
+   (`skip — <reason>` / `single — <reviewer>; <reason>` / `dual` / semantic
+   grade plus any degraded execution and reason), `Risk:` (the semantic
+   classification signals and known or unbounded blast radius), `Focused
+   proof:` (why its exact commands cover every altered behavior), `Regrade:`
+   (why the actual final diff stayed at, rose above, or fell below the
+   provisional grade), `Simplify:`
    (`applied in <sha> — target: <target>` / `already run` /
    `skipped — <reason>` / `failed — <reason>`),
    `Reviewed HEAD: <40-character last gate-reviewed SHA>`,

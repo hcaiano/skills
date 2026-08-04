@@ -110,19 +110,23 @@ const foregroundProcesses = (paneId, role, allowTransient = false) => {
   }
   const processes = [];
   for (const entry of info.foreground_processes) {
+    // herdr omits argv for processes whose full command line it cannot read
+    // (npx/bunx wrappers, some helpers). Identity still resolves through
+    // name/argv0/cwd, so validate argv only when it is present.
     if (
       entry === null ||
       typeof entry !== "object" ||
-      !Array.isArray(entry.argv) ||
-      !entry.argv.every((part) => typeof part === "string")
+      (Object.hasOwn(entry, "argv") &&
+        (!Array.isArray(entry.argv) ||
+          !entry.argv.every((part) => typeof part === "string")))
     ) {
       if (allowTransient) return null;
       fail(`herdr returned malformed foreground process for ${role} ${paneId}`);
     }
     processes.push({
-      argv: entry.argv,
+      argv: entry.argv ?? [],
       cwd: entry.cwd,
-      executables: [entry.name, entry.argv0, entry.argv[0]]
+      executables: [entry.name, entry.argv0, entry.argv?.[0]]
         .filter((value) => typeof value === "string")
         .map((value) => basename(value).toLowerCase()),
     });

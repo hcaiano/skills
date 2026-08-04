@@ -18,7 +18,7 @@ that reference derives it from the proof JSON, and pass `"${PAIR_ID[@]}"` to
 every `start` or `run` call.
 
 The helper rechecks the full pin and the caller's foreground process before
-every launch. Pin drift stops the gate and requires a fresh transcript proof.
+every launch. Pin drift stops the gate and requires a fresh caller proof.
 
 ## Launch and observe
 

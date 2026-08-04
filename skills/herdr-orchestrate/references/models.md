@@ -35,7 +35,7 @@ squeezing cheaper models.
 - **Fast lane when speed is the point.** terra or sonnet-5 at `medium` for
   the genuinely mechanical or latency-sensitive unit — a closed-spec
   trivial change where the wait would cost more than the intelligence
-  buys (terra starts ~50× faster than opus-5 at `max`). The review gate
+  buys (terra starts ~50× faster than opus-5 at `max`). The delivery gate
   and the escalation rule are the net.
 - **Fable, advisor only.** Fable never implements. A unit that needs
   fable-level intelligence consults it through the oracle channel — a
@@ -129,32 +129,39 @@ but they open on different days, so the raw percentages are not comparable.
   on that pool can stall or rate-limit at start — stagger the wave's kickoffs
   or start it on the other pool.
 
-## Review gate capacity
+## Delivery gate capacity
 
-Before assigning a provisional review grade, read step 3 of ship-it's
-[risk-adaptive gate](../../ship-it/SKILL.md). That
-rubric is the single source of truth. Apply it to the issue's expected
-surface at kickoff, name the reason, and let ship-it regrade the
-focused-proven diff. A pool is **out of headroom** when its `used_percent` is
-90 or higher, or its CLI refuses or rate-limits at start; a null pool never
-degrades the gate by itself.
+Before assigning a provisional delivery grade, read step 3 of ship-it's
+[delivery gate](../../ship-it/SKILL.md). That
+rubric is the single source of truth. Apply it provisionally to the issue's
+expected surface at kickoff, name the reason, and let ship-it classify the
+focused-proven final diff. Staffing, implementing model, pair use, and pool
+selection never determine `skip`, `single`, `dual`, or the number of reviews;
+they only route the reviewers required by that semantic grade. A pool is **out
+of headroom** when its `used_percent` is 90 or higher, or its CLI refuses or
+rate-limits at start; a null pool never degrades the gate by itself.
 
-- `skip` spends neither review pool.
+- `skip` spends neither review pool and runs no simplify or LLM review.
 - `single` spends one pool, preferring the model family that did not
-  implement the change and then the cooler available pool. If that pool is
-  out, use the other and name the capacity choice.
-- `dual` spends both pools. Claude out degrades it to `codex-only`; Codex out
-  degrades it to `claude-only`.
-- Simplify is independent of the review grade. Ship-it runs it only when the
-  actual diff has a concrete eligible target and Claude has headroom; a
-  `claude.pace` above 2 records a skip.
+  implement the change and then the cooler available pool only after ship-it
+  has fixed the one-review grade. If that pool is out, use the other and name
+  the capacity choice.
+- `dual` spends both pools. Claude out records `dual — degraded to
+  codex-only`; Codex out records `dual — degraded to claude-only`; the
+  semantic grade remains `dual`.
+- Simplify is independent of staffing, model, pair use, and reviewer count.
+  Ship-it omits it for `skip`; for reviewed grades it runs only when the actual
+  diff has a concrete eligible target and Claude has headroom. A `claude.pace`
+  above 2 records a skip.
 - Both pools out → queue the unit. A genuinely urgent unit that runs anyway
   takes a single review on whichever harness still responds, preferring the
   family that did not implement it. If neither responds, the merge policy
   becomes `hold`.
 
-Pace alone never lowers the review grade: it routes staffing and trims an
-eligible simplify pass. Name the provisional grade in the kickoff and the
-phase 4 summary. Name the final grade in the `shipped` milestone and later
-per-unit summaries. At `shipped`, accept a thinner final gate only when its
-receipt records the actual-diff regrade or capacity degradation.
+Pace, staffing, model, and pair composition never change the semantic review
+grade: they route staffing and trim an eligible simplify pass. Name the
+provisional grade in the kickoff and the phase 4 summary. Name the final grade
+in the `shipped` milestone and later per-unit summaries. At `shipped`, accept a
+thinner execution only when the receipt preserves the semantic grade and
+records the actual-diff regrade or capacity degradation, together with its
+risk and focused-proof justification.

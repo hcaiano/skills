@@ -86,9 +86,13 @@ function processInfo(paneId) {
       entry !== null &&
       typeof entry === "object" &&
       !Array.isArray(entry);
+    // herdr omits argv for processes whose full command line it cannot read
+    // (npx/bunx wrappers, some helpers). Identity still resolves through
+    // name/argv0/cwd, so validate argv only when it is present.
     const validArgv =
-      Array.isArray(entry?.argv) &&
-      entry.argv.every((argument) => typeof argument === "string");
+      !Object.hasOwn(entry ?? {}, "argv") ||
+      (Array.isArray(entry.argv) &&
+        entry.argv.every((argument) => typeof argument === "string"));
     const validStrings = ["name", "argv0", "cwd"].every(
       (field) =>
         !Object.hasOwn(entry ?? {}, field) || typeof entry[field] === "string",
@@ -1205,7 +1209,11 @@ async function reconcileSession(args) {
 }
 
 function conversationMarkers(path) {
-  if (!path) fail("id requires --conversation-markers-file");
+  if (!path) {
+    fail(
+      "id could not resolve the caller from its own session id ($CLAUDE_CODE_SESSION_ID / $CODEX_THREAD_ID matched zero or several panes) and therefore requires --conversation-markers-file",
+    );
+  }
   let markers;
   try {
     markers = JSON.parse(readFileSync(path, "utf8"));
@@ -1230,8 +1238,43 @@ function conversationMarkers(path) {
   return values.map((value) => value.trim());
 }
 
-// Resolve the caller through live topology, exact conversation evidence, and
-// foreground-process proof. Session bindings are diagnostic metadata only.
+// The agent's own session id is the cheapest exact caller proof: herdr binds
+// `agent_session.value` per pane to the Claude session UUID / Codex rollout id,
+// and the agent reads its own from the environment. It is authoritative only
+// while it resolves to exactly one pane — a resumed or stale binding can put
+// one id on several panes, so anything other than a single owner falls back to
+// the conversation-marker proof below.
+function ownSessionId(agent, options) {
+  if (options["session-id"]) return options["session-id"];
+  const fromEnvironment =
+    agent === "claude"
+      ? process.env.CLAUDE_CODE_SESSION_ID
+      : process.env.CODEX_THREAD_ID;
+  return fromEnvironment && fromEnvironment.trim() ? fromEnvironment.trim() : null;
+}
+
+function identifyBySession(snapshot, agent, repoRoot, sessionId) {
+  const owners = snapshot.agents.filter(
+    (pane) => pane.agent_session?.value === sessionId,
+  );
+  if (owners.length !== 1) return null;
+  const pane = owners[0];
+  if (pane.agent !== agent) {
+    fail(
+      `agent_session ${sessionId} is bound to a ${pane.agent} pane; --as ${agent} does not match the caller`,
+    );
+  }
+  if (pane.cwd !== repoRoot && pane.foreground_cwd !== repoRoot) {
+    fail(
+      `caller pane ${pane.pane_id} is rooted at ${pane.cwd}, not the declared --repo-root ${repoRoot}`,
+    );
+  }
+  requireForegroundProcess(pane.pane_id, agent, repoRoot);
+  return pane;
+}
+
+// Resolve the caller through live topology and either its own session binding
+// or exact conversation evidence, then confirm it with foreground-process proof.
 function identify(options) {
   if (process.env.HERDR_ENV !== "1") fail("id requires HERDR_ENV=1");
   const agent = options.as;
@@ -1242,8 +1285,18 @@ function identify(options) {
   if (!repoRoot || !repoRoot.startsWith("/")) {
     fail("id requires an absolute --repo-root resolved with git -C <task-repository>");
   }
-  const markers = conversationMarkers(options["conversation-markers-file"]);
   const snapshot = sessionSnapshot();
+
+  const sessionId = ownSessionId(agent, options);
+  const bySession = sessionId
+    ? identifyBySession(snapshot, agent, repoRoot, sessionId)
+    : null;
+  if (bySession) {
+    reportIdentity(snapshot, bySession, agent, repoRoot, options, "agent-session");
+    return;
+  }
+
+  const markers = conversationMarkers(options["conversation-markers-file"]);
   const repositoryMatches = snapshot.agents.filter(
     (pane) =>
       pane.agent === agent &&
@@ -1281,7 +1334,26 @@ function identify(options) {
         "200",
       );
     } catch (error) {
-      fail(`cannot read candidate transcript ${pane.pane_id}: ${error.message}`);
+      // A pane mid-tool-call refuses scrollback capture (`agent_not_idle`),
+      // and the caller's own pane is always working while it runs this proof.
+      // The visible screen is still an exact live read of that one pane, so it
+      // proves the same binding over a shorter window.
+      if (!/agent_not_idle/.test(error.message)) {
+        fail(`cannot read candidate transcript ${pane.pane_id}: ${error.message}`);
+      }
+      try {
+        transcript = herdr(
+          "agent",
+          "read",
+          pane.pane_id,
+          "--source",
+          "visible",
+          "--lines",
+          "200",
+        );
+      } catch (visibleError) {
+        fail(`cannot read candidate transcript ${pane.pane_id}: ${visibleError.message}`);
+      }
     }
     if (!transcript.trim()) {
       fail(`candidate transcript ${pane.pane_id} is empty`);
@@ -1298,6 +1370,12 @@ function identify(options) {
 
   const pane = transcriptMatches[0];
   requireForegroundProcess(pane.pane_id, agent, repoRoot);
+  reportIdentity(snapshot, pane, agent, repoRoot, options, "conversation-markers");
+}
+
+// Re-read the resolved pane, refuse it if it drifted mid-proof, and emit the
+// pin. `proof` names which of the two resolutions selected it.
+function reportIdentity(snapshot, pane, agent, repoRoot, options, proof) {
   const livePane = paneGet(pane.pane_id);
   if (
     livePane.agent !== agent ||
@@ -1339,6 +1417,7 @@ function identify(options) {
         terminal_id: livePane.terminal_id,
         as: agent,
         repo_root: repoRoot,
+        proof,
         agent_session: sessionId,
         session_binding_warning: sessionBindingWarning,
         args: cli,

@@ -312,6 +312,7 @@ try {
     terminal_id: "term-w1-p1",
     as: "codex",
     repo_root: "/workspace",
+    proof: "conversation-markers",
     agent_session: "codex-session-w1-p1",
     session_binding_warning: null,
     args: [
@@ -329,6 +330,69 @@ try {
       "/workspace",
     ],
   });
+  // The agent's own session id resolves the caller with no markers at all,
+  // as long as it owns exactly one pane.
+  const idBySession = JSON.parse(
+    runRawWithEnv(
+      { CODEX_THREAD_ID: "codex-session-w1-p1", HERDR_PANE_ID: "stale:pane" },
+      "id",
+      "--as",
+      "codex",
+      "--repo-root",
+      "/workspace",
+    ),
+  );
+  assert.equal(idBySession.pane, "w1:p1");
+  assert.equal(idBySession.proof, "agent-session");
+  assert.equal(idBySession.session_binding_warning, null);
+  assert.deepEqual(idBySession.args, [
+    "--pane",
+    "w1:p1",
+    "--workspace",
+    "w1",
+    "--tab-id",
+    "w1:t1",
+    "--as",
+    "codex",
+    "--terminal-id",
+    "term-w1-p1",
+    "--repo-root",
+    "/workspace",
+  ]);
+  // An explicit --session-id is equivalent to the environment reading.
+  assert.equal(
+    JSON.parse(
+      runRaw("id", "--as", "codex", "--repo-root", "/workspace", "--session-id", "codex-session-w1-p1"),
+    ).proof,
+    "agent-session",
+  );
+  // A session id bound to the other harness's pane is a caller mismatch, not a
+  // reason to guess.
+  assert.throws(
+    () =>
+      runRawWithEnv(
+        { CLAUDE_CODE_SESSION_ID: "codex-session-w1-p1" },
+        "id",
+        "--as",
+        "claude",
+        "--repo-root",
+        "/workspace",
+      ),
+    /is bound to a codex pane; --as claude does not match the caller/u,
+  );
+  // Resolving the caller never silently accepts a different repository.
+  assert.throws(
+    () =>
+      runRawWithEnv(
+        { CODEX_THREAD_ID: "codex-session-w1-p1" },
+        "id",
+        "--as",
+        "codex",
+        "--repo-root",
+        "/another-repository",
+      ),
+    /is rooted at \/workspace, not the declared --repo-root \/another-repository/u,
+  );
   assert.equal(
     runRaw(
       "id",
@@ -493,6 +557,36 @@ try {
   );
   assert.equal(duplicateSession.pane, "w1:p1");
   assert.match(duplicateSession.session_binding_warning, /appears on 2 panes and was ignored/u);
+
+  // A session id on two panes cannot select either; the caller must fall all
+  // the way back to the conversation-marker proof, not pick one.
+  const duplicateFallsBack = JSON.parse(
+    runRawWithEnv(
+      { CODEX_THREAD_ID: "codex-session-w1-p1" },
+      "id",
+      "--as",
+      "codex",
+      "--repo-root",
+      "/workspace",
+      "--conversation-markers-file",
+      markersFile,
+    ),
+  );
+  assert.equal(duplicateFallsBack.pane, "w1:p1");
+  assert.equal(duplicateFallsBack.proof, "conversation-markers");
+  // Without markers there is nothing left to fall back to, so it must stop.
+  assert.throws(
+    () =>
+      runRawWithEnv(
+        { CODEX_THREAD_ID: "codex-session-w1-p1" },
+        "id",
+        "--as",
+        "codex",
+        "--repo-root",
+        "/workspace",
+      ),
+    /requires --conversation-markers-file/u,
+  );
 
   identityState = JSON.parse(readFileSync(statePath, "utf8"));
   identityState.transcripts["w2:p1"] = identityState.transcripts["w1:p1"];

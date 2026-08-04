@@ -13,10 +13,20 @@
 //   cwd: "<worktree path>",
 //   label: "#N <short title>",
 //   lead: { name: "lead-N", args: ["--kind","claude","--","--model","opus", ...] },
-//   peer: { name: "peer-N", args: [...] }        // pair units only
+//   peer: { name: "peer-N", args: [...] },       // pair units only
+//   unit: "101",                                 // optional: unit key
+//   report_pane: "<orchestrator pane id>"        // optional: milestone target
 // }
 //
-// Exit 0: JSON {created: true, tab_id, lead_pane, peer_pane} on stdout.
+// When `unit` is given, the unit's identity stops living in the tab label and
+// becomes machine-readable on both sides: Herdr metadata tokens (unit, role,
+// and report_pane) go on each agent pane, so discovery reads `pane list` instead of
+// parsing `#N` out of a label; and HERDR_UNIT / HERDR_UNIT_WORKSPACE /
+// HERDR_UNIT_REPORT_PANE are injected into the tab's environment, so a
+// delegate reads its own context instead of depending on kickoff prose it
+// must not lose.
+//
+// Exit 0: JSON {created: true, tab_id, lead_pane, peer_pane, tokens} on stdout.
 // Exit 1: JSON {created: false, error, cleanup} — on failure after the tab
 // exists, the tab is closed so no half-provisioned unit survives.
 // Exit 2: usage error.
@@ -77,10 +87,38 @@ if (!spec.lead?.name || !Array.isArray(spec.lead?.args)) {
 if (spec.peer && (!spec.peer.name || !Array.isArray(spec.peer.args))) {
   emit({ created: false, error: 'spec.peer needs {name, args[]}' }, 2);
 }
+// A token is only useful if it can be matched back exactly, so keep unit keys
+// to the shape agent names already use rather than the tab label's free text.
+// Normalize once so every later guard reads the same value — `0` is a real key
+// but a falsy one, and the two must not disagree.
+const unitKey = spec.unit === undefined || spec.unit === null ? null : String(spec.unit);
+if (unitKey !== null && !/^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(unitKey)) {
+  emit({ created: false, error: `spec.unit ${JSON.stringify(spec.unit)} must match [A-Za-z0-9][A-Za-z0-9_.+-]{0,63}` }, 2);
+}
+const reportPane = spec.report_pane ?? null;
+if (reportPane !== null && unitKey === null) {
+  emit({ created: false, error: 'spec.report_pane requires spec.unit' }, 2);
+}
+
+const METADATA_SOURCE = 'herdr-orchestrate';
+const unitEnv = [];
+if (unitKey !== null) {
+  unitEnv.push('--env', `HERDR_UNIT=${unitKey}`);
+  unitEnv.push('--env', `HERDR_UNIT_WORKSPACE=${spec.workspace}`);
+  if (reportPane) unitEnv.push('--env', `HERDR_UNIT_REPORT_PANE=${reportPane}`);
+}
+
+// Tag the pane itself so a later survey resolves the unit from live state.
+const tagPane = (paneId, role) => {
+  if (unitKey === null) return;
+  const tokens = ['--token', `unit=${unitKey}`, '--token', `role=${role}`];
+  if (reportPane) tokens.push('--token', `report_pane=${reportPane}`);
+  herdr('pane', 'report-metadata', paneId, '--source', METADATA_SOURCE, ...tokens);
+};
 
 let tabId = null;
 try {
-  const created = herdr('tab', 'create', '--workspace', spec.workspace, '--cwd', spec.cwd, '--label', spec.label, '--no-focus');
+  const created = herdr('tab', 'create', '--workspace', spec.workspace, '--cwd', spec.cwd, '--label', spec.label, ...unitEnv, '--no-focus');
   const root = created?.root_pane ?? created?.tab?.root_pane;
   tabId = created?.tab?.tab_id ?? root?.tab_id;
   if (!root?.pane_id || !tabId) throw new Error('tab create returned no root_pane/tab_id');
@@ -92,13 +130,15 @@ try {
   }
 
   startAgent(spec.lead.name, '--pane', root.pane_id, ...spec.lead.args);
+  tagPane(root.pane_id, 'lead');
 
   let peerPane = null;
   if (spec.peer) {
-    const split = herdr('pane', 'split', root.pane_id, '--direction', 'right', '--no-focus');
+    const split = herdr('pane', 'split', root.pane_id, '--direction', 'right', ...unitEnv, '--no-focus');
     peerPane = split?.pane?.pane_id ?? split?.pane_id;
     if (!peerPane) throw new Error('pane split returned no pane_id');
     startAgent(spec.peer.name, '--pane', peerPane, ...spec.peer.args);
+    tagPane(peerPane, 'peer');
   }
 
   // Exactly one pane per agent; close any agentless leftover.
@@ -116,7 +156,23 @@ try {
     throw new Error('unit tab does not hold exactly one live pane per agent');
   }
 
-  emit({ created: true, tab_id: tabId, lead_pane: root.pane_id, peer_pane: peerPane }, 0);
+  // An untagged pane is invisible to a token-based survey, which is worse than
+  // an obvious failure here, so prove the tags are readable before reporting.
+  const tokens = {};
+  if (unitKey !== null) {
+    for (const pane of finalPanes) {
+      const seen = pane.tokens ?? {};
+      const role = pane.pane_id === root.pane_id ? 'lead' : 'peer';
+      // A lost report_pane is as bad as a lost unit: the delegate's milestones
+      // reach nobody, and the run finds out only when it goes quiet.
+      if (seen.unit !== unitKey || seen.role !== role || (reportPane && seen.report_pane !== reportPane)) {
+        throw new Error(`pane ${pane.pane_id} did not keep its unit/role/report_pane tokens (read ${JSON.stringify(seen)})`);
+      }
+      tokens[pane.pane_id] = seen;
+    }
+  }
+
+  emit({ created: true, tab_id: tabId, lead_pane: root.pane_id, peer_pane: peerPane, tokens }, 0);
 } catch (error) {
   let cleanup = 'nothing to clean up';
   if (tabId) {
