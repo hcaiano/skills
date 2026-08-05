@@ -97,12 +97,12 @@ state rather than from memory or from parsing a label.
 
 Using the pinned `workspace_id`, list only its tabs and panes
 (`herdr tab list --workspace <id>`; `herdr pane list --workspace <id>`). Each
-pane row carries its `tokens` and agent state. Consider only rows whose
-metadata is complete — a `unit`, a `report_pane`, and a `role` of `lead` or
-`peer`; a pane carrying some of those but not all is inconsistent state that
-stops the survey and goes to the user, and a pane carrying none (a gate's
-`process-pane`, a shell) is simply not a unit pane. Group what remains by the
-pair (`tokens.unit`, `tokens.report_pane`) — never by `tokens.unit` alone,
+pane row carries its `tokens` and agent state. Set aside every pane whose
+`tokens.role` is `process-pane` — those are a gate's own short-lived runs, not
+unit panes — along with panes carrying no tokens at all. Of what remains, a
+unit pane must have complete metadata: a `unit`, a `report_pane`, and a `role`
+of `lead` or `peer`. Some-but-not-all is inconsistent state that stops the
+survey and goes to the user. Group the complete rows by the pair (`tokens.unit`, `tokens.report_pane`) — never by `tokens.unit` alone,
 which would merge two runs that happened to pick the same key — and require
 every pane in a group to agree on repository and to hold distinct roles before
 treating it as one unit. Then classify each group by its `report_pane`:
@@ -126,7 +126,12 @@ order, and only in this order:
 2. Wait for each of those agents to acknowledge **through the new report
    pane**. A landed receipt proves the message was submitted, not that a busy
    delegate has processed it, and a delegate that has not yet read it is still
-   pushing into the dead pane.
+   pushing into the dead pane. These acknowledgements are the one traffic that
+   [Unit reports](#unit-reports) cannot validate normally — the unit's tokens
+   still name the old run precisely because step 3 has not happened yet — so
+   while an adoption is open, validate each one against the orphaned group it
+   came from plus that agent's own pane tail, and never against this run's
+   tokens. Handle nothing else from that unit until the handshake closes.
 3. Only then re-tag the unit's panes with this run's `report_pane`.
 
 Re-tagging last is what makes the adoption honest: until every agent has
@@ -420,7 +425,9 @@ reported. The prompt is a claim, not evidence: confirm its `unit=` equals the
 `tokens.unit` of a live unit carrying this run's `report_pane` (run a fresh
 scoped phase 0 survey if the map is stale or missing) and read that lead's
 pane tail for its newest `[unit workspace=...]` line before acting — a claim
-matching no such unit is ignored and reported to the user. Handled-ness
+matching no such unit is ignored and reported to the user. The single exception
+is an open adoption handshake, whose acknowledgements are validated against the
+orphaned group instead, as phase 0 describes. Handled-ness
 is read from the live session, never from memory — a fresh orchestrator
 must not re-fire on stale lines: a milestone is handled when the
 orchestrator's response to it appears later in that pane (the go-ahead

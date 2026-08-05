@@ -461,8 +461,15 @@ try {
     terminal_id: "term-w1-p3",
     tokens: { role: "process-pane" },
   };
+  // A real agent whose PROMPT names the wrapper — this conversation does it
+  // constantly — must not be hideable by a stale or forged token.
   tokenState.processes["w1:p3"] = [
-    { argv: ["codex"], cwd: "/workspace", name: "codex", pid: 999001 },
+    {
+      argv: ["codex", "run node /skills/ship-it/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
+      cwd: "/workspace",
+      name: "codex",
+      pid: 999001,
+    },
   ];
   writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
   assert.throws(
@@ -470,11 +477,27 @@ try {
     /expected exactly two agent panes/u,
     "a forged process-pane token must not hide a real agent",
   );
-  // The same pane, now genuinely running the gate helper, is excluded.
+  // Neither may a wrapper that belongs to a different pane's run.
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec"],
+      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
+      cwd: "/workspace",
+      name: "node",
+      pid: 999001,
+    },
+  ];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+  assert.throws(
+    () => runAs("w1:p2", "discover"),
+    /expected exactly two agent panes/u,
+    "another pane's wrapper must not exclude this one",
+  );
+  // The same pane, now genuinely running this pane's gate wrapper, is excluded.
+  tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  tokenState.processes["w1:p3"] = [
+    {
+      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
       cwd: "/workspace",
       name: "node",
       pid: 999001,

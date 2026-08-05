@@ -360,11 +360,22 @@ function isGateProcessPane(pane, selfPaneId) {
   } catch {
     return false;
   }
-  return info.foreground_processes.some((entry) =>
-    [entry.cmdline, ...(entry.argv ?? [])]
-      .filter((value) => typeof value === "string")
-      .some((value) => /herdr-visible-run\.mjs|headless-claude\.mjs/u.test(value)),
-  );
+  return info.foreground_processes.some((entry) => {
+    const argv = Array.isArray(entry.argv) ? entry.argv.filter((part) => typeof part === "string") : [];
+    // Match argv ELEMENTS, never a substring of a command line: an agent whose
+    // prompt happens to name the wrapper (this very conversation does, dozens
+    // of times) carries it inside one argument and can never satisfy this.
+    const runsWrapper =
+      [entry.name, entry.argv0, argv[0]]
+        .filter((value) => typeof value === "string")
+        .some((value) => basename(value).toLowerCase() === "node") &&
+      argv.some((part) => basename(part) === "herdr-visible-run.mjs") &&
+      argv.includes("exec");
+    if (!runsWrapper) return false;
+    // And it must be the wrapper for THIS pane, not some other pane's run.
+    const paneFlag = argv.indexOf("--pane");
+    return paneFlag !== -1 && argv[paneFlag + 1] === pane.pane_id;
+  });
 }
 
 function discover({ allowMissing = false, allowStalePartner = false } = {}) {
