@@ -240,12 +240,16 @@ ship it.
    provisional grade), `Simplify:`
    (`applied in <sha> — target: <target>` / `already run` /
    `skipped — <reason>` / `failed — <reason>`),
-   `Reviewed HEAD: <40-character last gate-reviewed SHA>`,
-   `Final validated HEAD: <40-character final SHA>`, the deterministic commands
+   `Reviewed HEAD: <40-character last gate-reviewed SHA, an ancestor of the
+   final HEAD whenever the gate found anything>`,
+   `Final validated HEAD: <40-character pushed SHA>`, the deterministic commands
    and results, every check delegated to native PR CI and why, whether the
    conditional review ran and why, each reviewer, native command, assigned
    axis, finding count, and each finding's disposition (`fixed in <sha>` /
    `deferred to #N` / discarded reason). A skipped gate states its reason.
+   Those three fields are the delivery's chain of custody — reviewed at this
+   ancestor, fixed in these SHAs, validated on the head that ships — so a
+   corrected delivery is expected to carry two different HEADs.
    Name every visible process pane and its matching completion receipt, and
    confirm that the lead closed each finished pane after validating its
    artifacts. The receipt is complete when it truthfully distinguishes review
@@ -253,16 +257,10 @@ ship it.
 8. **Open or update the PR and verify its receipt.** Maintain one accurate,
    ready-for-review PR whose body carries the review and final-CI receipts —
    no receipt, no PR. Create new PRs as non-draft and verify GitHub preserved
-   that state. Immediately run the repository's `review:verify` command when
-   it exists (for example `bun run review:verify -- <pr-number>`); repair only
-   PR-body receipt errors and rerun until it passes. Record the live-review
-   baseline timestamp immediately before the first complete paginated fetch of
-   current reviews, comments, and unresolved threads, then handle those
-   surfaces. A branch mutation returns to steps 6–8 and must finish with a new
-   deterministic gate, push, PR update, and `review:verify` pass. An older
-   verifier that requires the final SHA to have fresh LLM review contradicts
-   this one-review policy: report that repository-contract blocker instead of
-   manufacturing a receipt or running another review.
+   that state. Record the live-review baseline timestamp immediately before the
+   first complete paginated fetch of current reviews, comments, and unresolved
+   threads, then handle those surfaces. A branch mutation returns to steps 6–8 and must finish with a new
+   deterministic gate, push, and PR update.
    This step is complete when the live PR, its body, its base, and its head all
    match the verified final receipt and the baseline is explicit.
 9. Wait for required checks and every native-CI check delegated in steps 2 or
@@ -282,8 +280,7 @@ ship it.
    6–9. Handle every item newer than the baseline and every unresolved thread.
    A branch change returns to steps 6–9. Require GitHub to report the PR
    mergeable against its base; a conflict merges the base into the branch and
-   returns to steps 6–9. Rerun `review:verify` after any PR-body or head change.
-   Record the clean check timestamp and head.
+   returns to steps 6–9. Record the clean check timestamp and head.
 10. **Merge and deploy when authorized.** A ship-it invocation authorizes its
     local gate, push, and PR work; merge and deployment require explicit user
     authorization or an enclosing workflow with standing authorization. When

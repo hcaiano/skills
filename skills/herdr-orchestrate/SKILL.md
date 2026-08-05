@@ -484,8 +484,8 @@ merged. Then act by kind:
   fetch complete paginated live reviews, issue comments, inline comments, and
   review threads with the current `gh api`; anything newer than the shipped
   timestamp or any unresolved thread returns to the lead. Any branch change
-  re-enters `ready` and the full ship-it cycle. `review:verify` is timestamped
-  evidence, not merge authority.
+  re-enters `ready` and the full ship-it cycle. The delivery receipt is
+  timestamped evidence, not merge authority.
   A `hold` unit waits for the user: acknowledge the hold to the lead in one
   line (also the handled marker in its pane), then toast the PR URL and why
   it holds; visible UI also requires before/after screenshots. The user's OK
