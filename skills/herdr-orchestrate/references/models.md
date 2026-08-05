@@ -155,10 +155,11 @@ rate-limits at start; a null pool never degrades the gate by itself.
   including `skip`. Otherwise ship-it omits it for `skip`; for reviewed grades
   it runs only when the actual diff has a concrete eligible target and Claude
   has headroom. A `claude.pace` above 2 records a skip.
-- Both pools out → queue the unit. A genuinely urgent unit that runs anyway
-  takes a single review on whichever harness still responds, preferring the
-  family that did not implement it. If neither responds, the merge policy
-  becomes `hold`.
+- Both pools out → queue the unit. Nothing here overrides ship-it: with a
+  reviewed grade and both pools out, its gate stops and asks the user, and no
+  urgency grants a thinner reviewer count than the semantic grade requires.
+  Urgency changes what the orchestrator asks the user for, never what the gate
+  accepts without them.
 
 Pace, staffing, model, and pair composition never change the semantic review
 grade: they route staffing and trim an eligible simplify pass. Name the

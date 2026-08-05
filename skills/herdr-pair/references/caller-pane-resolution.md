@@ -47,7 +47,9 @@ Re-run the proof with `--conversation-markers-file "$MARKERS_FILE"`, then trash
 the file. That path narrows to candidate panes whose agent kind matches and
 whose `cwd` or `foreground_cwd` equals `TASK_REPO`, keeps those with a live
 foreground agent process, reads each one's transcript, and requires exactly one
-to contain both markers. It reports `proof: "conversation-markers"`, and
+to contain both markers. A pane mid-tool-call refuses scrollback capture, and
+the helper then falls back to that pane's visible screen — so choose excerpts
+that are still on screen, not ones that have scrolled away. It reports `proof: "conversation-markers"`, and
 hard-stops when no live candidate remains, on zero or multiple transcript
 matches, on unreadable or empty candidate transcripts, on a final process or
 repository mismatch, or on live pane drift during the proof.

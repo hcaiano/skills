@@ -104,8 +104,11 @@ unit pane must have complete metadata: a `unit`, a `report_pane`, and a `role`
 of `lead` or `peer`. Some-but-not-all is inconsistent state that stops the
 survey and goes to the user. Group the complete rows by the pair (`tokens.unit`, `tokens.report_pane`) — never by `tokens.unit` alone,
 which would merge two runs that happened to pick the same key — and require
-every pane in a group to agree on repository and to hold distinct roles before
-treating it as one unit. Then classify each group by its `report_pane`:
+every pane in a group to agree on repository and to hold exactly one `lead`
+plus at most one `peer`. Distinct roles are not enough: every later step reads
+the lead's pane for milestones and status, so a group with no lead is
+inconsistent state that stops the survey. Then classify each group by its
+`report_pane`:
 
 - it is this run's pinned report pane → the unit is ours;
 - it is another pane that is live and still hosts an agent → the unit belongs
@@ -132,7 +135,14 @@ order, and only in this order:
    while an adoption is open, validate each one against the orphaned group it
    came from plus that agent's own pane tail, and never against this run's
    tokens. Handle nothing else from that unit until the handshake closes.
-3. Only then re-tag the unit's panes with this run's `report_pane`.
+3. Re-read the unit's tokens immediately before writing, and claim it only if
+   they still carry the orphaned `report_pane` you started from. Two
+   orchestrators restarted against the same orphan would otherwise both
+   re-route, both collect acknowledgements, and both re-tag, splitting the
+   unit's milestone routing between two runs that each believe they own it.
+   Tokens that changed under you mean the other run claimed it first: abandon
+   the adoption, re-survey, and treat the unit as theirs. Only on an unchanged
+   read do you write this run's `report_pane`.
 
 Re-tagging last is what makes the adoption honest: until every agent has
 answered on the new channel, the tokens still say the unit belongs to the old
