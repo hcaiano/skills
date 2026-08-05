@@ -139,6 +139,17 @@ test("review and simplify decisions are risk-adaptive and auditable", () => {
     /`Risk:`.*`Focused\s+proof:`.*`Regrade:`/su,
   );
   assert.match(
+    shipIt,
+    /an ancestor of the\s+final HEAD whenever the gate found anything/u,
+  );
+  assert.match(
+    shipIt,
+    /Those three fields are the delivery's chain of custody[\s\S]*so a\s+corrected delivery is expected to carry two different HEADs/u,
+  );
+  assert.doesNotMatch(shipIt, /report that repository-contract blocker/u);
+  assert.doesNotMatch(shipIt, /review:verify/u);
+  assert.doesNotMatch(orchestrate, /review:verify/u);
+  assert.match(
     models,
     /\[delivery gate\]\(\.\.\/\.\.\/ship-it\/SKILL\.md\)/u,
   );
