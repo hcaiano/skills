@@ -110,19 +110,23 @@ const foregroundProcesses = (paneId, role, allowTransient = false) => {
   }
   const processes = [];
   for (const entry of info.foreground_processes) {
+    // herdr omits argv for processes whose full command line it cannot read
+    // (npx/bunx wrappers, some helpers). Identity still resolves through
+    // name/argv0/cwd, so validate argv only when it is present.
     if (
       entry === null ||
       typeof entry !== "object" ||
-      !Array.isArray(entry.argv) ||
-      !entry.argv.every((part) => typeof part === "string")
+      (Object.hasOwn(entry, "argv") &&
+        (!Array.isArray(entry.argv) ||
+          !entry.argv.every((part) => typeof part === "string")))
     ) {
       if (allowTransient) return null;
       fail(`herdr returned malformed foreground process for ${role} ${paneId}`);
     }
     processes.push({
-      argv: entry.argv,
+      argv: entry.argv ?? [],
       cwd: entry.cwd,
-      executables: [entry.name, entry.argv0, entry.argv[0]]
+      executables: [entry.name, entry.argv0, entry.argv?.[0]]
         .filter((value) => typeof value === "string")
         .map((value) => basename(value).toLowerCase()),
     });
@@ -262,6 +266,22 @@ const createPane = (pin) => {
   )?.pane;
   if (!created?.pane_id) fail("herdr pane split returned no pane ID");
   cleanupPane = created.pane_id;
+  // Herdr detects the agent this pane is about to run as a real agent in the
+  // caller's tab, which makes a live herdr-pair look ambiguous and silences the
+  // pair channel for the whole gate. Declare the pane for what it is so the
+  // pair helper can skip it; an undeclared extra agent must still be ambiguous.
+  // `pane report-metadata` answers with exit 0 and an empty body, so it is a
+  // command and not a result — parsing it as JSON aborts every visible run
+  // before the gate can start.
+  herdrCommand(
+    "pane",
+    "report-metadata",
+    created.pane_id,
+    "--source",
+    "ship-it",
+    "--token",
+    "role=process-pane",
+  );
   return created.pane_id;
 };
 

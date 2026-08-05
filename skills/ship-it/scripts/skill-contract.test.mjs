@@ -95,28 +95,79 @@ test("final proof stays proportional and delegates native-platform coverage", ()
 });
 
 test("review and simplify decisions are risk-adaptive and auditable", () => {
-  assert.match(shipIt, /`single` — the default for a runtime change/u);
-  assert.match(shipIt, /Uncertainty selects `dual`/u);
+  assert.match(
+    shipIt,
+    /`skip` — a non-runtime change, or a mechanical low-risk runtime change/u,
+  );
+  assert.match(
+    shipIt,
+    /focused proof covers every\s+altered behavior\. It runs no simplify and no LLM review, proceeding only\s+through exact final-HEAD validation, required and delegated CI, PR receipt\s+verification, and live-review surfaces/u,
+  );
+  assert.match(
+    shipIt,
+    /`single` — a normal runtime change contained within one subsystem/u,
+  );
+  assert.match(
+    shipIt,
+    /`dual` — auth, permissions, security, payments, migrations, destructive\s+data, infrastructure, concurrency, public contracts, cross-service or\s+multi-subsystem changes/u,
+  );
+  assert.match(
+    shipIt,
+    /Any uncertainty about satisfying\s+`skip` promotes to `single`; any uncertainty about subsystem containment,\s+requirements, or blast radius promotes to `dual`/u,
+  );
+  assert.match(
+    shipIt,
+    /Staffing, implementing model, and use of a pair never choose the grade or\s+number of reviews/u,
+  );
+  assert.match(shipIt, /capacity changes execution, not\s+the semantic grade/u);
   assert.match(shipIt, /Name one concrete\s+structural target/u);
   assert.match(shipIt, /size alone is not a target/u);
+  assert.match(shipIt, /Simplify is independent of reviewer count/u);
   assert.match(shipIt, /Reapply step 3's risk grade/u);
   assert.match(shipIt, /A `single` reviewer promotes the gate/u);
   assert.match(
     shipIt,
-    /`skip — <reason>` \/ `single — <reviewer>; <reason>` \/ `dual`/u,
+    /A `dual` review that cannot complete preserves its semantic\s+grade and records degraded execution/u,
+  );
+  assert.doesNotMatch(shipIt, /regrades to the other harness/u);
+  assert.match(
+    shipIt,
+    /Leave a `## Delivery gate` receipt/u,
+  );
+  assert.match(
+    shipIt,
+    /`Risk:`.*`Focused\s+proof:`.*`Regrade:`/su,
   );
   assert.match(
     models,
-    /\[risk-adaptive gate\]\(\.\.\/\.\.\/ship-it\/SKILL\.md\)/u,
+    /\[delivery gate\]\(\.\.\/\.\.\/ship-it\/SKILL\.md\)/u,
   );
   assert.match(
     models,
-    /Name the final grade in the `shipped` milestone/u,
+    /Name the\s+final grade\s+in the `shipped` milestone/u,
   );
   assert.match(
     models,
-    /Name the provisional grade in the kickoff and the\s+phase 4 summary/u,
+    /Name the\s+provisional grade\s+in the kickoff and the\s+phase 4 summary/u,
   );
   assert.doesNotMatch(models, /final grade in the phase 4 summary/u);
   assert.doesNotMatch(models, /`dual` \(default\)/u);
+  assert.match(
+    models,
+    /Staffing, implementing model, pair use, and pool\s+selection never determine `skip`, `single`, `dual`, or the number of reviews/u,
+  );
+  assert.match(models, /the\s+semantic grade remains `dual`/u);
+  assert.match(
+    models,
+    /Simplify is independent of staffing, model, pair use, and reviewer count/u,
+  );
+  assert.match(
+    shipIt,
+    /A user-requested simplify pass\s+overrides every one of those eligibility skips, at any grade including\s+`skip`/u,
+  );
+  assert.match(
+    models,
+    /An explicit user request overrides every eligibility skip at any grade,\s+including `skip`/u,
+  );
+  assert.doesNotMatch(models, /`skip` spends neither review pool and runs no simplify/u);
 });

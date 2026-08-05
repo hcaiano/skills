@@ -86,9 +86,13 @@ function processInfo(paneId) {
       entry !== null &&
       typeof entry === "object" &&
       !Array.isArray(entry);
+    // herdr omits argv for processes whose full command line it cannot read
+    // (npx/bunx wrappers, some helpers). Identity still resolves through
+    // name/argv0/cwd, so validate argv only when it is present.
     const validArgv =
-      Array.isArray(entry?.argv) &&
-      entry.argv.every((argument) => typeof argument === "string");
+      !Object.hasOwn(entry ?? {}, "argv") ||
+      (Array.isArray(entry.argv) &&
+        entry.argv.every((argument) => typeof argument === "string"));
     const validStrings = ["name", "argv0", "cwd"].every(
       (field) =>
         !Object.hasOwn(entry ?? {}, field) || typeof entry[field] === "string",
@@ -339,6 +343,41 @@ function normalizeSession(session, live) {
   return { session: normalized, changed };
 }
 
+// A ship-it review or simplify run is detected by Herdr as a third agent in
+// this tab, which would make the pair look ambiguous and silence its channel
+// for the whole gate. Such a pane declares itself with a `role=process-pane`
+// token — but a token is written by whoever asks, so a stale or forged one
+// must never be able to hide a real agent from the exact-two invariant. The
+// declaration only says where to look; the authority is the pane's own live
+// foreground process being the gate helper that owns those panes. Never
+// exclude the caller.
+function isGateProcessPane(pane, selfPaneId) {
+  if (pane.pane_id === selfPaneId) return false;
+  if (pane.tokens?.role !== "process-pane") return false;
+  let info;
+  try {
+    info = processInfo(pane.pane_id);
+  } catch {
+    return false;
+  }
+  return info.foreground_processes.some((entry) => {
+    const argv = Array.isArray(entry.argv) ? entry.argv.filter((part) => typeof part === "string") : [];
+    // Match argv ELEMENTS, never a substring of a command line: an agent whose
+    // prompt happens to name the wrapper (this very conversation does, dozens
+    // of times) carries it inside one argument and can never satisfy this.
+    const runsWrapper =
+      [entry.name, entry.argv0, argv[0]]
+        .filter((value) => typeof value === "string")
+        .some((value) => basename(value).toLowerCase() === "node") &&
+      argv.some((part) => basename(part) === "herdr-visible-run.mjs") &&
+      argv.includes("exec");
+    if (!runsWrapper) return false;
+    // And it must be the wrapper for THIS pane, not some other pane's run.
+    const paneFlag = argv.indexOf("--pane");
+    return paneFlag !== -1 && argv[paneFlag + 1] === pane.pane_id;
+  });
+}
+
 function discover({ allowMissing = false, allowStalePartner = false } = {}) {
   const self = currentPane();
   const partnerAgent = opposite(self.agent);
@@ -346,7 +385,8 @@ function discover({ allowMissing = false, allowStalePartner = false } = {}) {
     (pane) =>
       pane.tab_id === self.tab_id &&
       pane.workspace_id === self.workspace_id &&
-      ["claude", "codex"].includes(pane.agent),
+      ["claude", "codex"].includes(pane.agent) &&
+      !isGateProcessPane(pane, self.pane_id),
   );
   const selfMatches = tabAgents.filter((pane) => pane.pane_id === self.pane_id);
   const candidates = tabAgents.filter(
@@ -1204,8 +1244,75 @@ async function reconcileSession(args) {
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
 }
 
+// The caller's own process ancestry is the one signal nothing can forge or
+// stale out: it comes from the live process table, not from anything Herdr
+// injected at start. `HERDR_PANE_ID` and the `agent_session` binding both
+// derive from the same injected variable — the integration hook reports the
+// session *to* `$HERDR_PANE_ID` — so after a pane move they agree on the wrong
+// pane together. A parent process cannot be wrong about who its child is.
+function ancestorPids() {
+  const chain = new Set();
+  let pid = process.pid;
+  for (let depth = 0; depth < 16 && pid > 1; depth += 1) {
+    chain.add(String(pid));
+    let parent;
+    try {
+      parent = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      break;
+    }
+    if (!/^\d+$/u.test(parent)) break;
+    pid = Number(parent);
+  }
+  return chain;
+}
+
+// Panes share ancestors further up (every pane descends from the Herdr server),
+// so a chain that matches more than one pane proves nothing and must fall back.
+function identifyByAncestry(snapshot, agent, repoRoot) {
+  const chain = ancestorPids();
+  const matches = [];
+  for (const pane of snapshot.agents) {
+    let info;
+    try {
+      info = processInfo(pane.pane_id);
+    } catch {
+      // A pane we cannot read is not a pane we can rule out. Treating it as a
+      // non-match would turn "one match plus one unknown" into false
+      // uniqueness and authorize the remaining pane, so an unreadable
+      // candidate abandons this path entirely.
+      return null;
+    }
+    // Same for a pane whose processes report no pid: nothing here can say
+    // whether we descend from it.
+    if (info.foreground_processes.some((entry) => entry.pid === undefined)) return null;
+    if (info.foreground_processes.some((entry) => chain.has(String(entry.pid)))) {
+      matches.push(pane);
+    }
+  }
+  if (matches.length !== 1) return null;
+  const pane = matches[0];
+  if (pane.agent !== agent) {
+    fail(
+      `the caller's process runs in a ${pane.agent} pane; --as ${agent} does not match`,
+    );
+  }
+  if (pane.cwd !== repoRoot && pane.foreground_cwd !== repoRoot) {
+    fail(
+      `caller pane ${pane.pane_id} is rooted at ${pane.cwd}, not the declared --repo-root ${repoRoot}`,
+    );
+  }
+  return pane;
+}
+
 function conversationMarkers(path) {
-  if (!path) fail("id requires --conversation-markers-file");
+  if (!path) {
+    fail(
+      "id could not resolve the caller from its own process ancestry (it matched zero or several panes) and therefore requires --conversation-markers-file",
+    );
+  }
   let markers;
   try {
     markers = JSON.parse(readFileSync(path, "utf8"));
@@ -1230,8 +1337,9 @@ function conversationMarkers(path) {
   return values.map((value) => value.trim());
 }
 
-// Resolve the caller through live topology, exact conversation evidence, and
-// foreground-process proof. Session bindings are diagnostic metadata only.
+// Resolve the caller from its own process ancestry, falling back to exact
+// conversation evidence, and confirm it with foreground-process proof. Session
+// bindings are diagnostic metadata only.
 function identify(options) {
   if (process.env.HERDR_ENV !== "1") fail("id requires HERDR_ENV=1");
   const agent = options.as;
@@ -1242,8 +1350,16 @@ function identify(options) {
   if (!repoRoot || !repoRoot.startsWith("/")) {
     fail("id requires an absolute --repo-root resolved with git -C <task-repository>");
   }
-  const markers = conversationMarkers(options["conversation-markers-file"]);
   const snapshot = sessionSnapshot();
+
+  const byAncestry = identifyByAncestry(snapshot, agent, repoRoot);
+  if (byAncestry) {
+    requireForegroundProcess(byAncestry.pane_id, agent, repoRoot);
+    reportIdentity(snapshot, byAncestry, agent, repoRoot, options, "process-ancestry");
+    return;
+  }
+
+  const markers = conversationMarkers(options["conversation-markers-file"]);
   const repositoryMatches = snapshot.agents.filter(
     (pane) =>
       pane.agent === agent &&
@@ -1281,7 +1397,26 @@ function identify(options) {
         "200",
       );
     } catch (error) {
-      fail(`cannot read candidate transcript ${pane.pane_id}: ${error.message}`);
+      // A pane mid-tool-call refuses scrollback capture (`agent_not_idle`),
+      // and the caller's own pane is always working while it runs this proof.
+      // The visible screen is still an exact live read of that one pane, so it
+      // proves the same binding over a shorter window.
+      if (!/agent_not_idle/.test(error.message)) {
+        fail(`cannot read candidate transcript ${pane.pane_id}: ${error.message}`);
+      }
+      try {
+        transcript = herdr(
+          "agent",
+          "read",
+          pane.pane_id,
+          "--source",
+          "visible",
+          "--lines",
+          "200",
+        );
+      } catch (visibleError) {
+        fail(`cannot read candidate transcript ${pane.pane_id}: ${visibleError.message}`);
+      }
     }
     if (!transcript.trim()) {
       fail(`candidate transcript ${pane.pane_id} is empty`);
@@ -1298,6 +1433,12 @@ function identify(options) {
 
   const pane = transcriptMatches[0];
   requireForegroundProcess(pane.pane_id, agent, repoRoot);
+  reportIdentity(snapshot, pane, agent, repoRoot, options, "conversation-markers");
+}
+
+// Re-read the resolved pane, refuse it if it drifted mid-proof, and emit the
+// pin. `proof` names which of the two resolutions selected it.
+function reportIdentity(snapshot, pane, agent, repoRoot, options, proof) {
   const livePane = paneGet(pane.pane_id);
   if (
     livePane.agent !== agent ||
@@ -1339,6 +1480,7 @@ function identify(options) {
         terminal_id: livePane.terminal_id,
         as: agent,
         repo_root: repoRoot,
+        proof,
         agent_session: sessionId,
         session_binding_warning: sessionBindingWarning,
         args: cli,

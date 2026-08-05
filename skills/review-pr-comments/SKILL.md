@@ -10,7 +10,7 @@ argument-hint: "[PR number, URL, or 'all' for all open PRs]"
 
 Handle real review feedback on an existing PR. This is an on-demand, exception
 path: most PRs have no comments because cloud auto-review is disabled and the
-heavy review already happened locally (ship-it's dual-review gate). Do not
+heavy review already happened locally (ship-it's delivery gate). Do not
 summon bot reviews (`@codex review`, `@coderabbitai review`), and never treat a
 bot's silence as something to wait for.
 

@@ -42,8 +42,14 @@ if (key === "tab create") {
   out({ agent: { name: args[2] } });
 } else if (key === "pane split") {
   out({ pane: { pane_id: args[2] + "s", tab_id: state.tab_create.tab.tab_id } });
+} else if (key === "pane get") {
+  const pane = state.panes_by_id?.[args[2]];
+  if (!pane) { process.stderr.write("pane_not_found: " + args[2] + "\\n"); process.exit(1); }
+  out({ pane });
 } else if (key === "pane list") {
   out({ panes: state.panes });
+} else if (key === "pane report-metadata") {
+  out({});
 } else if (key === "pane close" || key === "tab close") {
   out({});
 } else { process.stderr.write("unsupported fake herdr: " + args.join(" ") + "\\n"); process.exit(1); }
@@ -104,6 +110,8 @@ const baseState = () => ({
     root_pane: { pane_id: "w1:p9", tab_id: "w1:t9", workspace_id: "w1", cwd: "/repo/wt" },
   },
   panes: [{ pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude" }],
+  // The orchestrator's own pane, which unit specs name as their report pane.
+  panes_by_id: { "w1:pO": { pane_id: "w1:pO", workspace_id: "w1", agent: "claude" } },
 });
 
 const soloSpec = JSON.stringify({
@@ -117,9 +125,14 @@ test("create-unit provisions, verifies, and cleans up", () => {
   // Solo happy path: tab → lead in root pane → exactly one agent pane.
   writeState(baseState());
   const solo = runScript(createUnit, "--spec", soloSpec);
-  assert.deepEqual(solo, { created: true, tab_id: "w1:t9", lead_pane: "w1:p9", peer_pane: null });
+  assert.deepEqual(solo, { created: true, tab_id: "w1:t9", lead_pane: "w1:p9", peer_pane: null, tokens: {} });
   const start = readState().calls.find((c) => c[1] === "agent" && c[2] === "start");
   assert.deepEqual(start.slice(3), ["lead-7", "--pane", "w1:p9", "--kind", "claude", "--", "--model", "opus", "--effort", "high"]);
+  // Without spec.unit nothing is tagged and no unit env is injected, so an
+  // existing caller keeps its exact previous behaviour.
+  const plainCalls = readState().calls;
+  assert.equal(plainCalls.some((c) => c[2] === "report-metadata"), false);
+  assert.equal(plainCalls.find((c) => c[1] === "tab" && c[2] === "create").includes("--env"), false);
 
   // Pair: split once, start peer, close the leftover shell pane.
   const pairState = baseState();
@@ -167,6 +180,129 @@ test("create-unit provisions, verifies, and cleans up", () => {
   const mismatch = runScriptFail(createUnit, "--spec", soloSpec);
   assert.match(mismatch.error, /workspace w2, not the pinned w1/u);
   assert.ok(!readState().calls.some((c) => c[1] === "agent"), "no agent may start in the wrong workspace");
+});
+
+test("create-unit tags panes and injects unit env when spec.unit is given", () => {
+  const unitSpec = (extra = {}) =>
+    JSON.stringify({ ...JSON.parse(soloSpec), unit: "7", report_pane: "w1:pO", ...extra });
+
+  // Tokens are what a later survey reads, so the pane list must carry them
+  // back before the script reports success.
+  const tagged = baseState();
+  tagged.panes = [
+    { pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude", tokens: { unit: "7", role: "lead", report_pane: "w1:pO" } },
+  ];
+  writeState(tagged);
+  const created = runScript(createUnit, "--spec", unitSpec());
+  assert.deepEqual(created.tokens, { "w1:p9": { unit: "7", role: "lead", report_pane: "w1:pO" } });
+
+  const calls = readState().calls;
+  const tabCreate = calls.find((c) => c[1] === "tab" && c[2] === "create");
+  assert.ok(tabCreate.includes("HERDR_UNIT=7"), "the tab must carry the unit id");
+  assert.ok(tabCreate.includes("HERDR_UNIT_WORKSPACE=w1"), "the tab must carry the pinned workspace");
+  assert.ok(tabCreate.includes("HERDR_UNIT_REPORT_PANE=w1:pO"), "the tab must carry the report pane");
+  const tag = calls.find((c) => c[2] === "report-metadata");
+  assert.deepEqual(tag.slice(3), [
+    "w1:p9", "--source", "herdr-orchestrate",
+    "--token", "unit=7", "--token", "role=lead", "--token", "report_pane=w1:pO",
+  ]);
+
+  // A split pane does NOT inherit the tab's env (measured against herdr
+  // 0.8.0), so the peer must be given the same --env explicitly or its
+  // delegate loses the report pane.
+  const pair = baseState();
+  const peerTokens = { unit: "7", role: "peer", report_pane: "w1:pO" };
+  pair.panes = [
+    { pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude", tokens: { unit: "7", role: "lead", report_pane: "w1:pO" } },
+    { pane_id: "w1:p9s", tab_id: "w1:t9", agent: "codex", tokens: peerTokens },
+  ];
+  writeState(pair);
+  const paired = runScript(createUnit, "--spec", unitSpec({ peer: { name: "peer-7", args: ["--kind", "codex"] } }));
+  assert.deepEqual(paired.tokens["w1:p9s"], peerTokens);
+  const split = readState().calls.find((c) => c[1] === "pane" && c[2] === "split");
+  for (const entry of ["HERDR_UNIT=7", "HERDR_UNIT_WORKSPACE=w1", "HERDR_UNIT_REPORT_PANE=w1:pO"]) {
+    assert.ok(split.includes(entry), `the peer split must carry ${entry}`);
+  }
+  const peerTag = readState().calls.filter((c) => c[2] === "report-metadata").at(-1);
+  assert.ok(peerTag.includes("role=peer"), "the peer pane must be tagged as peer");
+
+  // A tag that does not stick makes the unit invisible to discovery, so it
+  // must fail loudly rather than report a provisioned unit.
+  const untagged = baseState();
+  untagged.panes = [{ pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude" }];
+  writeState(untagged);
+  const lost = runScriptFail(createUnit, "--spec", unitSpec());
+  assert.match(lost.error, /did not keep its unit\/role\/report_pane tokens/u);
+  assert.equal(lost.cleanup, "closed tab w1:t9");
+
+  // Losing only report_pane is the quiet failure: unit and role still read
+  // fine while the delegate's milestones would reach nobody.
+  const noReport = baseState();
+  noReport.panes = [{ pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude", tokens: { unit: "7", role: "lead" } }];
+  writeState(noReport);
+  const droppedReport = runScriptFail(createUnit, "--spec", unitSpec());
+  assert.match(droppedReport.error, /did not keep its unit\/role\/report_pane tokens/u);
+
+  // `0` is a real unit key, not an absent one.
+  const zero = baseState();
+  zero.panes = [{ pane_id: "w1:p9", tab_id: "w1:t9", agent: "claude", tokens: { unit: "0", role: "lead", report_pane: "w1:pO" } }];
+  writeState(zero);
+  const zeroUnit = runScript(
+    createUnit,
+    "--spec",
+    JSON.stringify({ ...JSON.parse(soloSpec), unit: 0, report_pane: "w1:pO" }),
+  );
+  assert.deepEqual(zeroUnit.tokens, { "w1:p9": { unit: "0", role: "lead", report_pane: "w1:pO" } });
+  assert.ok(
+    readState().calls.find((c) => c[1] === "tab" && c[2] === "create").includes("HERDR_UNIT=0"),
+    "unit 0 must still be injected",
+  );
+
+  // A unit key that cannot be matched back exactly is refused up front.
+  writeState(baseState());
+  const bad = runScriptFail(createUnit, "--spec", unitSpec({ unit: "#7 fix" }));
+  assert.match(bad.error, /must match/u);
+  assert.equal(readState().calls.length, 0, "a rejected spec must not touch Herdr");
+
+  // A tagged unit with no report pane loses every milestone, so it is refused
+  // before anything is created.
+  writeState(baseState());
+  const noReportPane = runScriptFail(
+    createUnit,
+    "--spec",
+    JSON.stringify({ ...JSON.parse(soloSpec), unit: "7" }),
+  );
+  assert.match(noReportPane.error, /requires spec.report_pane/u);
+  assert.equal(readState().calls.length, 0, "a unit with no report pane must not touch Herdr");
+
+  // A well-formed report pane still has to exist, live in the pinned
+  // workspace, and host an agent — lexical validation proves none of that.
+  const reportPaneCases = [
+    { pane: undefined, error: /does not resolve/u, label: "missing pane" },
+    { pane: { pane_id: "w1:pO", workspace_id: "w2", agent: "claude" }, error: /not the pinned w1/u, label: "cross-workspace" },
+    { pane: { pane_id: "w1:pO", workspace_id: "w1", agent: null }, error: /hosts no agent/u, label: "shell pane" },
+  ];
+  for (const testCase of reportPaneCases) {
+    const state = baseState();
+    state.panes_by_id = testCase.pane ? { "w1:pO": testCase.pane } : {};
+    writeState(state);
+    const rejected = runScriptFail(createUnit, "--spec", unitSpec());
+    assert.match(rejected.error, testCase.error, `report pane ${testCase.label}`);
+    assert.equal(
+      readState().calls.some((c) => c[1] === "tab" && c[2] === "create"),
+      false,
+      `${testCase.label} must be caught before the tab is created`,
+    );
+  }
+
+  // A report pane with no unit has nothing to tag, and is a caller mistake.
+  writeState(baseState());
+  const orphan = runScriptFail(
+    createUnit,
+    "--spec",
+    JSON.stringify({ ...JSON.parse(soloSpec), report_pane: "w1:pO" }),
+  );
+  assert.match(orphan.error, /report_pane requires spec.unit/u);
 });
 
 test("dismantle-unit removes in order and falls back", () => {

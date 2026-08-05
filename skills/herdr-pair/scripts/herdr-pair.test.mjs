@@ -141,6 +141,19 @@ else if (args[0] === "pane" && args[1] === "process-info") {
     (pane?.agent
       ? [{ argv: [pane.agent], cwd: pane.cwd, name: pane.agent }]
       : []);
+  // Real herdr reports a pid on every foreground process, and the caller
+  // proves itself by ancestry, so panes listed in state.ancestor_panes report a
+  // pid the test process really is an ancestor of; every other pane still gets
+  // a pid, just an unrelated one.
+  let nextFakePid = 900000;
+  for (const entry of foreground_processes) {
+    if (entry && typeof entry === "object" && entry.pid === undefined) {
+      entry.pid = (nextFakePid += 1);
+    }
+  }
+  if ((state.ancestor_panes ?? []).includes(paneId) && foreground_processes[0]) {
+    foreground_processes[0].pid = Number(process.env.TEST_ANCESTOR_PID);
+  }
   output({ process_info: { pane_id: paneId, foreground_processes } });
 }
 else if (args[0] === "agent" && args[1] === "read") {
@@ -219,6 +232,7 @@ chmodSync(fakeHerdr, 0o755);
 const env = {
   ...process.env,
   FAKE_HERDR_STATE: statePath,
+  TEST_ANCESTOR_PID: String(process.pid),
   HERDR_ENV: "1",
   HERDR_PANE_ID: "w1:p1",
   HOME: home,
@@ -312,6 +326,7 @@ try {
     terminal_id: "term-w1-p1",
     as: "codex",
     repo_root: "/workspace",
+    proof: "conversation-markers",
     agent_session: "codex-session-w1-p1",
     session_binding_warning: null,
     args: [
@@ -392,6 +407,126 @@ try {
     () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
     /requires --conversation-markers-file/u,
   );
+
+  // Process ancestry proves the caller with no markers at all: a parent cannot
+  // be wrong about which pane its own child runs in.
+  let ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  ancestryState.ancestor_panes = ["w1:p1"];
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
+  const byAncestry = JSON.parse(
+    runRawWithEnv(
+      { HERDR_PANE_ID: "stale:pane" },
+      "id",
+      "--as",
+      "codex",
+      "--repo-root",
+      "/workspace",
+    ),
+  );
+  assert.equal(byAncestry.pane, "w1:p1");
+  assert.equal(byAncestry.proof, "process-ancestry");
+
+  // Claiming to be the other harness is a caller mismatch, not a reason to guess.
+  assert.throws(
+    () => runRaw("id", "--as", "claude", "--repo-root", "/workspace"),
+    /runs in a codex pane; --as claude does not match/u,
+  );
+
+  // Panes share ancestors further up, so a chain matching two panes proves
+  // nothing and must fall all the way back to the marker proof.
+  ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  ancestryState.ancestor_panes = ["w1:p1", "w1:p2"];
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
+  assert.equal(
+    JSON.parse(
+      runRaw(
+        "id", "--as", "codex", "--repo-root", "/workspace",
+        "--conversation-markers-file", markersFile,
+      ),
+    ).proof,
+    "conversation-markers",
+    "an ambiguous ancestry must never select a pane on its own",
+  );
+  assert.throws(
+    () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
+    /process ancestry \(it matched zero or several panes\)/u,
+  );
+  // A `role=process-pane` token is written by whoever asks, so it must not be
+  // able to hide a real agent from the exact-two invariant on its own: only a
+  // pane actually running the gate helper is excluded.
+  let tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  tokenState.panes["w1:p3"] = {
+    ...tokenState.panes["w1:p1"],
+    pane_id: "w1:p3",
+    terminal_id: "term-w1-p3",
+    tokens: { role: "process-pane" },
+  };
+  // A real agent whose PROMPT names the wrapper — this conversation does it
+  // constantly — must not be hideable by a stale or forged token.
+  tokenState.processes["w1:p3"] = [
+    {
+      argv: ["codex", "run node /skills/ship-it/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
+      cwd: "/workspace",
+      name: "codex",
+      pid: 999001,
+    },
+  ];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+  assert.throws(
+    () => runAs("w1:p2", "discover"),
+    /expected exactly two agent panes/u,
+    "a forged process-pane token must not hide a real agent",
+  );
+  // Neither may a wrapper that belongs to a different pane's run.
+  tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  tokenState.processes["w1:p3"] = [
+    {
+      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
+      cwd: "/workspace",
+      name: "node",
+      pid: 999001,
+    },
+  ];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+  assert.throws(
+    () => runAs("w1:p2", "discover"),
+    /expected exactly two agent panes/u,
+    "another pane's wrapper must not exclude this one",
+  );
+  // The same pane, now genuinely running this pane's gate wrapper, is excluded.
+  tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  tokenState.processes["w1:p3"] = [
+    {
+      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
+      cwd: "/workspace",
+      name: "node",
+      pid: 999001,
+    },
+  ];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+  const withGatePane = JSON.parse(runAs("w1:p2", "discover"));
+  assert.equal(withGatePane.partner.pane_id, "w1:p1");
+  tokenState = JSON.parse(readFileSync(statePath, "utf8"));
+  delete tokenState.panes["w1:p3"];
+  delete tokenState.processes["w1:p3"];
+  writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
+
+  // One match plus one unreadable pane is not uniqueness: the unknown pane
+  // could have been the real caller, so ancestry must abandon the path rather
+  // than authorize the pane it happened to read.
+  ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  ancestryState.ancestor_panes = ["w1:p1"];
+  ancestryState.fail_process_info_pane = "w1:p2";
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
+  assert.throws(
+    () => runRaw("id", "--as", "codex", "--repo-root", "/workspace"),
+    /process ancestry \(it matched zero or several panes\)/u,
+    "an unreadable candidate must never leave a false unique match",
+  );
+  ancestryState = JSON.parse(readFileSync(statePath, "utf8"));
+  delete ancestryState.fail_process_info_pane;
+  delete ancestryState.ancestor_panes;
+  writeFileSync(statePath, `${JSON.stringify(ancestryState, null, 2)}\n`);
   assert.throws(
     () =>
       runRawWithEnv(

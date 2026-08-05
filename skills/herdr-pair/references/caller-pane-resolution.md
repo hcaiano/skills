@@ -3,13 +3,30 @@
 Run this proof before any Herdr mutation. It is the single caller-identity
 contract for `herdr-pair` and `herdr-orchestrate`.
 
-## Resolve and mark the conversation
-
-Resolve the task repository explicitly:
+## Resolve
 
 ```sh
 TASK_REPO=$(git -C <task-repository> rev-parse --show-toplevel)
+PAIR_PROOF=$(node "$PAIR_SCRIPT" id --as <claude|codex> --repo-root "$TASK_REPO")
 ```
+
+The helper walks your own process ancestry and looks for a pane whose live
+foreground processes include one of your ancestors. A parent process cannot be
+wrong about which pane its own child runs in, and that fact comes from the live
+process table rather than from anything Herdr injected at start — which is why
+it, and not the environment, is the proof. `$HERDR_PANE_ID` and the
+`agent_session` binding both derive from the same injected variable (the
+integration hook reports the session *to* `$HERDR_PANE_ID`), so after a pane
+move they agree on the wrong pane together and neither is evidence. `pane
+current --current` merely echoes that same variable, and falls back to the
+UI-focused pane when it is unset.
+
+Matching exactly one pane reports `proof: "process-ancestry"`. Panes share
+ancestors further up — every pane descends from the Herdr server — so a chain
+matching more than one pane proves nothing and falls back to the marker proof
+below.
+
+## When the helper asks for conversation markers
 
 Write one distinctive commentary sentence about the newest user request. Create
 a temporary JSON file with two exact, high-entropy excerpts already visible in
@@ -26,33 +43,16 @@ Both excerpts must be exact and unique to this conversation, and must remain
 different after trimming; the commentary excerpt must be at least 12
 characters. Set `MARKERS_FILE` to that file and trash it after resolution.
 
-## Run the proof
-
-```sh
-PAIR_PROOF=$(node "$PAIR_SCRIPT" id \
-  --as <claude|codex> \
-  --repo-root "$TASK_REPO" \
-  --conversation-markers-file "$MARKERS_FILE")
-```
-
-The helper executes this proof chain:
-
-1. `herdr api snapshot`
-2. candidate panes from `.result.snapshot.agents` whose agent kind matches and
-   whose `cwd` or `foreground_cwd` equals `TASK_REPO`
-3. live foreground-process checks for those candidates
-4. `herdr agent read <pane-id> --source recent-unwrapped --lines 200` for every
-   live candidate
-5. one transcript containing both conversation markers
-6. a fresh `herdr pane process-info --pane <pane-id>` requiring the matching
-   agent process at `TASK_REPO`
-7. `herdr workspace get <workspace-id>` from the proven pane
-
-Repository and agent-kind matches create candidates; only the exact current
-transcript proves the caller. The helper hard-stops when no live candidate
-remains, on zero or multiple transcript matches, unreadable or empty live
-candidate transcripts, final process or repository mismatch, or live pane
-drift during the proof.
+Re-run the proof with `--conversation-markers-file "$MARKERS_FILE"`, then trash
+the file. That path narrows to candidate panes whose agent kind matches and
+whose `cwd` or `foreground_cwd` equals `TASK_REPO`, keeps those with a live
+foreground agent process, reads each one's transcript, and requires exactly one
+to contain both markers. A pane mid-tool-call refuses scrollback capture, and
+the helper then falls back to that pane's visible screen — so choose excerpts
+that are still on screen, not ones that have scrolled away. It reports `proof: "conversation-markers"`, and
+hard-stops when no live candidate remains, on zero or multiple transcript
+matches, on unreadable or empty candidate transcripts, on a final process or
+repository mismatch, or on live pane drift during the proof.
 
 Inspect `PAIR_PROOF`, name its `workspace_label` to the user, then pin its exact
 pane, workspace, tab, terminal, agent, and repository:

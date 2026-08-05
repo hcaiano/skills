@@ -21,10 +21,10 @@ any is missing, stop and tell the user to install or start (or update) Herdr.
 
 Before any Herdr mutation, read and execute
 [Caller pane proof](references/caller-pane-resolution.md). It resolves the
-explicit task repository, proves the unique caller through snapshot +
-conversation transcript + foreground process, and returns `PAIR_PROOF` plus
-the pinned `PAIR_ID`, including `--tab-id`. Stop when that proof does not
-complete exactly.
+explicit task repository, proves the unique caller from its own process
+ancestry — falling back to conversation markers when that ancestry matches
+anything other than exactly one pane — and returns `PAIR_PROOF` plus the pinned
+`PAIR_ID`, including `--tab-id`. Stop when that proof does not complete exactly.
 
 ## Guardrails
 
@@ -140,13 +140,7 @@ For inbound `[agent ...]` traffic:
 1. Run the exact command in `[herdr-pair control ...]`. It calls `receive` with
    `--sid`, `--from`, and `--seq`, validates the live tab binding, and persists
    the receipt acknowledgement.
-2. For a legacy message without a control line, run:
-
-   ```bash
-   node "$PAIR_SCRIPT" receive "${PAIR_ID[@]}" --sid "<sid>" --from "<from>"
-   ```
-
-3. Process the message, write the reply body to a temp file, and run
+2. Process the message, write the reply body to a temp file, and run
    `node "$PAIR_SCRIPT" send ...`.
 
 Done when `receive` records the sequence and the reply has a recorded receipt.
