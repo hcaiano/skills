@@ -75,7 +75,11 @@ if (key === "pane get") {
   result({ pane: { pane_id: "w1:p2" } });
 } else if (key === "pane run") {
   process.exit(0);
-} else if (key === "pane rename" || key === "pane close" || key === "pane report-metadata") {
+} else if (key === "pane report-metadata") {
+  // Real herdr answers this one with exit 0 and an EMPTY body. Returning JSON
+  // here once hid a bug that aborted every visible run.
+  process.exit(0);
+} else if (key === "pane rename" || key === "pane close") {
   result({ ok: true });
 } else {
   process.stderr.write("unexpected " + args.join(" "));

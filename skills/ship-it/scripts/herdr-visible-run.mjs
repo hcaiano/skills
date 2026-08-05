@@ -270,7 +270,10 @@ const createPane = (pin) => {
   // caller's tab, which makes a live herdr-pair look ambiguous and silences the
   // pair channel for the whole gate. Declare the pane for what it is so the
   // pair helper can skip it; an undeclared extra agent must still be ambiguous.
-  herdrResult(
+  // `pane report-metadata` answers with exit 0 and an empty body, so it is a
+  // command and not a result — parsing it as JSON aborts every visible run
+  // before the gate can start.
+  herdrCommand(
     "pane",
     "report-metadata",
     created.pane_id,
