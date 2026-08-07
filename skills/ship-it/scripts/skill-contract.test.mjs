@@ -14,6 +14,10 @@ const models = readFileSync(
   "utf8",
 );
 const openai = readFileSync(join(here, "../agents/openai.yaml"), "utf8");
+const processTransport = readFileSync(
+  join(here, "../references/visible-herdr-runs.md"),
+  "utf8",
+);
 
 test("ship-it stays manual-only across model runtimes", () => {
   assert.match(shipIt, /^description: "Manual-only /mu);
@@ -181,4 +185,80 @@ test("review and simplify decisions are risk-adaptive and auditable", () => {
     /An explicit user request overrides every eligibility skip at any grade,\s+including `skip`/u,
   );
   assert.doesNotMatch(models, /`skip` spends neither review pool and runs no simplify/u);
+});
+
+test("external gate commands select and record an honest transport", () => {
+  assert.match(
+    shipIt,
+    /Every external command uses the transport helper, which selects a visible,\s+user-interruptible Herdr pane when the caller proof succeeds and otherwise\s+a local background process/u,
+  );
+  assert.match(shipIt, /completion receipt records the selected\s+transport/u);
+  assert.doesNotMatch(shipIt, /blocked outside Herdr/u);
+  assert.match(processTransport, /scripts\/run-transport\.mjs/u);
+  assert.match(
+    processTransport,
+    /selects `herdr` only when\s+`HERDR_ENV=1` and the caller proof succeeds; otherwise it selects `local`/u,
+  );
+  assert.match(
+    processTransport,
+    /same launch\s+and receipt shape, but different operator control/u,
+  );
+  assert.match(
+    processTransport,
+    /a local run has no live user pane for\s+observation or interjection/u,
+  );
+  assert.match(
+    processTransport,
+    /completion receipt's token and `transport` to match the run file/u,
+  );
+  assert.match(
+    shipIt,
+    /For every external process, record `Transport: herdr\|local`/u,
+  );
+});
+
+test("transport preserves wrapper liveness and Herdr pane proof", () => {
+  assert.match(
+    processTransport,
+    /transport owns observation: pane, marker, and receipt for\s+Herdr; PID and receipt polling for local/u,
+  );
+  assert.match(
+    processTransport,
+    /wrappers\s+own both backends' idle and total deadlines, PID-scoped termination, and content\s+validation/u,
+  );
+  assert.match(
+    processTransport,
+    /Herdr backend retains every visible-run invariant: `pane_id` and `marker`\s+must be non-null/u,
+  );
+  assert.match(
+    processTransport,
+    /completion\s+receipt's pane and token must match the launch/u,
+  );
+  assert.match(
+    processTransport,
+    /lead closes it with `herdr pane close\s+<pane_id>`/u,
+  );
+  assert.match(
+    processTransport,
+    /Close only panes created by this gate, never the caller or\s+another unit pane/u,
+  );
+});
+
+test("Codex review selects the diff mechanically", () => {
+  assert.match(
+    shipIt,
+    /`headless-codex\.mjs` wrapper[\s\S]*`codex exec review --base\s+origin\/<target-branch>`/u,
+  );
+  assert.match(
+    shipIt,
+    /`codex exec` with a freeform prompt does not\s+satisfy this gate/u,
+  );
+  assert.doesNotMatch(
+    shipIt,
+    /git diff "\$\(git merge-base HEAD origin\/<target-branch>\)"/u,
+  );
+  assert.match(
+    shipIt,
+    /Name the\s+assigned axis in the review prompt, include its applicable sources, and\s+require read-only findings output/u,
+  );
 });

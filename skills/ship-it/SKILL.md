@@ -31,13 +31,14 @@ ship it.
    what the rest of its window funds, so it empties before its reset. The
    graded reviews still run at that pace; what gives way is the Claude
    simplify pass, and only to `claude.pace` (step 3).
-   Before starting any simplify or native review command, read and follow
-   [Visible Herdr runs](references/visible-herdr-runs.md). An interactive
-   slash command in the current agent pane is already visible; every external
-   Claude or Codex command runs in a labeled shell pane inside the same
-   transcript-proven unit tab. A gate that needs an external process is
-   blocked outside Herdr. This step is complete when the target, pool state,
-   and any required visible-run pin are explicit.
+   Before starting any simplify or native review command, read and follow the
+   [process transport contract](references/visible-herdr-runs.md). An
+   interactive slash command in the current agent pane is already visible.
+   Every external command uses the transport helper, which selects a visible,
+   user-interruptible Herdr pane when the caller proof succeeds and otherwise
+   a local background process. The completion receipt records the selected
+   transport. This step is complete when the target, pool state, and transport
+   prerequisites are explicit.
 2. **Finish the implementation and proportional focused proof.** Keep the
    branch local. Map each changed runtime contract to its changed behavior and
    changed direct consumers, then run the smallest repository-defined tests and
@@ -108,7 +109,7 @@ ship it.
    focused-proven implementation diff:
    - When Claude is driving, invoke `/simplify` directly in its visible pane.
      In a live pair, Codex may ask the Claude peer to do the same.
-   - Otherwise launch the bundled wrapper through the visible-run contract.
+   - Otherwise launch the bundled wrapper through the process transport.
      The wrapper owns the baseline patch, liveness deadline, kill, verified
      restore, content validation, and leftover-untracked report:
      `node <skill dir>/scripts/headless-claude.mjs "/simplify" --writable true
@@ -161,17 +162,19 @@ ship it.
      - Claude Code: invoke the `/code-review` slash command itself on Opus in
        Claude's visible agent pane, or launch
        `node <skill dir>/scripts/headless-claude.mjs "/code-review" --receipt
-       <review-result.json>` through the visible-run contract (read-only plan
+       <review-result.json>` through the process transport (read-only plan
        mode). `{ok: true}` with a non-empty result is the only pass. This gate
        is satisfied only by running `/code-review` in full; nothing improvised
        stands in for it.
-     - Codex: launch `codex review "<final-diff review prompt>"` through the
-       visible-run contract; generic `codex exec` does not satisfy this gate.
-     The Codex prompt must name the exact complete diff command:
-     `git diff "$(git merge-base HEAD origin/<target-branch>)"`. With intended
-     changes committed in step 4, this covers the exact review HEAD from the
-     true merge base. Name the assigned axis, include its applicable sources,
-     and require read-only findings output. Both harnesses may run focused
+     - Codex: launch the bundled `headless-codex.mjs` wrapper through the
+       process transport. It must invoke `codex exec review --base
+       origin/<target-branch>`; `codex exec` with a freeform prompt does not
+       satisfy this gate. `{ok: true}` with a non-empty result is the only
+       pass.
+     With intended changes committed in step 4, `--base` covers the exact
+     review HEAD from the fetched target branch's true merge base. Name the
+     assigned axis in the review prompt, include its applicable sources, and
+     require read-only findings output. Both harnesses may run focused
      verification; step 7 owns proportional final-HEAD validation; step 9 owns
      native PR-CI proof. An
      improvised read-through of the diff does not count.
@@ -181,8 +184,8 @@ ship it.
      before waiting for either.
      In a herdr-pair session, ask the Claude peer through the pair channel to
      run its visible native slash command when applicable; external commands
-     still use labeled process panes in this unit. Outside a pair, launch the
-     counterpart through the same visible-run contract.
+     still use the process transport. Outside a pair, launch the counterpart
+     through the same transport.
    This step is complete when every required axis has valid findings output
    against the same review HEAD.
 6. **Correct material findings in one batch.** A `skip` gate writes its
@@ -250,10 +253,12 @@ ship it.
    Those three fields are the delivery's chain of custody — reviewed at this
    ancestor, fixed in these SHAs, validated on the head that ships — so a
    corrected delivery is expected to carry two different HEADs.
-   Name every visible process pane and its matching completion receipt, and
-   confirm that the lead closed each finished pane after validating its
-   artifacts. The receipt is complete when it truthfully distinguishes review
-   evidence, proportional final-HEAD proof, and pending native-CI obligations.
+   For every external process, record `Transport: herdr|local`, its matching
+   completion receipt, and transcript. A Herdr record also names the visible
+   process pane and confirms that the lead closed it after validating its
+   artifacts. The receipt is complete when it truthfully distinguishes
+   transport, review evidence, proportional final-HEAD proof, and pending
+   native-CI obligations.
 8. **Open or update the PR and verify its receipt.** Maintain one accurate,
    ready-for-review PR whose body carries the review and final-CI receipts —
    no receipt, no PR. Create new PRs as non-draft and verify GitHub preserved
