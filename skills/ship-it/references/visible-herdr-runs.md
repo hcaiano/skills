@@ -5,9 +5,9 @@ does not run as an interactive slash command in the current visible agent
 pane. The transport records whether the command ran in a visible Herdr process
 pane or as a local background process. These backends provide the same launch
 and receipt shape, but different operator control: a Herdr run is observable
-and interruptible in its own pane; a local run has no live user pane for
-observation or interjection. Its output remains available in the caller
-terminal and transcript.
+and interruptible in its own pane; a local run has no live surface for
+observation or interjection. Its transcript is the only record; the user can
+tail that file when needed.
 
 ## Select and launch
 
@@ -21,10 +21,10 @@ agent, and repository form one immutable pin, and its tab is the work unit.
 Start each command without moving the user's focus:
 
 ```bash
-RUN_FILE=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
+RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
   --label "ship-it · <simplify|standards review|spec review|combined review>" \
-  --receipt "<wrapper-result.json>" \
-  -- <command> <args...>)
+  -- <command> <args...> --receipt "<wrapper-result.json>")
+RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
 ```
 
 Outside Herdr, omit `PAIR_ID`. The helper selects `herdr` only when
@@ -38,8 +38,9 @@ pin and caller foreground process before every launch. Pin drift stops that
 launch and requires a fresh proof; an already-selected Herdr run never changes
 backend. The local backend starts a background child, streams its stderr to the
 caller terminal, tees its output to the transcript, and writes the completion
-receipt on exit. The transport owns observation: pane, marker, and receipt for
-Herdr; PID and receipt polling for local. The headless Claude and Codex wrappers
+receipt on exit. The local child is detached and writes only to its transcript;
+the transport owns observation: pane, marker, and receipt for Herdr; PID and
+receipt polling for local. The headless Claude and Codex wrappers
 own both backends' idle and total deadlines, PID-scoped termination, and content
 validation.
 

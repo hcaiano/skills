@@ -166,15 +166,14 @@ ship it.
        mode). `{ok: true}` with a non-empty result is the only pass. This gate
        is satisfied only by running `/code-review` in full; nothing improvised
        stands in for it.
-     - Codex: launch the bundled `headless-codex.mjs` wrapper through the
-       process transport. It must invoke `codex exec review --base
-       origin/<target-branch>`; `codex exec` with a freeform prompt does not
-       satisfy this gate. `{ok: true}` with a non-empty result is the only
-       pass.
-     With intended changes committed in step 4, `--base` covers the exact
-     review HEAD from the fetched target branch's true merge base. Name the
-     assigned axis in the review prompt, include its applicable sources, and
-     require read-only findings output. Both harnesses may run focused
+     - Codex: launch the bundled `headless-codex.mjs --base
+       origin/<target-branch> "<axis prompt>"` wrapper through the process
+       transport. The wrapper resolves the merge base before starting the
+       review, pins that range in the prompt, and records the resolved SHA in
+       its receipt. `codex exec` with a freeform prompt does not satisfy this
+       gate. `{ok: true}` with a non-empty result is the only pass.
+     Name the assigned axis in the wrapper prompt, include its applicable
+     sources, and require read-only findings output. Both harnesses may run focused
      verification; step 7 owns proportional final-HEAD validation; step 9 owns
      native PR-CI proof. An
      improvised read-through of the diff does not count.

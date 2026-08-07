@@ -205,7 +205,7 @@ test("external gate commands select and record an honest transport", () => {
   );
   assert.match(
     processTransport,
-    /a local run has no live user pane for\s+observation or interjection/u,
+    /a local run has no live surface for\s+observation or interjection/u,
   );
   assert.match(
     processTransport,
@@ -220,7 +220,7 @@ test("external gate commands select and record an honest transport", () => {
 test("transport preserves wrapper liveness and Herdr pane proof", () => {
   assert.match(
     processTransport,
-    /transport owns observation: pane, marker, and receipt for\s+Herdr; PID and receipt polling for local/u,
+    /transport owns observation:[\s\S]*receipt polling for local/u,
   );
   assert.match(
     processTransport,
@@ -247,11 +247,15 @@ test("transport preserves wrapper liveness and Herdr pane proof", () => {
 test("Codex review selects the diff mechanically", () => {
   assert.match(
     shipIt,
-    /`headless-codex\.mjs` wrapper[\s\S]*`codex exec review --base\s+origin\/<target-branch>`/u,
+    /`headless-codex\.mjs --base\s+origin\/<target-branch> "<axis prompt>"` wrapper/u,
   );
   assert.match(
     shipIt,
-    /`codex exec` with a freeform prompt does not\s+satisfy this gate/u,
+    /wrapper resolves the merge base before starting the\s+review, pins that range in the prompt, and records the resolved SHA in\s+its receipt/u,
+  );
+  assert.match(
+    shipIt,
+    /`codex exec` with a freeform prompt does not\s+satisfy this\s+gate/u,
   );
   assert.doesNotMatch(
     shipIt,
@@ -259,6 +263,6 @@ test("Codex review selects the diff mechanically", () => {
   );
   assert.match(
     shipIt,
-    /Name the\s+assigned axis in the review prompt, include its applicable sources, and\s+require read-only findings output/u,
+    /Name the assigned axis in the wrapper prompt, include its applicable\s+sources, and require read-only findings output/u,
   );
 });
