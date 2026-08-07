@@ -490,7 +490,7 @@ try {
   // constantly — must not be hideable by a stale or forged token.
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["codex", "run node /skills/ship-it/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
+      argv: ["codex", "run node /skills/review-gate/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
       cwd: "/workspace",
       name: "codex",
       pid: 999001,
@@ -506,7 +506,7 @@ try {
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
+      argv: ["node", "/skills/review-gate/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
       cwd: "/workspace",
       name: "node",
       pid: 999001,
@@ -522,7 +522,7 @@ try {
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
+      argv: ["node", "/skills/review-gate/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
       cwd: "/workspace",
       name: "node",
       pid: 999001,
