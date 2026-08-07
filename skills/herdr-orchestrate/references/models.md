@@ -131,11 +131,12 @@ but they open on different days, so the raw percentages are not comparable.
 
 ## Delivery gate capacity
 
-Before assigning a provisional delivery grade, read step 3 of ship-it's
-[delivery gate](../../ship-it/SKILL.md). That
-rubric is the single source of truth. Apply it provisionally to the issue's
-expected surface at kickoff, name the reason, and let ship-it classify the
-focused-proven final diff. Staffing, implementing model, pair use, and pool
+Before assigning a provisional delivery grade, read the grading step of the
+[review gate](../../review-gate/SKILL.md). That
+rubric is the single source of truth, and ship-it runs that gate rather than
+grading anything itself. Apply it provisionally to the issue's expected surface
+at kickoff, name the reason, and let the gate classify the focused-proven final
+diff. Staffing, implementing model, pair use, and pool
 selection never determine `skip`, `single`, `dual`, or the number of reviews;
 they only route the reviewers required by that semantic grade. A pool is **out
 of headroom** when its `used_percent` is 90 or higher, or its CLI refuses or
@@ -144,7 +145,7 @@ rate-limits at start; a null pool never degrades the gate by itself.
 - `skip` spends neither review pool and runs no LLM review. It omits simplify
   unless the user explicitly requested that pass.
 - `single` spends one pool, preferring the model family that did not
-  implement the change and then the cooler available pool only after ship-it
+  implement the change and then the cooler available pool only after the gate
   has fixed the one-review grade. If that pool is out, use the other and name
   the capacity choice.
 - `dual` spends both pools. Claude out records `dual — degraded to
@@ -152,7 +153,7 @@ rate-limits at start; a null pool never degrades the gate by itself.
   semantic grade remains `dual`.
 - Simplify is independent of staffing, model, pair use, and reviewer count.
   An explicit user request overrides every eligibility skip at any grade,
-  including `skip`. Otherwise ship-it omits it for `skip`; for reviewed grades
+  including `skip`. Otherwise the gate omits it for `skip`; for reviewed grades
   it runs only when the actual diff has a concrete eligible target and Claude
   has headroom. A `claude.pace` above 2 records a skip.
 - Both pools out → queue the unit. Nothing here overrides ship-it: with a

@@ -214,11 +214,11 @@ from `references/models.md`. Its single effort ladder defines the shared
 default and escalation meanings for both pools; its model table, selection
 rules, and usage-state command define the rest. Run that command before
 grading each wave and staff every unit against the `pace` it reports.
-The issue-time grade is provisional; ship-it owns the final semantic grade
-from the focused-proven diff and records any change. Pool availability
+The issue-time grade is provisional; the review gate ship-it runs owns the
+final semantic grade from the focused-proven diff and records any change. Pool availability
 degrades how that grade is executed, never the grade itself.
 Solo is the default: one implementer, with the orchestrator's scope checks
-and the graded ship-it gate unchanged by staffing. A pair
+and the graded review gate unchanged by staffing. A pair
 needs a positive reason — ambiguous spec, unfamiliar or cross-cutting area, a
 mistake that would be expensive, or scopes that genuinely parallelize — and
 is always cross-pool: one Claude + one Codex model.
@@ -394,7 +394,7 @@ units the suggested order and why>
 4. On go-ahead, follow the explicitly invoked ship-it skill that the
    orchestrator submits directly in this pane; do not auto-select it. The
    invocation carries this unit's provisional delivery gate:
-   <skip | single | dual> (ship-it owns the final semantic grade).
+   <skip | single | dual> (the review gate owns the final semantic grade).
    Its gate is a fresh review of the final diff — pair acceptance does
    not satisfy it — and must leave its `## Delivery gate` receipt in the
    PR body. Open the PR
@@ -470,7 +470,8 @@ merged. Then act by kind:
   fresh orchestrator. Tell the user the unit is shipping.
 - `shipped` — verify the graded review and final-CI receipts match the exact PR
   head. Every receipt must carry `Gate:`, `Risk:`, `Focused proof:`, and
-  `Regrade:` — that is ship-it's contract regardless of how the grade landed,
+  `Regrade:` — that is the review gate's contract regardless of how the grade
+  landed,
   and a receipt missing any of them means the gate did not run. On top of that,
   a receipt whose execution is thinner than the provisional gate is accepted
   only when those lines justify either a semantic regrade of the actual diff or
