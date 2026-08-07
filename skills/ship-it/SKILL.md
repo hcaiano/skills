@@ -167,8 +167,8 @@ ship it.
        mode). `{ok: true}` with a non-empty result is the only pass. This gate
        is satisfied only by running `/code-review` in full; nothing improvised
        stands in for it.
-     - Codex: launch the bundled `headless-codex.mjs --base
-       origin/<target-branch> "<axis prompt>"` wrapper through the process
+     - Codex: launch the bundled `headless-codex.mjs "<axis prompt>" --base
+       origin/<target-branch>` wrapper through the process
        transport. The wrapper resolves the merge base before starting the
        review, pins that range in the prompt, and records the resolved SHA in
        its receipt. `codex exec` with a freeform prompt does not satisfy this

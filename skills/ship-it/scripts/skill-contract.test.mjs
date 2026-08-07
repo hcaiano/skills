@@ -247,7 +247,7 @@ test("transport preserves wrapper liveness and Herdr pane proof", () => {
 test("Codex review selects the diff mechanically", () => {
   assert.match(
     shipIt,
-    /`headless-codex\.mjs --base\s+origin\/<target-branch> "<axis prompt>"` wrapper/u,
+    /`headless-codex\.mjs "<axis prompt>" --base\s+origin\/<target-branch>` wrapper/u,
   );
   assert.match(
     shipIt,
