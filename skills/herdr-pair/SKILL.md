@@ -111,16 +111,23 @@ The sender gives a busy partner a short grace period, then delivers anyway —
 both harnesses queue a submitted prompt while working, so no message is ever
 dropped for a partner that stays busy. It reserves the sequence and message
 kind, submits header, control line, and body in one `herdr agent prompt`
-call, and proves landing from the partner's composer itself: Enter until the
-composer no longer holds the text, one full resend, then a loud failure. It
-then waits for `receive` to acknowledge that sequence in `session.json`; an
-ACK can recover an interruption immediately after submission.
+call, and proves landing from the partner's composer in both directions: the
+composer must first be seen to change, because a paste that never arrived and
+one already submitted look identical; then Enter until it no longer holds the
+text, one full resend, then a loud failure. It then waits for `receive` to
+acknowledge that sequence in `session.json`; an ACK can recover an interruption
+immediately after submission.
 
 - `receipt=acknowledged`: the partner ran `receive` for this message.
-- `receipt=pending-partner-may-be-busy-do-not-retry`: the message landed
-  (queued if the partner was working), but is not acknowledged yet. Do not
-  resend. Later run `node "$PAIR_SCRIPT" reconcile`; the status advances only
-  after its ACK.
+- `receipt=pending-partner-may-be-busy-do-not-retry`: the message landed and the
+  partner is working, so it is queued but not acknowledged yet. Do not resend.
+  Later run `node "$PAIR_SCRIPT" reconcile`; the status advances only after its
+  ACK.
+- `receipt=lost-partner-idle-inspect-that-pane-then-reconcile`: the partner is
+  idle and never acknowledged, so it did not receive the message. Read that
+  pane, confirm the message is absent, and clear the pending delivery below.
+  Long bodies are the usual cause; send those as a short message naming a file
+  path.
 - A nonzero exit after reservation is a transport failure. The pending
   reservation remains so an ACK can reconcile it; never claim delivery or clear
   it without inspection.
