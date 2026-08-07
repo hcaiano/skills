@@ -190,14 +190,14 @@ test("review and simplify decisions are risk-adaptive and auditable", () => {
 test("external gate commands select and record an honest transport", () => {
   assert.match(
     shipIt,
-    /Every external command uses the transport helper, which selects a visible,\s+user-interruptible Herdr pane when the caller proof succeeds and otherwise\s+a local background process/u,
+    /Every external command uses the transport helper\. With `HERDR_ENV=1`, a\s+complete caller proof selects a visible, user-interruptible Herdr pane;\s+missing or incomplete proof stops the gate\. Outside Herdr, the helper uses\s+a local background process/u,
   );
   assert.match(shipIt, /completion receipt records the selected\s+transport/u);
   assert.doesNotMatch(shipIt, /blocked outside Herdr/u);
   assert.match(processTransport, /scripts\/run-transport\.mjs/u);
   assert.match(
     processTransport,
-    /selects `herdr` only when\s+`HERDR_ENV=1` and the caller proof succeeds; otherwise it selects `local`/u,
+    /Outside Herdr, omit `PAIR_ID`; the helper selects `local`\. With `HERDR_ENV=1`,\s+the caller proof must be complete for `herdr` selection/u,
   );
   assert.match(
     processTransport,

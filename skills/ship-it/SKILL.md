@@ -34,8 +34,9 @@ ship it.
    Before starting any simplify or native review command, read and follow the
    [process transport contract](references/visible-herdr-runs.md). An
    interactive slash command in the current agent pane is already visible.
-   Every external command uses the transport helper, which selects a visible,
-   user-interruptible Herdr pane when the caller proof succeeds and otherwise
+   Every external command uses the transport helper. With `HERDR_ENV=1`, a
+   complete caller proof selects a visible, user-interruptible Herdr pane;
+   missing or incomplete proof stops the gate. Outside Herdr, the helper uses
    a local background process. The completion receipt records the selected
    transport. This step is complete when the target, pool state, and transport
    prerequisites are explicit.

@@ -27,8 +27,9 @@ RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
 RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
 ```
 
-Outside Herdr, omit `PAIR_ID`. The helper selects `herdr` only when
-`HERDR_ENV=1` and the caller proof succeeds; otherwise it selects `local`.
+Outside Herdr, omit `PAIR_ID`; the helper selects `local`. With `HERDR_ENV=1`,
+the caller proof must be complete for `herdr` selection. An incomplete or
+drifted Herdr pin stops the gate instead of silently running invisibly.
 Retain the run file and its `transport`, `pane_id`, `pid`, `token`, `marker`,
 `receipt`, and `transcript` fields. Immediately tell the user the transport
 and label; for Herdr, also name the pane.
@@ -36,9 +37,9 @@ and label; for Herdr, also name the pane.
 The Herdr backend delegates to `herdr-visible-run.mjs`. It rechecks the full
 pin and caller foreground process before every launch. Pin drift stops that
 launch and requires a fresh proof; an already-selected Herdr run never changes
-backend. The local backend starts a background child, streams its stderr to the
-caller terminal, tees its output to the transcript, and writes the completion
-receipt on exit. The local child is detached and writes only to its transcript;
+backend. The local backend starts a detached child, tees its output to the
+transcript, and writes the completion receipt on exit. The local child writes
+only to its transcript;
 the transport owns observation: pane, marker, and receipt for Herdr; PID and
 receipt polling for local. The headless Claude and Codex wrappers
 own both backends' idle and total deadlines, PID-scoped termination, and content
