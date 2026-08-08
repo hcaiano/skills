@@ -71,14 +71,28 @@ ship it.
    native coverage for an applicable risk blocks delivery; it does not expand
    the local validation map.
 
-   **Post-gate correction rule.** A bounded delivery mutation — a validation
-   fix, base merge, live-review fix, or required-CI fix — keeps the existing
-   review-gate receipt. Apply one correction batch, rerun the affected proof,
-   and run only the review-gate's conditional review when the mutation
-   substantially changes behavior, expands scope, or introduces a new
-   behavior, security, or architectural risk. A bounded fix does not regrade,
-   simplify, or start a new full gate. A correction that needs a new contract
-   or architecture stops for user direction.
+   **Post-gate mutation loop.** Use this loop only for a mutation that this
+   delivery intentionally applies after `Gate HEAD`, including a base merge. A
+   remote head containing any other commit is new input: stop for user
+   direction; an enclosing orchestrator re-enters `ready` for a scope scan
+   before a new full gate.
+
+   The mutation's source does not make it bounded. It is bounded only when it
+   stays inside the authorized scope, needs no new contract or architecture,
+   and does not roughly double the diff the gate reviewed. Otherwise stop for
+   user direction. Batch all known validation, base, live-review, and CI fixes
+   into one round. Count every pushed post-gate batch, including a base merge;
+   after two rounds, stop and report.
+
+   Apply one bounded batch and rerun its affected proof. When it substantially
+   changes behavior, expands scope, or introduces a new behavior, security, or
+   architectural risk, resume review-gate at step 5's conditional-review path
+   with the existing receipt and applicable axes. Do not rerun Grade, Simplify,
+   or the initial review. If the conditional review already ran, another
+   qualifying mutation stops for user direction. Then finish this step on the
+   complete corrected diff: rerun proportional final-HEAD validation, update
+   the delivery receipt, and push. Continue through step 5 to update the live
+   PR, then restart step 6's checks and review fetches on the new head.
 
    After it passes, push normally. Mandatory pre-push checks must also pass,
    but do not replace the already-recorded final-HEAD validation. Record the
@@ -105,8 +119,9 @@ ship it.
    that state. Record the live-review baseline timestamp immediately before the
    first complete paginated fetch of current reviews, comments, and unresolved
    threads, then handle those surfaces. A branch mutation enters step 4's
-   post-gate correction rule and must finish with deterministic validation,
-   push, and PR update; it does not re-run the whole gate by default.
+   post-gate mutation loop only after its source and bounds are proved. It must
+   finish with deterministic validation, push, PR update, and fresh checks on
+   the new head; it does not re-run the whole gate by default.
    This step is complete when the live PR, its body, its base, and its head all
    match the verified final receipt and the baseline is explicit.
 6. Wait for required checks and every native-CI check delegated in steps 2 or
@@ -116,17 +131,18 @@ ship it.
    wait for or solicit one. Green means every required and delegated check
    passed; pending is not green. A check that cannot run at all (billing,
    runner outage, missing native coverage) is a blocker — report the PR blocked
-   on it, never shipped with a waiver. Fix a red check with one batched commit
-   under the gate's conditional-review trigger and return to step 4; after
-   two red rounds, stop and report.
+   on it, never shipped with a waiver. Batch red-check fixes through step 4's
+   post-gate mutation loop; its two-round cap covers every mutation source.
    Immediately before reporting shipped, re-fetch complete paginated reviews,
    issue comments, inline comments, and review threads, and capture the live
    `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
-   whose required and delegated checks passed; any mismatch returns to step 4's
-   post-gate correction rule. Handle every item newer than the baseline and
-   every unresolved thread. A branch change returns to that rule. Require
-   GitHub to report the PR mergeable against its base; a conflict merges the
-   base into the branch and returns to the same rule. Record the clean check
+   whose required and delegated checks passed. For any mismatch or branch
+   change, prove that this delivery intentionally produced every intervening
+   commit before entering step 4's post-gate mutation loop. Any other commit is
+   new input and follows that rule's stop and scope-scan path. Handle every item
+   newer than the baseline and every unresolved thread. Require GitHub to report
+   the PR mergeable against its base; a conflict merges the base into the branch
+   as one post-gate round and enters the same loop. Record the clean check
    timestamp and head.
 7. **Merge and deploy when authorized.** A ship-it invocation authorizes its
    local gate, push, and PR work; merge and deployment require explicit user

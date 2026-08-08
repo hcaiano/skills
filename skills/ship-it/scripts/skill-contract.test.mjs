@@ -85,10 +85,28 @@ test("ship-it keeps final validation after the gate", () => {
   );
   assert.match(
     shipIt,
-    /Post-gate correction rule\.[\s\S]*A bounded fix does not regrade,\s+simplify, or start a new full gate/u,
+    /Post-gate mutation loop\.[\s\S]*A\s+remote head containing any other commit is new input[\s\S]*re-enters `ready` for a scope scan\s+before a new full gate/u,
   );
-  assert.doesNotMatch(shipIt, /branch mutation returns to steps 3/u);
-  assert.doesNotMatch(shipIt, /A branch change returns to steps 3/u);
+  // A mutation category is not proof that its change is bounded. Keep the
+  // gate's size and contract stops, its executable conditional-review path,
+  // and one cap across every delivery mutation source.
+  assert.match(
+    shipIt,
+    /source does not make it bounded[\s\S]*stays inside the authorized scope, needs no new contract or architecture,\s+and does not roughly double the diff/u,
+  );
+  assert.match(
+    shipIt,
+    /resume review-gate at step 5's conditional-review path\s+with the existing receipt and applicable axes[\s\S]*Do not rerun Grade, Simplify,\s+or the initial review/u,
+  );
+  assert.match(shipIt, /Count every pushed post-gate batch[\s\S]*after two rounds, stop and report/u);
+  assert.match(
+    shipIt,
+    /finish this step on the\s+complete corrected diff[\s\S]*Continue through step 5 to update the live\s+PR, then restart step 6's checks and review fetches on the new head/u,
+  );
+  assert.match(
+    shipIt,
+    /prove that this delivery intentionally produced every intervening\s+commit before entering step 4's post-gate mutation loop/u,
+  );
 });
 
 test("every step cross-reference resolves after the renumbering", () => {
@@ -162,6 +180,11 @@ test("the receipt embeds the gate's block and adds only delivery's own fields", 
   assert.doesNotMatch(shipIt, /`Regrade:` \(/u);
   assert.doesNotMatch(shipIt, /`Simplify:`\s*\n?\s*\(`applied in/u);
   assert.match(reviewGate, /Leave a `## Review gate` receipt/u);
+  assert.match(
+    orchestrate,
+    /verify `Final validated HEAD` in the final-CI receipt matches the\s+exact PR head\. `Reviewed HEAD` and `Gate HEAD` must be ancestors of that head/u,
+  );
+  assert.match(orchestrate, /corrections make equality neither required nor expected/u);
   assert.doesNotMatch(shipIt, /review:verify/u);
   assert.doesNotMatch(orchestrate, /review:verify/u);
 });
@@ -177,7 +200,15 @@ test("herdr-orchestrate points grading at the gate and delivery at ship-it", () 
   assert.match(orchestrate, /question waiting in an agent or `review-gate · \.\.\.` pane/u);
   assert.match(
     orchestrate,
-    /Every delivery receipt must carry `Gate:`, `Risk:`, `Focused proof:`,\s+and `Regrade:`[\s\S]*embedded\s+review-gate block supplies `Gate:`, `Risk:`, and `Regrade:`/u,
+    /Any branch change\s+re-enters `ready` for the orchestrator's scope scan\. After scope approval,\s+restart ship-it at step 1/u,
+  );
+  assert.match(
+    orchestrate,
+    /Run a new gate unless ship-it proves that this\s+delivery intentionally produced a bounded post-gate mutation; only that case\s+resumes at its step 4 mutation loop/u,
+  );
+  assert.match(
+    orchestrate,
+    /Every delivery\s+receipt must carry `Gate:`, `Risk:`, `Focused proof:`,\s+and `Regrade:`[\s\S]*embedded\s+review-gate block supplies `Gate:`, `Risk:`, and `Regrade:`/u,
   );
   assert.match(models, /\[review gate\]\(\.\.\/\.\.\/review-gate\/SKILL\.md\)/u);
   assert.match(

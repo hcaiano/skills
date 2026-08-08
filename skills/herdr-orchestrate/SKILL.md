@@ -468,8 +468,10 @@ merged. Then act by kind:
   invocation is the go-ahead and handled marker. The ship-delta check at
   shipped diffs from its quoted SHA, and the pane makes it recoverable by a
   fresh orchestrator. Tell the user the unit is shipping.
-- `shipped` — verify the graded review and final-CI receipts match the exact PR
-  head. Every delivery receipt must carry `Gate:`, `Risk:`, `Focused proof:`,
+- `shipped` — verify `Final validated HEAD` in the final-CI receipt matches the
+  exact PR head. `Reviewed HEAD` and `Gate HEAD` must be ancestors of that head;
+  corrections make equality neither required nor expected. Every delivery
+  receipt must carry `Gate:`, `Risk:`, `Focused proof:`,
   and `Regrade:` — these are the delivery receipt's contract: the embedded
   review-gate block supplies `Gate:`, `Risk:`, and `Regrade:`, while ship-it
   supplies `Focused proof:`. A receipt missing any of them means the delivery
@@ -486,9 +488,10 @@ merged. Then act by kind:
   fetch complete paginated live reviews, issue comments, inline comments, and
   review threads with the current `gh api`; anything newer than the shipped
   timestamp or any unresolved thread returns to the lead. Any branch change
-  re-enters ship-it's post-gate correction rule; only a qualifying behavior,
-  scope, security, or architecture change spends its conditional review. The
-  delivery receipt is
+  re-enters `ready` for the orchestrator's scope scan. After scope approval,
+  restart ship-it at step 1. Run a new gate unless ship-it proves that this
+  delivery intentionally produced a bounded post-gate mutation; only that case
+  resumes at its step 4 mutation loop. The delivery receipt is
   timestamped evidence, not merge authority.
   A `hold` unit waits for the user: acknowledge the hold to the lead in one
   line (also the handled marker in its pane), then toast the PR URL and why
