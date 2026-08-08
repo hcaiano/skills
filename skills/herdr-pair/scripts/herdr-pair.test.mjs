@@ -163,12 +163,13 @@ else if (args[0] === "agent" && args[1] === "read") {
 else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
   const wasWorking = pane.agent_status === "working";
+  const droppedWhileWorking = state.drop_paste_when_working === true && wasWorking;
   state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
   // Both harnesses collapse a large multi-line paste into a summary line, so
   // the composer never shows the message text itself. state.drop_paste models
   // the failure this fake used to hide: the paste silently never lands.
-  if (state.drop_paste !== true && !(state.hide_composer_when_working === true && wasWorking)) {
+  if (state.drop_paste !== true && !droppedWhileWorking && !(state.hide_composer_when_working === true && wasWorking)) {
     const lines = args[3].split("\\n").length;
     state.composers = state.composers ?? {};
     state.composers[args[2]] = lines > 1
@@ -178,7 +179,7 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   if (state.working_on_prompt !== false) pane.agent_status = "working";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
   const sender = state.last_message.match(/^\\[agent (claude|codex) ->/)?.[1];
-  if (control && sender && state.auto_ack !== false) {
+  if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
     const sequence = Number(control[2]);
     const slug = pane.tab_id.replaceAll(":", "_");
     const sessionPath = path.join(process.env.HOME, ".herdr-coworkers", pane.workspace_id, slug, "session.json");
@@ -1533,7 +1534,29 @@ try {
       1,
       "a working target must receive exactly one queued prompt",
     );
-    assert.equal(hiddenQueue.enter_keys ?? 0, 0, "a working target has no composer to submit");
+    assert.equal(hiddenQueue.enter_keys, 1, "a working target keeps the harmless Enter protection");
+
+    // A working status is not proof that Herdr accepted the body. Model a
+    // silent drop with no composer and no ACK; the helper must report the run
+    // as unproven instead of claiming a queued delivery.
+    sid = startSession({
+      panes: busyPanes,
+      drop_paste_when_working: true,
+      auto_ack: false,
+    });
+    const droppedBusy = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--timeout-ms", "0", "--ack-timeout-ms", "200",
+    );
+    assert.match(droppedBusy, /receipt=unproven-working-inspect-that-pane-then-reconcile/u);
+    assert.doesNotMatch(droppedBusy, /pending-partner-may-be-busy-do-not-retry/u);
+    const lostBusy = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      lostBusy.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "an unproved working delivery must not duplicate the full prompt",
+    );
+    assert.equal(lostBusy.enter_keys, 1, "a working delivery still gets one protective Enter");
 
     // The regression itself: the paste never lands. This must fail loudly and
     // keep the reservation pending, not report a delivery that did not happen.

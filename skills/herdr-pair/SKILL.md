@@ -116,10 +116,13 @@ node "$PAIR_SCRIPT" send "${PAIR_ID[@]}" --sid "$PAIR_SID" \
 ```
 
 The sender gives a busy partner a short grace period, then delivers anyway.
-When the partner is still working, Herdr queues exactly one `agent prompt` with
-the header, control line, and body. That path has no visible composer transition,
-so it sends no Enter and no full resend; `receive` later proves the exact
-sequence in `session.json`. Until that ACK arrives, the receipt stays pending.
+Measured on Herdr 0.8.0, Claude accepts a mid-turn prompt atomically, while a
+multi-line prompt to Codex still needs Enter. When the partner is still working,
+the helper sends exactly one `agent prompt` with the header, control line, and
+body, then runs the harmless Enter loop. It skips the visible-arrival check and
+the full resend because that status has no reliable composer signal and a
+resend may duplicate a queued body. Only `receive` proves the exact sequence in
+`session.json`; without that ACK the receipt says the delivery is unproven.
 
 For an idle partner, the helper proves landing from the composer: the composer
 must first be seen to change, because a paste that never arrived and one already
@@ -133,6 +136,11 @@ submission on either path.
   partner is working, so it is queued but not acknowledged yet. Do not resend.
   Later run `node "$PAIR_SCRIPT" reconcile`; the status advances only after its
   ACK.
+- `receipt=unproven-working-inspect-that-pane-then-reconcile`: the partner was
+  working, received one prompt plus the Enter protection, but did not ACK before
+  the deadline. The helper cannot distinguish a queued prompt from a silent
+  drop. Do not resend while its reservation is pending; inspect after the agent
+  settles, then reconcile or clear the proved-absent delivery before retrying.
 - `receipt=lost-partner-idle-inspect-that-pane-then-reconcile`: the partner is
   idle and never acknowledged, so it did not receive the message. Read that
   pane, confirm the message is absent, and clear the pending delivery below.

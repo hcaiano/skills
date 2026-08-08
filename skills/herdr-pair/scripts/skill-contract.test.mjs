@@ -28,7 +28,11 @@ test("a deliberate broken checkout is visible to both partners", () => {
 test("busy and idle partners keep distinct delivery proofs", () => {
   assert.match(
     skill,
-    /partner is still working, Herdr queues exactly one `agent prompt`[\s\S]*sends no Enter and no full resend[\s\S]*receipt stays pending/u,
+    /Measured on Herdr 0\.8\.0[\s\S]*multi-line prompt to Codex still needs Enter[\s\S]*partner is still working,[\s\S]*sends exactly one `agent prompt`[\s\S]*runs the harmless Enter loop[\s\S]*skips the visible-arrival check and\s+the full resend/u,
+  );
+  assert.match(
+    skill,
+    /receipt=unproven-working-inspect-that-pane-then-reconcile[\s\S]*cannot distinguish a queued prompt from a silent\s+drop/u,
   );
   assert.match(
     skill,

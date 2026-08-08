@@ -7,9 +7,13 @@ const here = new URL(".", import.meta.url).pathname;
 const skill = readFileSync(join(here, "../SKILL.md"), "utf8");
 
 test("every unit starts with one checkable contract", () => {
+  const start = skill.indexOf("Unit contract:");
+  const end = skill.indexOf("Milestones: report each one");
+  assert.ok(start >= 0, "the kickoff template must start the unit contract");
+  assert.ok(end > start, "the milestone anchor must follow the unit contract");
   const contract = skill.slice(
-    skill.indexOf("Unit contract:"),
-    skill.indexOf("Milestones: report each one"),
+    start,
+    end,
   );
   assert.ok(contract.length > 0, "the kickoff template must carry a unit contract");
   for (const field of ["Outcome:", "Write scope:", "Read-only scope:", "Verification:"]) {
