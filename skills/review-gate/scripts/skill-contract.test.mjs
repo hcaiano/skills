@@ -199,6 +199,17 @@ test("the receipt carries the gate's own chain of custody", () => {
   assert.doesNotMatch(reviewGate, /Final validated HEAD:/u);
 });
 
+test("the extracted gate stands on its own", () => {
+  // Naming ship-it as a known caller is correct and stays. What must not
+  // survive the extraction is the gate resolving paths relative to a skill its
+  // caller may never have invoked, or deferring to rules it now owns itself —
+  // a standalone install has no ship-it to look beside or defer to.
+  assert.match(reviewGate, /or ship-it delegates its graded\s+gate/u);
+  assert.doesNotMatch(processTransport, /beside ship-it/u);
+  assert.doesNotMatch(processTransport, /ship-it's content rules/u);
+  assert.doesNotMatch(processTransport, /every ship-it simplify/u);
+});
+
 test("the gate steps stay in order", () => {
   const steps = [
     "## 1. Grade",

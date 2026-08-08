@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Run a long ship-it command in a visible shell pane inside the caller's
+// Run a long gate command in a visible shell pane inside the caller's
 // transcript-proven Herdr tab. `start` creates the pane; `run` reuses one
 // previously created by this helper. Both return immediately with a marker,
 // receipt path, and transcript path. The child mode streams output in the pane
@@ -118,7 +118,7 @@ const foregroundProcesses = (paneId, role, allowTransient = false) => {
 };
 
 const validateCaller = ({ pane, workspace, tabId, terminalId, agent, repoRoot }) => {
-  if (process.env.HERDR_ENV !== "1") fail("ship-it visible runs require HERDR_ENV=1");
+  if (process.env.HERDR_ENV !== "1") fail("visible gate runs require HERDR_ENV=1");
   if (!["claude", "codex"].includes(agent)) fail(`unsupported caller agent: ${agent}`);
   if (!isAbsolute(repoRoot)) fail("--repo-root must be absolute");
   const root = run("git", ["-C", repoRoot, "rev-parse", "--show-toplevel"]);

@@ -1,6 +1,6 @@
 # Process transport
 
-Use this contract for every ship-it simplify or native review command that
+Use this contract for every gate simplify or native review command that
 does not run as an interactive slash command in the current visible agent
 pane. The transport records whether the command ran in a visible Herdr process
 pane or as a local background process. These backends provide the same launch
@@ -12,7 +12,7 @@ tail that file when needed.
 ## Select and launch
 
 Set `RUN_TRANSPORT` to this skill's `scripts/run-transport.mjs`. When
-`HERDR_ENV=1`, locate the `herdr-pair` skill installed beside ship-it, then read
+`HERDR_ENV=1`, locate the `herdr-pair` skill installed beside this one, then read
 and execute its `references/caller-pane-resolution.md` proof for the task
 repository. Build the `PAIR_ID` argument array exactly as that reference
 derives it from the proof JSON. The proof's pane, workspace, tab, terminal,
@@ -61,7 +61,8 @@ node "$RUN_TRANSPORT" wait --run-file "$RUN_FILE"
 ```
 
 Require the completion receipt's token and `transport` to match the run file,
-require exit zero, and validate the transcript under ship-it's content rules.
+require exit zero, and validate the transcript under the gate's step 4 content
+rules.
 For `headless-claude.mjs` or `headless-codex.mjs`, also require the separate
 wrapper receipt to contain `{ok: true}` and non-empty validated content. A
 refusal, rate-limit notice, or empty payload is failure even when the command

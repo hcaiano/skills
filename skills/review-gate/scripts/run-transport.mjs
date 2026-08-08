@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// Runs a long ship-it command through whichever transport this machine has,
+// Runs a long gate command through whichever transport this machine has,
 // and reports which one ran. `start` launches and returns immediately so a dual
 // review can start both legs before waiting on either; `wait` blocks until one
 // finishes and validates its completion receipt.
