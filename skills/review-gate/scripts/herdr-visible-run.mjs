@@ -21,6 +21,12 @@ import {
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  argReader,
+  completionRecord,
+  readCommandFile,
+  sleepSync,
+} from "./transport-lib.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const argv = process.argv.slice(2);
@@ -44,28 +50,7 @@ const fail = (message, code = 1) => {
   process.exit(code);
 };
 
-const take = (name, required = true) => {
-  const index = argv.indexOf(`--${name}`);
-  if (index === -1) {
-    if (required) fail(`missing --${name}`, 2);
-    return null;
-  }
-  const value = argv[index + 1];
-  if (!value || value === "--") fail(`missing value for --${name}`, 2);
-  argv.splice(index, 2);
-  return value;
-};
-
-const commandAfterSeparator = () => {
-  const separator = argv.indexOf("--");
-  if (separator === -1 || separator === argv.length - 1) {
-    fail("missing command after --", 2);
-  }
-  const command = argv.slice(separator + 1);
-  argv.splice(separator);
-  if (argv.length) fail(`unexpected arguments: ${argv.join(" ")}`, 2);
-  return command;
-};
+const { take, commandAfterSeparator } = argReader(argv, fail);
 
 const run = (command, args, options = {}) =>
   spawnSync(command, args, {
@@ -96,8 +81,6 @@ const herdrResult = (...args) => {
 };
 
 const shellQuote = (value) => `'${String(value).replaceAll("'", `'\"'\"'`)}'`;
-const sleepSync = (milliseconds) =>
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 const doneMarker = (token) => `SHIP_IT_VISIBLE_DONE ${token}`;
 
 // The caller and target checks differ only in what they assert, so the fetch,
@@ -340,19 +323,7 @@ if (mode === "exec") {
   const transcript = take("transcript");
   const commandFile = take("command-file");
   cleanupCommandFile = commandFile;
-  let command;
-  try {
-    command = JSON.parse(readFileSync(commandFile, "utf8"));
-  } catch {
-    fail(`cannot read command file: ${commandFile}`);
-  }
-  if (
-    !Array.isArray(command) ||
-    command.length === 0 ||
-    !command.every((part) => typeof part === "string")
-  ) {
-    fail(`command file contains invalid argv: ${commandFile}`);
-  }
+  const command = readCommandFile(commandFile, fail);
   unlinkSync(commandFile);
   cleanupCommandFile = null;
   if (argv.length) fail(`unexpected arguments: ${argv.join(" ")}`, 2);
@@ -373,16 +344,16 @@ if (mode === "exec") {
   });
   child.on("close", (code, signal) => {
     closeSync(transcriptFd);
-    const result = {
-      ok: code === 0,
-      pane_id: pane,
+    const result = completionRecord({
+      transport: "herdr",
+      paneId: pane,
       token,
       command,
-      exit_code: code,
+      code,
       signal,
-      seconds: Math.round((Date.now() - started) / 1000),
+      startedAt: started,
       transcript,
-    };
+    });
     writeFileSync(receipt, `${JSON.stringify(result, null, 2)}\n`);
     process.stdout.write(
       `\n${doneMarker(token)} exit=${code ?? "signal"} receipt=${receipt}\n`,

@@ -36,6 +36,12 @@ import {
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  argReader,
+  completionRecord,
+  readCommandFile,
+  sleepSync,
+} from "./transport-lib.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const herdrRunner = join(scriptPath, "..", "herdr-visible-run.mjs");
@@ -47,41 +53,19 @@ const fail = (message, code = 1) => {
   process.exit(code);
 };
 
-const take = (name, required = true) => {
-  const index = argv.indexOf(`--${name}`);
-  if (index === -1) {
-    if (required) fail(`missing --${name}`, 2);
-    return null;
-  }
-  const value = argv[index + 1];
-  if (!value || value === "--") fail(`missing value for --${name}`, 2);
-  argv.splice(index, 2);
-  return value;
-};
-
-const commandAfterSeparator = () => {
-  const separator = argv.indexOf("--");
-  if (separator === -1 || separator === argv.length - 1) {
-    fail("missing command after --", 2);
-  }
-  const command = argv.slice(separator + 1);
-  argv.splice(separator);
-  if (argv.length) fail(`unexpected arguments: ${argv.join(" ")}`, 2);
-  return command;
-};
+const { take, commandAfterSeparator } = argReader(argv, fail);
 
 const PIN_FLAGS = ["pane", "workspace", "tab-id", "as", "terminal-id", "repo-root"];
 const POLL_MS = 1000;
 const DEFAULT_TIMEOUT_MS = 3600000;
-const sleepSync = (milliseconds) =>
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
 
 const emit = (value) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
 
 // Reads a completion receipt and proves it belongs to this launch. Shared by
 // both backends because both write the same shape — that sameness is what lets
-// the gate's later steps stop caring which transport ran.
-const validateReceipt = (path, token, paneId) => {
+// the gate's later steps stop caring which transport ran, and completionRecord
+// in transport-lib.mjs is the single writer that makes it true.
+const validateReceipt = (path, token, paneId, transport) => {
   let receipt;
   try {
     receipt = JSON.parse(readFileSync(path, "utf8"));
@@ -93,6 +77,9 @@ const validateReceipt = (path, token, paneId) => {
   }
   if ((receipt.pane_id ?? null) !== (paneId ?? null)) {
     return { ok: false, reason: `completion receipt pane does not match this launch: ${path}` };
+  }
+  if (receipt.transport !== transport) {
+    return { ok: false, reason: `completion receipt records transport ${receipt.transport ?? "none"}, not the ${transport} run this launch started: ${path}` };
   }
   if (!Number.isInteger(receipt.exit_code) && typeof receipt.signal !== "string") {
     return { ok: false, reason: `completion receipt records no outcome: ${path}` };
@@ -118,19 +105,7 @@ if (mode === "exec") {
   const transcript = take("transcript");
   const commandFile = take("command-file");
   const cwd = take("cwd");
-  let command;
-  try {
-    command = JSON.parse(readFileSync(commandFile, "utf8"));
-  } catch {
-    fail(`cannot read command file: ${commandFile}`);
-  }
-  if (
-    !Array.isArray(command) ||
-    command.length === 0 ||
-    !command.every((part) => typeof part === "string")
-  ) {
-    fail(`command file contains invalid argv: ${commandFile}`);
-  }
+  const command = readCommandFile(commandFile, fail);
   unlinkSync(commandFile);
   if (argv.length) fail(`unexpected arguments: ${argv.join(" ")}`, 2);
   const started = Date.now();
@@ -150,16 +125,16 @@ if (mode === "exec") {
     writeFileSync(
       receipt,
       `${JSON.stringify(
-        {
-          ok: code === 0,
-          pane_id: null,
+        completionRecord({
+          transport: "local",
+          paneId: null,
           token,
           command,
-          exit_code: code,
+          code,
           signal,
-          seconds: Math.round((Date.now() - started) / 1000),
+          startedAt: started,
           transcript,
-        },
+        }),
         null,
         2,
       )}\n`,
@@ -325,7 +300,7 @@ if (mode === "exec") {
     fail(`unknown transport in run descriptor: ${run.transport}`);
   }
 
-  const result = validateReceipt(run.receipt, run.token, run.pane_id);
+  const result = validateReceipt(run.receipt, run.token, run.pane_id, run.transport);
   emit({
     transport: run.transport,
     pane_id: run.pane_id ?? null,

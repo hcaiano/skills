@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Runs one Codex review headless, with the same protections `headless-claude`
-// gives the Claude leg: output-based liveness (stock macOS has no `timeout`),
-// live stderr streaming for a visible Herdr pane, a kill of the PID itself
-// (never the group), and content validation — exit 0 with an empty or missing
-// final message is a FAILURE, not a pass.
+// gives the Claude leg — because both legs now share them: output-based liveness
+// (stock macOS has no `timeout`), live stderr streaming for a visible Herdr
+// pane, and a kill of the PID itself (never the group) all live in
+// headless-run.mjs. Content validation stays here, since it is vendor-specific:
+// exit 0 with an empty or missing final message is a FAILURE, not a pass.
 //
 //   node headless-codex.mjs "<axis prompt>" --base origin/main
 //   node headless-codex.mjs "<axis prompt>" --commit <sha>
@@ -12,7 +13,7 @@
 //
 // Exactly one range selector is required, and the wrapper resolves it to a SHA
 // itself. `codex exec review` refuses its own `--base`/`--commit`/`--uncommitted`
-// flags together with a custom prompt, and ship-it must assign a review axis —
+// flags together with a custom prompt, and the gate must assign a review axis —
 // so the axis keeps the prompt and the range stops being a `git merge-base`
 // command the model is asked to run. It arrives already resolved, and the exact
 // SHA lands on the receipt for the delivery's chain of custody.
@@ -21,30 +22,24 @@
 //   * No baseline/restore. The run is pinned to `sandbox_mode="read-only"`, so
 //     there is no writable mode to undo. The tree is fingerprinted before and
 //     after anyway and any drift is reported on `tree_changed` for the caller.
-//   * Sandbox and range arrive through `-c` and the prompt because
+//   * The sandbox and the range arrive through `--config` and the prompt because
 //     `codex exec review` accepts neither `--sandbox` nor `--color` nor `--cd`;
 //     those belong to `codex exec` and its `review` subcommand rejects them.
 //   * Codex publishes no `is_error` equivalent on this surface. Success is
 //     therefore exit 0 AND a non-empty `--output-last-message` file; a refusal
 //     that still writes prose reads as success here, so the caller must apply
-//     ship-it's transcript content rules to `log` as well.
+//     the gate's transcript content rules to `log` as well.
 //
 // Exit 0: JSON receipt {ok: true, result: "<final message>", ...}.
 // Exit 1: {ok: false, reason, ...}.
-import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, openSync, closeSync, existsSync, readFileSync, writeFileSync, writeSync } from 'node:fs';
+import { mkdtempSync, openSync, closeSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-const POLL_MS = 2000;
+import { gitRunner, optionReader, receiptEmitter, supervise } from './headless-run.mjs';
 
 const argv = process.argv.slice(2);
 const prompt = argv[0];
-const opt = (name, fallback) => {
-  const i = argv.indexOf(`--${name}`);
-  return i === -1 ? fallback : argv[i + 1];
-};
-const flag = (name) => argv.includes(`--${name}`);
+const { opt, flag } = optionReader(argv);
 
 const usage = 'usage: headless-codex.mjs "<prompt>" (--base <branch> | --commit <sha> | --uncommitted) [--cwd <path>] [--model <m>] [--receipt <path>] [--idle-min N] [--total-min N]';
 if (!prompt || prompt.startsWith('--')) {
@@ -60,12 +55,7 @@ const receiptPath = opt('receipt', null);
 const idleMs = parseFloat(opt('idle-min', '20')) * 60000;
 const totalMs = parseFloat(opt('total-min', '60')) * 60000;
 
-const emit = (obj, code) => {
-  const output = JSON.stringify(obj, null, 2) + '\n';
-  if (receiptPath) writeFileSync(receiptPath, output);
-  process.stdout.write(output);
-  process.exit(code);
-};
+const emit = receiptEmitter(receiptPath);
 
 // Ambiguous range selection is the exact failure this wrapper exists to
 // prevent, so two selectors is a usage error rather than a silent precedence.
@@ -74,7 +64,7 @@ if (selectors.length !== 1) {
   emit({ ok: false, reason: `exactly one range selector required, got ${selectors.length ? selectors.join(' + ') : 'none'}. ${usage}` }, 2);
 }
 
-const git = (...args) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+const git = gitRunner(cwd);
 const fingerprint = () => git('diff', 'HEAD', '--binary').stdout;
 const baselineTree = fingerprint();
 
@@ -125,30 +115,9 @@ const args = [
   composedPrompt,
 ];
 
-const started = Date.now();
-const child = spawn('codex', args, { cwd, stdio: ['ignore', 'pipe', 'pipe'] });
-// Liveness is measured on the bytes themselves: the parent sees every chunk,
-// so there is nothing left for a filesystem size poll to learn.
-let lastGrowth = Date.now();
-let visibleOutputOpen = true;
-process.stderr.on('error', (error) => {
-  if (error.code === 'EPIPE') {
-    visibleOutputOpen = false;
-    return;
-  }
-  throw error;
-});
-const mirror = (chunk) => {
-  writeSync(logFd, chunk);
-  if (visibleOutputOpen) process.stderr.write(chunk);
-  lastGrowth = Date.now();
-};
-child.stdout.on('data', mirror);
-child.stderr.on('data', mirror);
-
 const finish = (outcome) => {
   closeSync(logFd);
-  const seconds = Math.round((Date.now() - started) / 1000);
+  const seconds = Math.round((Date.now() - startedAt) / 1000);
   const record = { command: ['codex', ...args], review_range: range, seconds, log: logPath, ...outcome };
   // The sandbox is the enforcement; this is the audit trail. It never fails the
   // run on its own — in a shared worktree an unrelated edit would read as
@@ -160,16 +129,16 @@ const finish = (outcome) => {
   emit(record, record.ok ? 0 : 1);
 };
 
-let exit = null;
-child.on('close', (code) => { exit = code ?? -1; });
-child.on('error', () => { exit = -1; });
-
-const timer = setInterval(() => {
-  if (exit !== null) {
-    clearInterval(timer);
-    // Complete means exit 0 AND a final message with non-empty content — a
-    // clean exit around an empty payload must read as failure, never as a
-    // passed review.
+const { startedAt } = supervise({
+  bin: 'codex',
+  args,
+  cwd,
+  logFd,
+  idleMs,
+  totalMs,
+  // Complete means exit 0 AND a final message with non-empty content — a clean
+  // exit around an empty payload must read as failure, never as a passed review.
+  onExit: (exit) => {
     if (exit !== 0) return finish({ ok: false, reason: `codex exited ${exit}`, exit_code: exit });
     if (!existsSync(lastMessagePath)) {
       return finish({ ok: false, reason: 'no final message file — not a completed review', exit_code: exit });
@@ -177,16 +146,6 @@ const timer = setInterval(() => {
     const text = readFileSync(lastMessagePath, 'utf8').trim();
     if (!text) return finish({ ok: false, reason: 'final message is empty — content validation failed', exit_code: exit });
     return finish({ ok: true, exit_code: exit, result: text });
-  }
-
-  const now = Date.now();
-  if (now - lastGrowth > idleMs || now - started > totalMs) {
-    clearInterval(timer);
-    const why = now - started > totalMs ? `total budget ${Math.round(totalMs / 60000)}m exceeded` : `no output for ${Math.round(idleMs / 60000)}m`;
-    child.kill('SIGTERM'); // the PID itself, never the group
-    setTimeout(() => {
-      try { process.kill(child.pid, 0); child.kill('SIGKILL'); } catch { /* already gone */ }
-      setTimeout(() => finish({ ok: false, reason: `hang: ${why}`, killed: true }), 500);
-    }, 2000);
-  }
-}, POLL_MS);
+  },
+  onHang: (why) => finish({ ok: false, reason: `hang: ${why}`, killed: true }),
+});

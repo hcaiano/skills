@@ -1,11 +1,14 @@
 #!/usr/bin/env node
-// Runs one Claude slash command headless with the whole fragile mechanic in
-// code: output-based liveness (stock macOS has no `timeout`), live stderr
-// streaming for a visible Herdr pane, a kill of the PID
-// itself (never the group), content validation (exit 0 with an empty or
-// missing result is a FAILURE, not a pass), and for writable runs a baseline
-// patch taken before and a verified restore after any failure — the tree
-// fingerprint must match the baseline, not just "apply ran".
+// Runs one Claude slash command headless. The shared mechanic — output-based
+// liveness (stock macOS has no `timeout`), live stderr streaming for a visible
+// Herdr pane, and a kill of the PID itself (never the group) — lives in
+// headless-run.mjs. What stays here is what Claude's CLI forces: its argv, its
+// stream-json success predicate, and for writable runs a baseline patch taken
+// before and a verified restore after any failure — the tree fingerprint must
+// match the baseline, not just "apply ran".
+//
+// Content validation is part of that predicate: exit 0 with an empty or missing
+// result is a FAILURE, not a pass.
 //
 //   node headless-claude.mjs "/code-review"                 # read-only (plan)
 //   node headless-claude.mjs "/simplify" --writable true    # acceptEdits
@@ -14,19 +17,14 @@
 // Exit 0: JSON receipt {ok: true, result: "<final result text>", ...}.
 // Exit 1: {ok: false, reason, ...}; writable runs report restore status —
 // a failed restore is called out loudly for the caller to inspect.
-import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, openSync, closeSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { mkdtempSync, openSync, closeSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
-const POLL_MS = 2000;
+import { gitRunner, optionReader, receiptEmitter, supervise } from './headless-run.mjs';
 
 const argv = process.argv.slice(2);
 const command = argv[0];
-const opt = (name, fallback) => {
-  const i = argv.indexOf(`--${name}`);
-  return i === -1 ? fallback : argv[i + 1];
-};
+const { opt } = optionReader(argv);
 if (!command || command.startsWith('--')) {
   process.stdout.write(JSON.stringify({ ok: false, reason: 'usage: headless-claude.mjs "<slash-command>" [--writable true] [--cwd <path>] [--model opus] [--idle-min N] [--total-min N]' }) + '\n');
   process.exit(2);
@@ -38,14 +36,8 @@ const receiptPath = opt('receipt', null);
 const idleMs = parseFloat(opt('idle-min', '20')) * 60000;
 const totalMs = parseFloat(opt('total-min', '60')) * 60000;
 
-const emit = (obj, code) => {
-  const output = JSON.stringify(obj, null, 2) + '\n';
-  if (receiptPath) writeFileSync(receiptPath, output);
-  process.stdout.write(output);
-  process.exit(code);
-};
-
-const git = (...args) => spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+const emit = receiptEmitter(receiptPath);
+const git = gitRunner(cwd);
 
 // Baseline for writable runs: a --binary patch captures intent-to-add paths
 // that `git stash create` refuses; record those paths to re-mark them after
@@ -86,34 +78,10 @@ const restore = () => {
 
 const logPath = join(work, 'run.log');
 const logFd = openSync(logPath, 'w');
-const started = Date.now();
-const child = spawn(
-  'claude',
-  ['-p', '--model', model, '--permission-mode', writable ? 'acceptEdits' : 'plan', '--strict-mcp-config', '--no-chrome', '--output-format', 'stream-json', '--verbose', command],
-  { cwd, stdio: ['ignore', 'pipe', 'pipe'] },
-);
-// Liveness is measured here, on the bytes themselves: the parent now sees
-// every chunk, so there is nothing left for a filesystem size poll to learn.
-let lastGrowth = Date.now();
-let visibleOutputOpen = true;
-process.stderr.on('error', (error) => {
-  if (error.code === 'EPIPE') {
-    visibleOutputOpen = false;
-    return;
-  }
-  throw error;
-});
-const mirror = (chunk) => {
-  writeSync(logFd, chunk);
-  if (visibleOutputOpen) process.stderr.write(chunk);
-  lastGrowth = Date.now();
-};
-child.stdout.on('data', mirror);
-child.stderr.on('data', mirror);
 
 const finish = (outcome) => {
   closeSync(logFd);
-  const seconds = Math.round((Date.now() - started) / 1000);
+  const seconds = Math.round((Date.now() - startedAt) / 1000);
   const base = { command, writable, seconds, log: logPath, ...outcome };
   if (base.ok) emit(base, 0);
   if (writable) {
@@ -125,16 +93,17 @@ const finish = (outcome) => {
   emit(base, 1);
 };
 
-let exit = null;
-child.on('close', (code) => { exit = code ?? -1; });
-child.on('error', () => { exit = -1; });
-
-const timer = setInterval(() => {
-  if (exit !== null) {
-    clearInterval(timer);
-    // Complete means exit 0 AND a final result event with is_error false AND
-    // non-empty content — a clean exit around a refusal or empty payload
-    // must read as failure, never as a passed run.
+const { startedAt } = supervise({
+  bin: 'claude',
+  args: ['-p', '--model', model, '--permission-mode', writable ? 'acceptEdits' : 'plan', '--strict-mcp-config', '--no-chrome', '--output-format', 'stream-json', '--verbose', command],
+  cwd,
+  logFd,
+  idleMs,
+  totalMs,
+  // Complete means exit 0 AND a final result event with is_error false AND
+  // non-empty content — a clean exit around a refusal or empty payload must
+  // read as failure, never as a passed run.
+  onExit: (exit) => {
     const lines = readFileSync(logPath, 'utf8').split('\n').filter(Boolean);
     let result = null;
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -149,16 +118,6 @@ const timer = setInterval(() => {
     const text = (result.result ?? '').trim();
     if (!text) return finish({ ok: false, reason: 'result event is empty — content validation failed', exit_code: exit });
     return finish({ ok: true, exit_code: exit, result: text });
-  }
-
-  const now = Date.now();
-  if (now - lastGrowth > idleMs || now - started > totalMs) {
-    clearInterval(timer);
-    const why = now - started > totalMs ? `total budget ${Math.round(totalMs / 60000)}m exceeded` : `no output for ${Math.round(idleMs / 60000)}m`;
-    child.kill('SIGTERM'); // the PID itself, never the group
-    setTimeout(() => {
-      try { process.kill(child.pid, 0); child.kill('SIGKILL'); } catch { /* already gone */ }
-      setTimeout(() => finish({ ok: false, reason: `hang: ${why}`, killed: true }), 500);
-    }, 2000);
-  }
-}, POLL_MS);
+  },
+  onHang: (why) => finish({ ok: false, reason: `hang: ${why}`, killed: true }),
+});
