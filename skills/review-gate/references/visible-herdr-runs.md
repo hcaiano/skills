@@ -22,10 +22,27 @@ Start each command without moving the user's focus:
 
 ```bash
 RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
-  --label "ship-it · <simplify|standards review|spec review|combined review>" \
+  --label "review-gate · <simplify|standards review|spec review|combined review>" \
   -- <command> <args...> --receipt "<wrapper-result.json>")
 RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
 ```
+
+To reuse a pane this gate already created — and only for the sequential case
+the reuse rule below allows — swap `start` for `run` and pass the finished
+run's pane, receipt, and token, so the helper proves the pane is the one it
+launched before it sends anything into it:
+
+```bash
+RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
+  --label "review-gate · <axis>" \
+  --target-pane "<pane_id>" \
+  --prior-receipt "<prior completion receipt>" \
+  --prior-token "<prior token>" \
+  -- <command> <args...> --receipt "<wrapper-result.json>")
+```
+
+Those three flags belong to the Herdr backend alone; the local backend has no
+panes and rejects them.
 
 Outside Herdr, omit `PAIR_ID`; the helper selects `local`. With `HERDR_ENV=1`,
 the caller proof must be complete for `herdr` selection. An incomplete or

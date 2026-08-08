@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code and Codex.
 
-The repository contains nine active skills under `skills/` and small maintenance
+The repository contains ten active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -46,7 +46,10 @@ Run the same command to update the installed copies after changing this repo.
 
 ### Delivery
 
-- `ship-it` — run one graded local review round, batch material fixes, validate
+- `review-gate` — grade a finished change, simplify it, run one graded LLM
+  review round, and batch material fixes. Ends at a clean local HEAD and a
+  receipt; never pushes, opens a PR, or merges.
+- `ship-it` — prove a finished change, run the graded gate above, validate
   the final HEAD deterministically, and carry the authorized PR delivery
   forward.
 - `review-pr-comments` — handle feedback that actually appears on an existing
@@ -61,8 +64,12 @@ Run the same command to update the installed copies after changing this repo.
 - `art-director` composes the external `imagegen` skill. It uses `brandkit`
   only when a selected identity direction needs system proof, and `herdr-pair`
   only when the current runtime cannot generate images directly.
-- `ship-it` reads the usage-state helper bundled with `herdr-orchestrate` when
-  grading its local review gate.
+- `ship-it` requires `review-gate` installed alongside it: it delegates its
+  graded gate and never reimplements one.
+- `review-gate` reads the usage-state helper bundled with `herdr-orchestrate`
+  to size its review pools, and reads `herdr-pair`'s caller-pane proof when
+  running a gate command in a visible Herdr pane. It degrades to a recorded
+  skip rather than failing when either is absent.
 
 These dependencies are not bundled here and must be installed separately.
 

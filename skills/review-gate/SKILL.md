@@ -46,11 +46,21 @@ its window funds, so it empties before its reset. The graded reviews still run
 at that pace; what gives way is the Claude simplify pass, and only to
 `claude.pace`.
 
+That helper is a sibling skill, not a bundled one. When it is not installed,
+record `Gate: <grade> — pool state unread (usage-state.mjs not installed)` and
+run the grade's required reviewers anyway. A missing capacity reading is not a
+capacity degradation: it never lowers the semantic grade, never drops a
+reviewer, and never skips simplify on its own. Only an observed CLI refusal
+does that.
+
 Before starting any simplify or review command, read and follow
 [process transport](references/visible-herdr-runs.md). An interactive slash
 command in the current agent pane is already visible; every external Claude or
 Codex command runs through the transport, which records whether it ran in a
-visible Herdr pane or as a local background process.
+visible Herdr pane or as a local background process. The visible backend needs
+`herdr-pair` installed beside this skill for its caller-pane proof; without it,
+or outside `HERDR_ENV=1`, the transport selects `local` and the gate records
+that its runs had no live surface for the user to watch or interject in.
 
 Done when the range, the pool state, and any required transport pin are
 explicit.
@@ -131,12 +141,19 @@ capacity disposition preserves the semantic grade.
 ## 3. Finalize the review HEAD
 
 When simplify ran, inspect every edit and rerun the focused tests and checks
-affected by it. Create clear, intentional local commits and reach a clean review
-HEAD without pushing. Reapply step 1's risk grade to this resulting complete
-diff and record the final grade plus any change from the candidate.
+affected by it. Reapply step 1's risk grade to the resulting complete diff and
+record the final grade plus any change from the candidate.
 
-Done when the final diff has focused proof, `git status` contains no intended
-uncommitted change, and the review grade is explicit.
+Commit only what this gate is entitled to commit. When the range is a branch,
+create clear, intentional local commits and reach a clean review
+HEAD without pushing. When the range is the uncommitted working tree, that tree is the
+review HEAD: review it in place and commit nothing the gate did not itself
+produce — a `skip` grade over uncommitted work commits nothing at all. The gate
+changes only the working tree and the local history its own corrections
+require, and committing a user's in-progress work would break that promise.
+
+Done when the final diff has focused proof, no correction the gate made is left
+uncommitted on a branch range, and the review grade is explicit.
 
 ## 4. Review Standards and Spec
 

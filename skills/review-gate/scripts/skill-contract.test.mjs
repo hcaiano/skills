@@ -208,6 +208,45 @@ test("the extracted gate stands on its own", () => {
   assert.doesNotMatch(processTransport, /beside ship-it/u);
   assert.doesNotMatch(processTransport, /ship-it's content rules/u);
   assert.doesNotMatch(processTransport, /every ship-it simplify/u);
+  // herdr-orchestrate finds this gate's panes by this exact label. A pane
+  // labelled for ship-it is read there as a delivery in progress, which a
+  // standalone or orchestrator-invoked gate run is not.
+  assert.match(processTransport, /--label "review-gate · /u);
+  assert.doesNotMatch(processTransport, /--label "ship-it · /u);
+
+  // Both sibling skills are dependencies, not bundles. Absence must have a
+  // defined outcome, or a standalone install has no runnable path.
+  assert.match(
+    reviewGate,
+    /pool state unread \(usage-state\.mjs not installed\)[\s\S]*A missing capacity reading is not a\s+capacity degradation/u,
+  );
+  assert.match(
+    reviewGate,
+    /needs\s+`herdr-pair` installed beside this skill for its caller-pane proof; without it,\s+or outside `HERDR_ENV=1`, the transport selects `local`/u,
+  );
+});
+
+test("the gate commits its own corrections, never the user's work", () => {
+  // The gate promises it changes only the working tree and the local history
+  // its corrections require. An unconditional commit instruction over an
+  // uncommitted-tree range would break exactly that promise.
+  assert.match(reviewGate, /the uncommitted working tree, when nothing is committed yet/u);
+  assert.match(
+    reviewGate,
+    /commit nothing the gate did not itself\s+produce — a `skip` grade over uncommitted work commits nothing at all/u,
+  );
+  assert.match(reviewGate, /reach a clean review\s+HEAD without pushing/u);
+});
+
+test("the transport doc can perform the pane reuse it mandates", () => {
+  // The reuse rule survived an earlier edit that dropped the invocation
+  // showing how, leaving an agent told to reuse a pane with only `start`
+  // documented — so it opens a new pane per command instead.
+  assert.match(processTransport, /Reuse its pane only for an already-planned/u);
+  for (const flag of [/--target-pane "<pane_id>"/u, /--prior-receipt "/u, /--prior-token "/u]) {
+    assert.match(processTransport, flag, `the reuse rule needs ${flag} documented`);
+  }
+  assert.match(processTransport, /the local backend has no\s+panes and rejects them/u);
 });
 
 test("the gate steps stay in order", () => {
