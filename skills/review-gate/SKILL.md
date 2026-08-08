@@ -57,9 +57,13 @@ Before starting any simplify or review command, read and follow
 command in the current agent pane is already visible; every external Claude or
 Codex command runs through the transport, which records whether it ran in a
 visible Herdr pane or as a local background process. The visible backend needs
-`herdr-pair` installed beside this skill for its caller-pane proof; without it,
-or outside `HERDR_ENV=1`, the transport selects `local` and the gate records
-that its runs had no live surface for the user to watch or interject in.
+`herdr-pair` installed beside this skill for its caller-pane proof, and the two
+environments resolve its absence differently. Outside `HERDR_ENV=1` the
+transport selects `local`, and the gate records that its runs had no live
+surface for the user to watch or interject in. Inside `HERDR_ENV=1` a missing
+proof stops the gate: a gate Herdr is hosting runs where the user can see it,
+so tell the user to install `herdr-pair` rather than demoting the run to an
+invisible process.
 
 Done when the range, the pool state, and any required transport pin are
 explicit.
@@ -228,10 +232,13 @@ Apply any valid, material, in-scope findings from that conditional review in one
 batch without a third review. If those corrections themselves require another
 qualifying behavior, scope, security, or architecture change, stop for user
 direction instead of opening another review cycle. Rerun the affected focused
-proof, commit all corrections, and reach a clean final HEAD.
+proof, then reach the end state this gate's range allows: on a branch range,
+commit all corrections and reach a clean final HEAD; on an uncommitted range,
+leave the corrections in the working tree beside the work already there, since
+committing is what step 3 withheld.
 
 Done when every finding has a disposition, the conditional review decision is
-recorded, focused proof passes, and the final HEAD is clean.
+recorded, focused proof passes, and the gate's end state matches its range.
 
 ## 6. Write the receipt
 
@@ -248,7 +255,9 @@ block verbatim rather than restating it.
   `skipped — <reason>` / `failed — <reason>`.
 - `Reviewed HEAD:` — the 40-character last gate-reviewed SHA, an ancestor of the
   final HEAD whenever the gate found anything.
-- `Gate HEAD:` — the 40-character clean SHA this gate ends on.
+- `Gate HEAD:` — the 40-character clean SHA this gate ends on. On an
+  uncommitted range, the unchanged SHA the reviewed tree sits on, written
+  `<sha> — uncommitted` so no caller reads it as a shippable head.
 - Each reviewer, its native command, assigned axis, finding count, and each
   finding's disposition (`fixed in <sha>` / `deferred to #N` / discarded
   reason), plus whether the conditional review ran and why.
@@ -266,6 +275,7 @@ gate ends on, and every finding has a disposition.
 ## Report
 
 Give the user the receipt summary, the final grade and any capacity degradation,
-each finding discarded or deferred, and the exact clean HEAD. Say plainly that
-nothing was pushed and no PR was touched, and name what the change still needs
-to ship.
+each finding discarded or deferred, and the exact HEAD the gate ends on — naming
+the uncommitted corrections still in the working tree when the range was one.
+Say plainly that nothing was pushed and no PR was touched, and name what the
+change still needs to ship.

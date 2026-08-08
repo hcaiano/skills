@@ -28,9 +28,10 @@ RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
 ```
 
 To reuse a pane this gate already created — and only for the sequential case
-the reuse rule below allows — swap `start` for `run` and pass the finished
-run's pane, receipt, and token, so the helper proves the pane is the one it
-launched before it sends anything into it:
+the reuse rule below allows — keep `start` and add the finished run's pane,
+receipt, and token, so the helper proves the pane is the one it launched before
+it sends anything into it. `start` and `wait` are the whole public surface;
+`--target-pane` is what routes the launch to pane reuse:
 
 ```bash
 RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \

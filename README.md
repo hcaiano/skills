@@ -67,9 +67,11 @@ Run the same command to update the installed copies after changing this repo.
 - `ship-it` requires `review-gate` installed alongside it: it delegates its
   graded gate and never reimplements one.
 - `review-gate` reads the usage-state helper bundled with `herdr-orchestrate`
-  to size its review pools, and reads `herdr-pair`'s caller-pane proof when
-  running a gate command in a visible Herdr pane. It degrades to a recorded
-  skip rather than failing when either is absent.
+  to size its review pools, and reads `herdr-pair`'s caller-pane proof to run a
+  gate command in a visible Herdr pane. A missing usage-state helper records an
+  unread pool state and changes nothing else. A missing `herdr-pair` runs the
+  gate locally outside Herdr, and stops it inside Herdr rather than hiding a
+  hosted run.
 
 These dependencies are not bundled here and must be installed separately.
 

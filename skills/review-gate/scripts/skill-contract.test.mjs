@@ -220,9 +220,36 @@ test("the extracted gate stands on its own", () => {
     reviewGate,
     /pool state unread \(usage-state\.mjs not installed\)[\s\S]*leaves\s+the semantic grade, the reviewer count, and simplify exactly as graded/u,
   );
+  // The two environments resolve a missing herdr-pair differently, because
+  // run-transport.mjs hard-stops an incomplete pin under HERDR_ENV=1 rather
+  // than demoting a hosted run to an invisible one. A single "falls back to
+  // local" rule would promise a run that cannot start.
   assert.match(
     reviewGate,
-    /needs\s+`herdr-pair` installed beside this skill for its caller-pane proof; without it,\s+or outside `HERDR_ENV=1`, the transport selects `local`/u,
+    /Outside `HERDR_ENV=1` the\s+transport selects `local`/u,
+  );
+  assert.match(
+    reviewGate,
+    /Inside `HERDR_ENV=1` a missing\s+proof stops the gate/u,
+  );
+});
+
+test("the gate's end state matches the range it was given", () => {
+  // An uncommitted range cannot reach a clean committed HEAD without
+  // committing work the gate never touched, so steps 5, 6 and Report each
+  // carry the branch/uncommitted split — not step 3 alone.
+  assert.match(
+    reviewGate,
+    /on a branch range,\s+commit all corrections and reach a clean final HEAD; on an uncommitted range,\s+leave the corrections in the working tree/u,
+  );
+  assert.match(reviewGate, /the gate's end state matches its range/u);
+  assert.match(
+    reviewGate,
+    /On an\s+uncommitted range, the unchanged SHA the reviewed tree sits on, written\s+`<sha> — uncommitted`/u,
+  );
+  assert.match(
+    reviewGate,
+    /naming\s+the uncommitted corrections still in the working tree when the range was one/u,
   );
 });
 
