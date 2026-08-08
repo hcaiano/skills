@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 Open or update a PR for the current work, then carry an authorized delivery
 through merge and deploy. Quality is enforced locally, before the PR exists —
-by the [review gate](../review-gate/SKILL.md), which this skill runs and never
+by the [review gate](../review-it/SKILL.md), which this skill runs and never
 reimplements.
 
 Run it only when the user invokes ship-it or another skill (an orchestrator's
@@ -45,7 +45,7 @@ ship it.
    present, every mapped local check passes, and each platform-delegated check
    is explicit.
 3. **Run the graded review gate.** Read and execute
-   [review-gate](../review-gate/SKILL.md) over the focused-proven diff, with
+   [review-it](../review-it/SKILL.md) over the focused-proven diff, with
    the merge base against `origin/<target-branch>` as its range. It owns the
    risk grade, the simplify decision, reviewer staffing and capacity
    degradation, the review round, and the one correction batch — this skill
@@ -86,7 +86,7 @@ ship it.
 
    Apply one bounded batch and rerun its affected proof. When it substantially
    changes behavior, expands scope, or introduces a new behavior, security, or
-   architectural risk, resume review-gate at step 5's conditional-review path
+   architectural risk, resume review-it at step 5's conditional-review path
    with the existing receipt and applicable axes. Do not rerun Grade, Simplify,
    or the initial review. If the conditional review already ran, another
    qualifying mutation stops for user direction. Then finish this step on the

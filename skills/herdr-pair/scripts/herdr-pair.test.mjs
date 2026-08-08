@@ -162,22 +162,26 @@ else if (args[0] === "agent" && args[1] === "read") {
 }
 else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
+  const wasWorking = pane.agent_status === "working";
+  const droppedWhileWorking = state.drop_paste_when_working === true && wasWorking;
   state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
   // Both harnesses collapse a large multi-line paste into a summary line, so
   // the composer never shows the message text itself. state.drop_paste models
   // the failure this fake used to hide: the paste silently never lands.
-  if (state.drop_paste !== true) {
+  if (state.drop_paste !== true && !droppedWhileWorking && !(state.hide_composer_when_working === true && wasWorking)) {
     const lines = args[3].split("\\n").length;
     state.composers = state.composers ?? {};
-    state.composers[args[2]] = lines > 1
-      ? "[Pasted text #1 +" + lines + " lines]"
-      : args[3];
+    state.composers[args[2]] = state.show_composer_when_working === true && wasWorking
+      ? args[3]
+      : lines > 1
+        ? "[Pasted text #1 +" + lines + " lines]"
+        : args[3];
   }
   if (state.working_on_prompt !== false) pane.agent_status = "working";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
   const sender = state.last_message.match(/^\\[agent (claude|codex) ->/)?.[1];
-  if (control && sender && state.auto_ack !== false) {
+  if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
     const sequence = Number(control[2]);
     const slug = pane.tab_id.replaceAll(":", "_");
     const sessionPath = path.join(process.env.HOME, ".herdr-coworkers", pane.workspace_id, slug, "session.json");
@@ -490,7 +494,7 @@ try {
   // constantly — must not be hideable by a stale or forged token.
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["codex", "run node /skills/review-gate/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
+      argv: ["codex", "run node /skills/review-it/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
       cwd: "/workspace",
       name: "codex",
       pid: 999001,
@@ -506,7 +510,7 @@ try {
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["node", "/skills/review-gate/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
+      argv: ["node", "/skills/review-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
       cwd: "/workspace",
       name: "node",
       pid: 999001,
@@ -522,7 +526,7 @@ try {
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["node", "/skills/review-gate/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
+      argv: ["node", "/skills/review-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
       cwd: "/workspace",
       name: "node",
       pid: 999001,
@@ -1509,6 +1513,83 @@ try {
     assert.match(delivered, /receipt=acknowledged/u);
     const collapsed = JSON.parse(readFileSync(deliveryState, "utf8"));
     assert.equal(collapsed.enter_keys, 1, "a delivered paste still needs exactly one Enter");
+    assert.equal(
+      collapsed.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "an idle delivery that lands must not resend the full prompt",
+    );
+
+    // A prompt sent while the partner is already working enters Herdr's queue
+    // without appearing in the composer. That unobservable queue must get one
+    // prompt only: Enter or a full resend can duplicate the same sequence.
+    const busyPanes = JSON.parse(JSON.stringify(panes));
+    busyPanes["w1:p2"].agent_status = "working";
+    sid = startSession({ panes: busyPanes, hide_composer_when_working: true });
+    const queued = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--timeout-ms", "0", "--ack-timeout-ms", "2000",
+    );
+    assert.match(queued, /receipt=acknowledged/u);
+    const hiddenQueue = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      hiddenQueue.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "a working target must receive exactly one queued prompt",
+    );
+    assert.equal(hiddenQueue.enter_keys, 1, "a working target keeps the harmless Enter protection");
+
+    // A working status is not proof that Herdr accepted the body. Model a
+    // silent drop with no composer and no ACK; the helper must report the run
+    // as unproven instead of claiming a queued delivery.
+    sid = startSession({
+      panes: busyPanes,
+      drop_paste_when_working: true,
+      auto_ack: false,
+    });
+    const droppedBusy = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--timeout-ms", "0", "--ack-timeout-ms", "200",
+    );
+    assert.match(droppedBusy, /receipt=unproven-working-inspect-that-pane-then-reconcile/u);
+    assert.doesNotMatch(droppedBusy, /pending-partner-may-be-busy-do-not-retry/u);
+    const lostBusy = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      lostBusy.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "an unproved working delivery must not duplicate the full prompt",
+    );
+    assert.equal(lostBusy.enter_keys, 1, "a working delivery still gets one protective Enter");
+
+    // If the composer visibly keeps the body after every Enter, the helper has
+    // positive proof that it is unsubmitted. It must fail before recording a
+    // submission, not downgrade that fact to an ambiguous receipt.
+    sid = startSession({
+      panes: busyPanes,
+      show_composer_when_working: true,
+      swallow_enter: true,
+      auto_ack: false,
+    });
+    assert.throws(
+      () =>
+        deliveryRun(
+          "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+          "--timeout-ms", "0", "--ack-timeout-ms", "200",
+        ),
+      /never left the partner composer/u,
+      "a body that survives every Enter must fail as visibly unsubmitted",
+    );
+    const stuckBusySession = JSON.parse(
+      readFileSync(join(deliveryHome, ".herdr-coworkers", "w1", "w1_t1", "session.json"), "utf8"),
+    );
+    assert.equal(stuckBusySession.delivery.pending.codex.seq, 1);
+    assert.equal(stuckBusySession.delivery.pending.codex.submitted_at, null);
+    const stuckBusy = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      stuckBusy.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "a visibly stuck working delivery must not resend the full prompt",
+    );
+    assert.equal(stuckBusy.enter_keys, 3, "the working path exhausts its Enter protection before failure");
 
     // The regression itself: the paste never lands. This must fail loudly and
     // keep the reservation pending, not report a delivery that did not happen.
@@ -1527,6 +1608,12 @@ try {
     );
     assert.equal(lostSession.delivery.pending.codex.seq, 1);
     assert.equal(lostSession.delivery.pending.codex.submitted_at, null);
+    const lostPaste = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      lostPaste.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      2,
+      "an idle paste that never arrives gets exactly one full resend",
+    );
 
     // An idle partner that never acknowledged did not receive the message.
     // Reporting "busy, do not retry" there is what hid the loss for an hour.

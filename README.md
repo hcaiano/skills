@@ -18,6 +18,20 @@ plain names, without a plugin namespace such as `hcaiano:`.
 
 Run the same command to update the installed copies after changing this repo.
 
+Adding never removes. When a skill is renamed or dropped here, the old copy
+stays installed and keeps answering under its old name, so remove it by name:
+
+```bash
+npx skills@latest remove <old-name> --global --agent claude-code codex --yes
+```
+
+`--global` matters: without it the command targets project scope and leaves the
+globally installed copy in place.
+
+`review-gate` was renamed to `review-it`. An install made before that rename
+carries both, and the stale one still emits the old `review-gate · ...` pane
+label that `herdr-orchestrate` no longer recognises as a gate pane.
+
 ## Skills
 
 ### Orchestration and collaboration
@@ -46,7 +60,7 @@ Run the same command to update the installed copies after changing this repo.
 
 ### Delivery
 
-- `review-gate` — grade a finished change, simplify it, run one graded LLM
+- `review-it` — grade a finished change, simplify it, run one graded LLM
   review round, and batch material fixes. Ends at a clean local HEAD and a
   receipt; never pushes, opens a PR, or merges.
 - `ship-it` — prove a finished change, run the graded gate above, validate
@@ -64,9 +78,9 @@ Run the same command to update the installed copies after changing this repo.
 - `art-director` composes the external `imagegen` skill. It uses `brandkit`
   only when a selected identity direction needs system proof, and `herdr-pair`
   only when the current runtime cannot generate images directly.
-- `ship-it` requires `review-gate` installed alongside it: it delegates its
+- `ship-it` requires `review-it` installed alongside it: it delegates its
   graded gate and never reimplements one.
-- `review-gate` reads the usage-state helper bundled with `herdr-orchestrate`
+- `review-it` reads the usage-state helper bundled with `herdr-orchestrate`
   to size its review pools, and reads `herdr-pair`'s caller-pane proof to run a
   gate command in a visible Herdr pane. A missing usage-state helper records an
   unread pool state and changes nothing else. A missing `herdr-pair` runs the

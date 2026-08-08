@@ -132,7 +132,7 @@ but they open on different days, so the raw percentages are not comparable.
 ## Delivery gate capacity
 
 Before assigning a provisional delivery grade, read the grading step of the
-[review gate](../../review-gate/SKILL.md). That
+[review gate](../../review-it/SKILL.md). That
 rubric is the single source of truth, and ship-it runs that gate rather than
 grading anything itself. Apply it provisionally to the issue's expected surface
 at kickoff, name the reason, and let the gate classify the focused-proven final

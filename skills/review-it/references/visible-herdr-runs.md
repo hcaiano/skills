@@ -22,7 +22,7 @@ Start each command without moving the user's focus:
 
 ```bash
 RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
-  --label "review-gate · <simplify|standards review|spec review|combined review>" \
+  --label "review-it · <simplify|standards review|spec review|combined review>" \
   -- <command> <args...> --receipt "<wrapper-result.json>")
 RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
 ```
@@ -35,7 +35,7 @@ it sends anything into it. `start` and `wait` are the whole public surface;
 
 ```bash
 RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
-  --label "review-gate · <axis>" \
+  --label "review-it · <axis>" \
   --target-pane "<pane_id>" \
   --prior-receipt "<prior completion receipt>" \
   --prior-token "<prior token>" \

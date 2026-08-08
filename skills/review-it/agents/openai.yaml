@@ -1,7 +1,7 @@
 interface:
-  display_name: "Review Gate"
+  display_name: "Review It"
   short_description: "Grade, simplify, review, and correct a finished change without shipping it"
-  default_prompt: "Use $review-gate to grade, simplify, and review the current change."
+  default_prompt: "Use $review-it to grade, simplify, and review the current change."
 
 policy:
   allow_implicit_invocation: false

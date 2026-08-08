@@ -45,6 +45,14 @@ anything other than exactly one pane — and returns `PAIR_PROOF` plus the pinne
    permanently-working pane starves inbound partner traffic — run
    long-running watchers in a background terminal and keep this pane
    promptable.
+6. Announce every deliberate broken-checkout window. Before mutation testing,
+   bisect, or a deliberate revert, send a `task` naming the affected paths and
+   stop condition; send `ready` after the tree is restored and verified. Do not
+   wait for `accepted`: the notices are the protection. A partner that has seen
+   an open window treats that checkout's test results as unusable until the
+   close notice arrives, and asks rather than reports. Run an experiment that
+   cannot be announced, or that lasts more than a few minutes, in a separate
+   worktree.
 
 ## Protocol
 
@@ -107,22 +115,32 @@ node "$PAIR_SCRIPT" send "${PAIR_ID[@]}" --sid "$PAIR_SID" \
   --kind "$KIND" --body-file "$BODY"
 ```
 
-The sender gives a busy partner a short grace period, then delivers anyway —
-both harnesses queue a submitted prompt while working, so no message is ever
-dropped for a partner that stays busy. It reserves the sequence and message
-kind, submits header, control line, and body in one `herdr agent prompt`
-call, and proves landing from the partner's composer in both directions: the
-composer must first be seen to change, because a paste that never arrived and
-one already submitted look identical; then Enter until it no longer holds the
-text, one full resend, then a loud failure. It then waits for `receive` to
-acknowledge that sequence in `session.json`; an ACK can recover an interruption
-immediately after submission.
+The sender gives a busy partner a short grace period, then delivers anyway.
+Measured on Herdr 0.8.0, Claude accepts a mid-turn prompt atomically, while a
+multi-line prompt to Codex still needs Enter. When the partner is still working,
+the helper sends exactly one `agent prompt` with the header, control line, and
+body, then runs the harmless Enter loop. It skips the visible-arrival check and
+the full resend because that status has no reliable composer signal and a
+resend may duplicate a queued body. Only `receive` proves the exact sequence in
+`session.json`; without that ACK the receipt says the delivery is unproven.
+
+For an idle partner, the helper proves landing from the composer: the composer
+must first be seen to change, because a paste that never arrived and one already
+submitted look identical; then it sends Enter until the composer releases the
+text, performs one full resend, and fails loudly if delivery still cannot be
+proved. The sequence ACK can recover an interruption immediately after
+submission on either path.
 
 - `receipt=acknowledged`: the partner ran `receive` for this message.
 - `receipt=pending-partner-may-be-busy-do-not-retry`: the message landed and the
   partner is working, so it is queued but not acknowledged yet. Do not resend.
   Later run `node "$PAIR_SCRIPT" reconcile`; the status advances only after its
   ACK.
+- `receipt=unproven-working-inspect-that-pane-then-reconcile`: the partner was
+  working, received one prompt plus the Enter protection, but did not ACK before
+  the deadline. The helper cannot distinguish a queued prompt from a silent
+  drop. Do not resend while its reservation is pending; inspect after the agent
+  settles, then reconcile or clear the proved-absent delivery before retrying.
 - `receipt=lost-partner-idle-inspect-that-pane-then-reconcile`: the partner is
   idle and never acknowledged, so it did not receive the message. Read that
   pane, confirm the message is absent, and clear the pending delivery below.
@@ -159,12 +177,14 @@ and verified session.
 
 Continue while producing useful artifacts. Five consecutive turns with no new
 code, test result, decision, or narrowed option require a `handoff`. Reset the
-count on real progress. Send `stalemate` after the same disagreement repeats
-twice.
+count on real progress. Settle a factual disagreement with one direct proof or
+focused test before it can become a stalemate. Send `stalemate` after the same
+judgment call repeats twice without movement.
 
 Two `accepted` statuses complete one work cycle. The initiator gives the user a
-local handoff; both agents may idle; the next task resumes the same pair and
-`sid`. The session remains active.
+local handoff naming the result, verification evidence, unresolved issues, and
+every pair pane, worktree, or watcher still active. Both agents may idle; the
+next task resumes the same pair and `sid`. The session remains active.
 
 `blocked` and `stalemate` also hand off without deleting the session. Use
 `node "$PAIR_SCRIPT" reset "${PAIR_ID[@]}"` only to clear work-cycle

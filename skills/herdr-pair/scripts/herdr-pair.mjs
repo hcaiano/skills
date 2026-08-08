@@ -913,6 +913,12 @@ async function waitUntilNotWorking(paneId, timeoutMs) {
 
 const composerConfirmMs = 3000;
 const composerPollMs = 200;
+const deliveryReceipts = Object.freeze({
+  acknowledged: "receipt=acknowledged",
+  pending: "receipt=pending-partner-may-be-busy-do-not-retry",
+  unproven: "receipt=unproven-working-inspect-that-pane-then-reconcile",
+  lost: "receipt=lost-partner-idle-inspect-that-pane-then-reconcile",
+});
 
 // `--source recent` returns an empty string on a live pane, so a composer
 // check that omits the source reads "clear" no matter what is on screen.
@@ -945,12 +951,12 @@ function composerHolds(paneId, head) {
 // multi-line paste into a summary line, so the pasted text itself is usually
 // NOT what appears. What is reliable is that the composer stopped being what it
 // was. A paste that submits itself before the first poll leaves the composer
-// unchanged, so a partner turning to work counts as arrival too.
-async function composerArrived(paneId, head, before, wasWorking) {
+// unchanged, so the idle partner turning to work counts as arrival too.
+async function composerArrived(paneId, head, before) {
   const arrived = () => {
     const content = composerContent(paneId);
     if (content !== null && (content.startsWith(head) || content !== before)) return true;
-    return !wasWorking && paneGet(paneId).agent_status === "working";
+    return paneGet(paneId).agent_status === "working";
   };
   for (let waited = 0; waited < composerConfirmMs; waited += composerPollMs) {
     if (arrived()) return true;
@@ -991,7 +997,7 @@ async function reserveSequence(path, sid, agent, kind) {
 }
 
 async function promptReservedDelivery(path, sid, agent, sequence, paneId, message) {
-  await withSessionLock(path, async (session) => {
+  return withSessionLock(path, async (session) => {
     if (session.active !== true || session.sid !== sid) {
       fail("session ended or was replaced before submission; message not sent");
     }
@@ -1010,11 +1016,29 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
     const wasWorking = paneGet(paneId).agent_status === "working";
     herdr("agent", "prompt", paneId, message);
     await sleep(pasteSettleMs);
-    let arrived = await composerArrived(paneId, head, before, wasWorking);
+    // A working target has no reliable visible arrival signal. Keep the
+    // harmless Enter protection measured for multi-line Codex prompts, but do
+    // not resend a body that Herdr may already have queued. Only the later
+    // sequence ACK proves this path; without it the receipt stays unproven.
+    if (wasWorking) {
+      let settled = false;
+      for (let attempt = 0; attempt < 3 && !settled; attempt += 1) {
+        herdr("agent", "send-keys", paneId, "enter");
+        settled = await composerSettled(paneId, head);
+      }
+      if (!settled) {
+        fail(
+          `message for ${paneId} seq ${sequence} never left the partner composer; the reservation stays pending — inspect that pane, then reconcile before sending again`,
+        );
+      }
+      return "working-unproven";
+    }
+
+    let arrived = await composerArrived(paneId, head, before);
     if (!arrived) {
       herdr("agent", "prompt", paneId, message);
       await sleep(pasteSettleMs);
-      arrived = await composerArrived(paneId, head, before, wasWorking);
+      arrived = await composerArrived(paneId, head, before);
     }
     if (!arrived) {
       fail(
@@ -1037,6 +1061,7 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
         `message for ${paneId} seq ${sequence} never left the partner composer; the reservation stays pending — inspect that pane, then reconcile before sending again`,
       );
     }
+    return "composer-proved";
   });
 }
 
@@ -1217,7 +1242,7 @@ async function send(args) {
   const receiveCommand = `node ${shellQuote(scriptPath)} receive ${pinnedCliText(binding.partner, callerContext.repoRoot)} --sid ${shellQuote(binding.session.sid)} --from ${shellQuote(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
   const message = `${header}\n${control}\n\n${body}`;
-  await promptReservedDelivery(
+  const deliveryProof = await promptReservedDelivery(
     binding.path,
     binding.session.sid,
     binding.self.agent,
@@ -1244,7 +1269,7 @@ async function send(args) {
   // "Busy, do not retry" is only true of a partner that is actually busy. One
   // sitting idle without an acknowledgement never got the message, and telling
   // the sender to wait hides that loss behind a wait that never ends.
-  let receipt = "acknowledged";
+  let receipt = deliveryReceipts.acknowledged;
   if (!acknowledged) {
     let status = null;
     try {
@@ -1252,12 +1277,16 @@ async function send(args) {
     } catch {
       status = null;
     }
-    receipt =
-      status === "working"
-        ? "pending-partner-may-be-busy-do-not-retry"
-        : "lost-partner-idle-inspect-that-pane-then-reconcile";
+    if (deliveryProof === "working-unproven") {
+      receipt = deliveryReceipts.unproven;
+    } else {
+      receipt =
+        status === "working"
+          ? deliveryReceipts.pending
+          : deliveryReceipts.lost;
+    }
   }
-  process.stdout.write(`${header} seq=${sequence} receipt=${receipt}\n`);
+  process.stdout.write(`${header} seq=${sequence} ${receipt}\n`);
 }
 
 async function reconcileSession(args) {
