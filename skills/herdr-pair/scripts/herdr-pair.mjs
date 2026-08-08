@@ -920,17 +920,43 @@ function visibleTail(paneId) {
   return herdr("pane", "read", paneId, "--source", "visible", "--lines", "40", "--format", "text");
 }
 
-// True while our text still sits unsubmitted: the last prompt line on screen
-// (`›` in Codex, `>` in Claude Code) carries it instead of the placeholder an
-// empty composer shows.
-function composerHolds(paneId, head) {
+// The last prompt line on screen (`›` in Codex, `>` in Claude Code), or null
+// when the pane shows none.
+function composerContent(paneId) {
   const lines = visibleTail(paneId).split("\n");
   for (let index = lines.length - 1; index >= 0; index -= 1) {
     const line = lines[index].trim();
-    if (!/^[›>]\s/.test(line)) continue;
-    return line.slice(2).trim().startsWith(head);
+    if (/^[›>]\s/.test(line)) return line.slice(2).trim();
   }
-  return false;
+  return null;
+}
+
+// True while our text still sits unsubmitted.
+function composerHolds(paneId, head) {
+  const content = composerContent(paneId);
+  return content !== null && content.startsWith(head);
+}
+
+// Absence is not delivery. A composer that never received the paste looks
+// exactly like one that already submitted it, so proving only "the text is
+// gone" reports a lost message as a delivered one — which is how a `ready`
+// vanished on 2026-08-07: submitted in 443 ms, never in the partner's session.
+// Arrival must be proved positively first, and both harnesses collapse a large
+// multi-line paste into a summary line, so the pasted text itself is usually
+// NOT what appears. What is reliable is that the composer stopped being what it
+// was. A paste that submits itself before the first poll leaves the composer
+// unchanged, so a partner turning to work counts as arrival too.
+async function composerArrived(paneId, head, before, wasWorking) {
+  const arrived = () => {
+    const content = composerContent(paneId);
+    if (content !== null && (content.startsWith(head) || content !== before)) return true;
+    return !wasWorking && paneGet(paneId).agent_status === "working";
+  };
+  for (let waited = 0; waited < composerConfirmMs; waited += composerPollMs) {
+    if (arrived()) return true;
+    await sleep(composerPollMs);
+  }
+  return arrived();
 }
 
 async function composerSettled(paneId, head) {
@@ -980,8 +1006,21 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
     // resend, then a loud failure instead of a silent stall. Prose rewrites of
     // the skill have shaved this off four times; it lives in code on purpose.
     const head = (message.split("\n").find((line) => line.trim()) ?? "").trim().slice(0, 40);
+    const before = composerContent(paneId);
+    const wasWorking = paneGet(paneId).agent_status === "working";
     herdr("agent", "prompt", paneId, message);
     await sleep(pasteSettleMs);
+    let arrived = await composerArrived(paneId, head, before, wasWorking);
+    if (!arrived) {
+      herdr("agent", "prompt", paneId, message);
+      await sleep(pasteSettleMs);
+      arrived = await composerArrived(paneId, head, before, wasWorking);
+    }
+    if (!arrived) {
+      fail(
+        `message for ${paneId} seq ${sequence} never reached the partner composer; the reservation stays pending — inspect that pane, then reconcile before sending again`,
+      );
+    }
     let landed = false;
     for (let attempt = 0; attempt < 3 && !landed; attempt += 1) {
       herdr("agent", "send-keys", paneId, "enter");
@@ -1202,9 +1241,23 @@ async function send(args) {
     Number(options["ack-timeout-ms"] ?? 15000),
   );
   if (acknowledged) await reconcileAcknowledged(binding.path, binding.session.sid);
-  process.stdout.write(
-    `${header} seq=${sequence} receipt=${acknowledged ? "acknowledged" : "pending-partner-may-be-busy-do-not-retry"}\n`,
-  );
+  // "Busy, do not retry" is only true of a partner that is actually busy. One
+  // sitting idle without an acknowledgement never got the message, and telling
+  // the sender to wait hides that loss behind a wait that never ends.
+  let receipt = "acknowledged";
+  if (!acknowledged) {
+    let status = null;
+    try {
+      status = paneGet(binding.partner.pane_id).agent_status;
+    } catch {
+      status = null;
+    }
+    receipt =
+      status === "working"
+        ? "pending-partner-may-be-busy-do-not-retry"
+        : "lost-partner-idle-inspect-that-pane-then-reconcile";
+  }
+  process.stdout.write(`${header} seq=${sequence} receipt=${receipt}\n`);
 }
 
 async function reconcileSession(args) {

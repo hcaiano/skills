@@ -8,6 +8,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -163,7 +164,17 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
   state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
-  pane.agent_status = "working";
+  // Both harnesses collapse a large multi-line paste into a summary line, so
+  // the composer never shows the message text itself. state.drop_paste models
+  // the failure this fake used to hide: the paste silently never lands.
+  if (state.drop_paste !== true) {
+    const lines = args[3].split("\\n").length;
+    state.composers = state.composers ?? {};
+    state.composers[args[2]] = lines > 1
+      ? "[Pasted text #1 +" + lines + " lines]"
+      : args[3];
+  }
+  if (state.working_on_prompt !== false) pane.agent_status = "working";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
   const sender = state.last_message.match(/^\\[agent (claude|codex) ->/)?.[1];
   if (control && sender && state.auto_ack !== false) {
@@ -211,6 +222,11 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   state.mutations.push({ command: "agent send-keys", pane: args[2] });
   state.enter_keys = (state.enter_keys ?? 0) + 1;
   state.last_send_keys = { pane: args[2], key: args[3] };
+  // Enter submits, which returns the composer to its empty placeholder.
+  if (args[3] === "enter" && state.swallow_enter !== true) {
+    state.composers = state.composers ?? {};
+    delete state.composers[args[2]];
+  }
   save();
   output({});
 } else if (args[0] === "workspace" && args[1] === "list") {
@@ -223,7 +239,16 @@ else if (args[0] === "agent" && args[1] === "prompt") {
       workspace_id: workspaceId,
     },
   });
-} else if (args[0] === "pane" && args[1] === "read") process.stdout.write("");
+} else if (args[0] === "pane" && args[1] === "read") {
+  // Returning "" here used to make every composer check read "nothing is
+  // holding the text", so the whole landing proof passed vacuously and a lost
+  // paste was indistinguishable from a delivered one. The pane now renders its
+  // composer: the harness placeholder when empty, the pasted content when not.
+  const composer = (state.composers ?? {})[args[2]];
+  process.stdout.write(
+    "some earlier output\\n› " + (composer ?? "Improve documentation in @filename") + "\\n",
+  );
+}
 else { process.stderr.write("unsupported fake herdr args: " + args.join(" ") + "\\n"); process.exit(1); }
 `,
 );
@@ -465,7 +490,7 @@ try {
   // constantly — must not be hideable by a stale or forged token.
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["codex", "run node /skills/ship-it/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
+      argv: ["codex", "run node /skills/review-gate/scripts/herdr-visible-run.mjs exec --pane w1:p3"],
       cwd: "/workspace",
       name: "codex",
       pid: 999001,
@@ -481,7 +506,7 @@ try {
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
+      argv: ["node", "/skills/review-gate/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p9"],
       cwd: "/workspace",
       name: "node",
       pid: 999001,
@@ -497,7 +522,7 @@ try {
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   tokenState.processes["w1:p3"] = [
     {
-      argv: ["node", "/skills/ship-it/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
+      argv: ["node", "/skills/review-gate/scripts/herdr-visible-run.mjs", "exec", "--pane", "w1:p3"],
       cwd: "/workspace",
       name: "node",
       pid: 999001,
@@ -1413,6 +1438,115 @@ try {
     assert.match(named, /^[a-z][a-z0-9_-]{0,31}$/u);
     const spawned = JSON.parse(readFileSync(statePath, "utf8")).panes[`${paneId}s`];
     assert.equal(spawned.cwd, repoRoot);
+  }
+
+  // Delivery proof. A `ready` was lost on 2026-08-07: the helper reported it
+  // submitted in 443 ms and the partner's own session file never contained it.
+  // The landing proof only asked whether the composer had STOPPED holding the
+  // text, which is equally true of a paste that never arrived — and the fake
+  // `pane read` returned "" so no test could ever see the difference.
+  {
+    const deliveryRoot = mkdtempSync(join(tmpdir(), "herdr-pair-delivery-"));
+    const deliveryHome = join(deliveryRoot, "home");
+    const deliveryRepo = join(deliveryRoot, "workspace");
+    mkdirSync(deliveryHome, { recursive: true });
+    mkdirSync(deliveryRepo, { recursive: true });
+    execFileSync("git", ["init", "-q", deliveryRepo]);
+    const deliveryState = join(deliveryRoot, "state.json");
+    const deliveryEnv = { ...env, HOME: deliveryHome, FAKE_HERDR_STATE: deliveryState };
+    const deliveryBody = join(deliveryRoot, "body.txt");
+    // Multi-line on purpose: this is the shape both harnesses collapse.
+    writeFileSync(deliveryBody, "line one\nline two\nline three\n");
+
+    const panes = {
+      "w1:p1": {
+        agent: "codex", agent_status: "idle", cwd: deliveryRepo, foreground_cwd: deliveryRepo,
+        pane_id: "w1:p1", tab_id: "w1:t1", terminal_id: "term-w1-p1", workspace_id: "w1",
+      },
+      "w1:p2": {
+        agent: "claude", agent_status: "idle", cwd: deliveryRepo, foreground_cwd: deliveryRepo,
+        pane_id: "w1:p2", tab_id: "w1:t1", terminal_id: "term-w1-p2", workspace_id: "w1",
+      },
+    };
+    const writeDeliveryState = (extra) =>
+      writeFileSync(
+        deliveryState,
+        `${JSON.stringify(
+          {
+            panes: JSON.parse(JSON.stringify(panes)),
+            processes: {
+              "w1:p1": [{ name: "codex", argv: ["codex"], cwd: deliveryRepo, pid: 4001 }],
+              "w1:p2": [{ name: "claude", argv: ["claude"], cwd: deliveryRepo, pid: 4002 }],
+            },
+            ancestor_panes: ["w1:p1"],
+            mutations: [],
+            auto_ack: true,
+            ...extra,
+          },
+          null,
+          2,
+        )}\n`,
+      );
+    const deliveryRun = (...args) =>
+      execFileSync(process.execPath, [helper, ...args], { encoding: "utf8", env: deliveryEnv });
+    const pin = [
+      "--pane", "w1:p1", "--workspace", "w1", "--tab-id", "w1:t1",
+      "--as", "codex", "--terminal-id", "term-w1-p1", "--repo-root", deliveryRepo,
+    ];
+    const startSession = (extra) => {
+      writeDeliveryState(extra);
+      rmSync(join(deliveryHome, ".herdr-coworkers"), { recursive: true, force: true });
+      return JSON.parse(deliveryRun("init", ...pin)).sid;
+    };
+
+    // A collapsed paste still delivers. The composer shows a summary line, never
+    // the message, so arrival can only be proved by the composer CHANGING.
+    let sid = startSession({});
+    const delivered = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--ack-timeout-ms", "2000",
+    );
+    assert.match(delivered, /receipt=acknowledged/u);
+    const collapsed = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(collapsed.enter_keys, 1, "a delivered paste still needs exactly one Enter");
+
+    // The regression itself: the paste never lands. This must fail loudly and
+    // keep the reservation pending, not report a delivery that did not happen.
+    sid = startSession({ drop_paste: true, working_on_prompt: false });
+    assert.throws(
+      () =>
+        deliveryRun(
+          "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+          "--ack-timeout-ms", "200",
+        ),
+      /never reached the partner composer/u,
+      "a paste that never arrives must not be reported as delivered",
+    );
+    const lostSession = JSON.parse(
+      readFileSync(join(deliveryHome, ".herdr-coworkers", "w1", "w1_t1", "session.json"), "utf8"),
+    );
+    assert.equal(lostSession.delivery.pending.codex.seq, 1);
+    assert.equal(lostSession.delivery.pending.codex.submitted_at, null);
+
+    // An idle partner that never acknowledged did not receive the message.
+    // Reporting "busy, do not retry" there is what hid the loss for an hour.
+    sid = startSession({ auto_ack: false, working_on_prompt: false });
+    const verdict = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--ack-timeout-ms", "200",
+    );
+    assert.match(verdict, /receipt=lost-partner-idle-inspect-that-pane-then-reconcile/u);
+
+    // A partner that is genuinely working keeps the do-not-retry verdict: both
+    // harnesses queue a submitted prompt, so that message is not lost.
+    sid = startSession({ auto_ack: false });
+    const busy = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--ack-timeout-ms", "200",
+    );
+    assert.match(busy, /receipt=pending-partner-may-be-busy-do-not-retry/u);
+
+    execFileSync("trash", [deliveryRoot]);
   }
 
   process.stdout.write("herdr-pair tests: PASS\n");
