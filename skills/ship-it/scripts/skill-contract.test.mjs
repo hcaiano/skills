@@ -5,7 +5,7 @@ import test from "node:test";
 
 const here = new URL(".", import.meta.url).pathname;
 const shipIt = readFileSync(join(here, "../SKILL.md"), "utf8");
-const reviewGate = readFileSync(join(here, "../../review-gate/SKILL.md"), "utf8");
+const reviewGate = readFileSync(join(here, "../../review-it/SKILL.md"), "utf8");
 const orchestrate = readFileSync(
   join(here, "../../herdr-orchestrate/SKILL.md"),
   "utf8",
@@ -33,10 +33,10 @@ test("ship-it stays manual-only across model runtimes", () => {
 });
 
 test("ship-it delegates the graded gate instead of reimplementing it", () => {
-  assert.match(shipIt, /\[review gate\]\(\.\.\/review-gate\/SKILL\.md\)/u);
+  assert.match(shipIt, /\[review gate\]\(\.\.\/review-it\/SKILL\.md\)/u);
   assert.match(
     shipIt,
-    /Read and execute\s+\[review-gate\]\(\.\.\/review-gate\/SKILL\.md\) over the focused-proven diff/u,
+    /Read and execute\s+\[review-it\]\(\.\.\/review-it\/SKILL\.md\) over the focused-proven diff/u,
   );
   assert.match(
     shipIt,
@@ -96,7 +96,7 @@ test("ship-it keeps final validation after the gate", () => {
   );
   assert.match(
     shipIt,
-    /resume review-gate at step 5's conditional-review path\s+with the existing receipt and applicable axes[\s\S]*Do not rerun Grade, Simplify,\s+or the initial review/u,
+    /resume review-it at step 5's conditional-review path\s+with the existing receipt and applicable axes[\s\S]*Do not rerun Grade, Simplify,\s+or the initial review/u,
   );
   assert.match(shipIt, /Count every pushed post-gate batch[\s\S]*after two rounds, stop and report/u);
   assert.match(
@@ -196,8 +196,8 @@ test("herdr-orchestrate points grading at the gate and delivery at ship-it", () 
   );
   assert.doesNotMatch(orchestrate, /ship-it's gate reviews quality/u);
   assert.match(orchestrate, /no `\/code-review`, `codex review`,\s+`\/simplify`, no standards passes/u);
-  assert.match(orchestrate, /shell pane labeled `review-gate · \.\.\.`/u);
-  assert.match(orchestrate, /question waiting in an agent or `review-gate · \.\.\.` pane/u);
+  assert.match(orchestrate, /shell pane labeled `review-it · \.\.\.`/u);
+  assert.match(orchestrate, /question waiting in an agent or `review-it · \.\.\.` pane/u);
   assert.match(
     orchestrate,
     /Any branch change\s+re-enters `ready` for the orchestrator's scope scan\. After scope approval,\s+restart ship-it at step 1/u,
@@ -208,9 +208,9 @@ test("herdr-orchestrate points grading at the gate and delivery at ship-it", () 
   );
   assert.match(
     orchestrate,
-    /Every delivery\s+receipt must carry `Gate:`, `Risk:`, `Focused proof:`,\s+and `Regrade:`[\s\S]*embedded\s+review-gate block supplies `Gate:`, `Risk:`, and `Regrade:`/u,
+    /Every delivery\s+receipt must carry `Gate:`, `Risk:`, `Focused proof:`,\s+and `Regrade:`[\s\S]*embedded\s+review gate block supplies `Gate:`, `Risk:`, and `Regrade:`/u,
   );
-  assert.match(models, /\[review gate\]\(\.\.\/\.\.\/review-gate\/SKILL\.md\)/u);
+  assert.match(models, /\[review gate\]\(\.\.\/\.\.\/review-it\/SKILL\.md\)/u);
   assert.match(
     models,
     /Name the\s+final grade\s+in the `shipped` milestone/u,

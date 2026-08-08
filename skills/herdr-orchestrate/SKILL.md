@@ -155,7 +155,7 @@ agent states (working / blocked / idle), any PR for its branch — check merged
 and closed too, `gh pr list --state all --head <branch>` — and the newest
 `[unit ...]` line in the lead's pane output, which records what that lead last
 pushed to the run's report pane; treat an unhandled line as just received. Also map every
-shell pane labeled `review-gate · ...` in that tab: read its foreground process
+shell pane labeled `review-it · ...` in that tab: read its foreground process
 and recent unwrapped output, and record whether its
 `SHIP_IT_VISIBLE_DONE ...` marker is present. These panes are the live
 simplify/review status surface, including prompts, stalls, failures, and
@@ -349,6 +349,11 @@ Pinned workspace: <workspace_id>
 Issues in this unit: <#N[, #M, ...]> — implement them all on this branch and
 ship them together as ONE PR that closes each of them.
 Worktree: <path> (branch <branch>, already set up: deps and env installed).
+Unit contract:
+  Outcome: <one sentence naming the finished behavior>
+  Write scope: <paths or surfaces this unit may change>
+  Read-only scope: <adjacent paths or surfaces this unit may inspect but not change>
+  Verification: <commands and observable evidence that prove the outcome>
 Milestones: report each one by pushing it to the orchestrator the moment
 you hit it —
   node <absolute path to send.mjs> "$HERDR_UNIT_REPORT_PANE" \
@@ -473,7 +478,7 @@ merged. Then act by kind:
   corrections make equality neither required nor expected. Every delivery
   receipt must carry `Gate:`, `Risk:`, `Focused proof:`,
   and `Regrade:` — these are the delivery receipt's contract: the embedded
-  review-gate block supplies `Gate:`, `Risk:`, and `Regrade:`, while ship-it
+  review gate block supplies `Gate:`, `Risk:`, and `Regrade:`, while ship-it
   supplies `Focused proof:`. A receipt missing any of them means the delivery
   receipt is incomplete. On top of that,
   a receipt whose execution is thinner than the provisional gate is accepted
@@ -529,7 +534,7 @@ Done when the report is acted on and the user has the one-line update.
 
 Answer from the phase 0 map so the user never tours the tabs. Three
 buckets, leading with what needs them: **needs you** (blocked, or a
-question waiting in an agent or `review-gate · ...` pane — quote the exact
+question waiting in an agent or `review-it · ...` pane — quote the exact
 decision), **working** (one line each from agent or visible gate-pane
 output), **shipped / idle** (PR and CI state;
 idle-without-PR is possibly stalled — read the pane and say why). Done

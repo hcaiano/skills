@@ -45,6 +45,12 @@ anything other than exactly one pane — and returns `PAIR_PROOF` plus the pinne
    permanently-working pane starves inbound partner traffic — run
    long-running watchers in a background terminal and keep this pane
    promptable.
+6. Give every deliberate broken-checkout experiment a visible window. Before
+   mutation testing, bisect, or a deliberate revert, send a `task` naming its
+   affected paths and stop condition, then wait for `accepted`. After clean
+   restoration, send `ready` and wait for `accepted` before the partner reads
+   or tests that checkout. Run an experiment that cannot hold that window in a
+   separate worktree.
 
 ## Protocol
 
@@ -159,12 +165,14 @@ and verified session.
 
 Continue while producing useful artifacts. Five consecutive turns with no new
 code, test result, decision, or narrowed option require a `handoff`. Reset the
-count on real progress. Send `stalemate` after the same disagreement repeats
-twice.
+count on real progress. Settle a factual disagreement with one direct proof or
+focused test before it can become a stalemate. Send `stalemate` after the same
+judgment call repeats twice without movement.
 
 Two `accepted` statuses complete one work cycle. The initiator gives the user a
-local handoff; both agents may idle; the next task resumes the same pair and
-`sid`. The session remains active.
+local handoff naming the result, verification evidence, unresolved issues, and
+every pair pane, worktree, or watcher still active. Both agents may idle; the
+next task resumes the same pair and `sid`. The session remains active.
 
 `blocked` and `stalemate` also hand off without deleting the session. Use
 `node "$PAIR_SCRIPT" reset "${PAIR_ID[@]}"` only to clear work-cycle
