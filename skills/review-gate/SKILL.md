@@ -48,10 +48,9 @@ at that pace; what gives way is the Claude simplify pass, and only to
 
 That helper is a sibling skill, not a bundled one. When it is not installed,
 record `Gate: <grade> — pool state unread (usage-state.mjs not installed)` and
-run the grade's required reviewers anyway. A missing capacity reading is not a
-capacity degradation: it never lowers the semantic grade, never drops a
-reviewer, and never skips simplify on its own. Only an observed CLI refusal
-does that.
+run the grade's required reviewers anyway. A missing capacity reading leaves
+the semantic grade, the reviewer count, and simplify exactly as graded; only an
+observed CLI refusal degrades execution.
 
 Before starting any simplify or review command, read and follow
 [process transport](references/visible-herdr-runs.md). An interactive slash
@@ -148,9 +147,7 @@ Commit only what this gate is entitled to commit. When the range is a branch,
 create clear, intentional local commits and reach a clean review
 HEAD without pushing. When the range is the uncommitted working tree, that tree is the
 review HEAD: review it in place and commit nothing the gate did not itself
-produce — a `skip` grade over uncommitted work commits nothing at all. The gate
-changes only the working tree and the local history its own corrections
-require, and committing a user's in-progress work would break that promise.
+produce — a `skip` grade over uncommitted work commits nothing at all.
 
 Done when the final diff has focused proof, no correction the gate made is left
 uncommitted on a branch range, and the review grade is explicit.

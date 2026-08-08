@@ -218,7 +218,7 @@ test("the extracted gate stands on its own", () => {
   // defined outcome, or a standalone install has no runnable path.
   assert.match(
     reviewGate,
-    /pool state unread \(usage-state\.mjs not installed\)[\s\S]*A missing capacity reading is not a\s+capacity degradation/u,
+    /pool state unread \(usage-state\.mjs not installed\)[\s\S]*leaves\s+the semantic grade, the reviewer count, and simplify exactly as graded/u,
   );
   assert.match(
     reviewGate,
