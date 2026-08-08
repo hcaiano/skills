@@ -22,11 +22,22 @@ Adding never removes. When a skill is renamed or dropped here, the old copy
 stays installed and keeps answering under its old name, so remove it by name:
 
 ```bash
-npx skills@latest remove <old-name> --global --agent claude-code codex --yes
+npx skills@latest remove <old-name> --global --agent universal <every agent that lists it> --yes
 ```
 
-`--global` matters: without it the command targets project scope and leaves the
-globally installed copy in place.
+Two traps here, both measured while removing `review-gate`:
+
+- `--agent claude-code codex` is not enough. These skills install as one
+  canonical copy under `~/.agents/skills` that every agent reads, so naming
+  only the two agents removes their registrations and leaves the directory,
+  the lock entry, and every other agent's registration behind. The command
+  still prints `Successfully removed 1 skill(s)`. Read `skills list -g --json`
+  for the skill's real `agents` array, and pass `universal` plus that list.
+- `--agent '*'` is rejected even though `remove --help` offers it; the
+  wildcard belongs to `--skill`.
+
+`--global` matters too: without it the command targets project scope and
+leaves the globally installed copy in place.
 
 `review-gate` was renamed to `review-it`. An install made before that rename
 carries both, and the stale one still emits the old `review-gate · ...` pane
