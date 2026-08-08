@@ -5,6 +5,10 @@ import test from "node:test";
 
 const here = new URL(".", import.meta.url).pathname;
 const skill = readFileSync(join(here, "../SKILL.md"), "utf8");
+const helper = readFileSync(join(here, "herdr-pair.mjs"), "utf8");
+
+const receiptTokens = (text) =>
+  [...new Set([...text.matchAll(/receipt=([a-z][a-z-]+)/gu)].map((match) => match[1]))].sort();
 
 test("a deliberate broken checkout is visible to both partners", () => {
   assert.match(
@@ -38,6 +42,13 @@ test("busy and idle partners keep distinct delivery proofs", () => {
     skill,
     /For an idle partner, the helper proves landing from the composer[\s\S]*sends Enter until the composer releases the\s+text, performs one full resend, and fails loudly/u,
   );
+});
+
+test("code and prose expose the same delivery receipts", () => {
+  const codeReceipts = receiptTokens(helper);
+  const documentedReceipts = receiptTokens(skill);
+  assert.ok(codeReceipts.length >= 4, "the helper must expose every delivery outcome as a receipt token");
+  assert.deepEqual(documentedReceipts, codeReceipts);
 });
 
 test("facts get proof before judgment reaches stalemate", () => {

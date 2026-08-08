@@ -913,6 +913,12 @@ async function waitUntilNotWorking(paneId, timeoutMs) {
 
 const composerConfirmMs = 3000;
 const composerPollMs = 200;
+const deliveryReceipts = Object.freeze({
+  acknowledged: "receipt=acknowledged",
+  pending: "receipt=pending-partner-may-be-busy-do-not-retry",
+  unproven: "receipt=unproven-working-inspect-that-pane-then-reconcile",
+  lost: "receipt=lost-partner-idle-inspect-that-pane-then-reconcile",
+});
 
 // `--source recent` returns an empty string on a live pane, so a composer
 // check that omits the source reads "clear" no matter what is on screen.
@@ -1019,6 +1025,11 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
       for (let attempt = 0; attempt < 3 && !settled; attempt += 1) {
         herdr("agent", "send-keys", paneId, "enter");
         settled = await composerSettled(paneId, head);
+      }
+      if (!settled) {
+        fail(
+          `message for ${paneId} seq ${sequence} never left the partner composer; the reservation stays pending — inspect that pane, then reconcile before sending again`,
+        );
       }
       return "working-unproven";
     }
@@ -1258,7 +1269,7 @@ async function send(args) {
   // "Busy, do not retry" is only true of a partner that is actually busy. One
   // sitting idle without an acknowledgement never got the message, and telling
   // the sender to wait hides that loss behind a wait that never ends.
-  let receipt = "acknowledged";
+  let receipt = deliveryReceipts.acknowledged;
   if (!acknowledged) {
     let status = null;
     try {
@@ -1267,15 +1278,15 @@ async function send(args) {
       status = null;
     }
     if (deliveryProof === "working-unproven") {
-      receipt = "unproven-working-inspect-that-pane-then-reconcile";
+      receipt = deliveryReceipts.unproven;
     } else {
       receipt =
         status === "working"
-          ? "pending-partner-may-be-busy-do-not-retry"
-          : "lost-partner-idle-inspect-that-pane-then-reconcile";
+          ? deliveryReceipts.pending
+          : deliveryReceipts.lost;
     }
   }
-  process.stdout.write(`${header} seq=${sequence} receipt=${receipt}\n`);
+  process.stdout.write(`${header} seq=${sequence} ${receipt}\n`);
 }
 
 async function reconcileSession(args) {

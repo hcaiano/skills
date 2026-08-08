@@ -172,9 +172,11 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   if (state.drop_paste !== true && !droppedWhileWorking && !(state.hide_composer_when_working === true && wasWorking)) {
     const lines = args[3].split("\\n").length;
     state.composers = state.composers ?? {};
-    state.composers[args[2]] = lines > 1
-      ? "[Pasted text #1 +" + lines + " lines]"
-      : args[3];
+    state.composers[args[2]] = state.show_composer_when_working === true && wasWorking
+      ? args[3]
+      : lines > 1
+        ? "[Pasted text #1 +" + lines + " lines]"
+        : args[3];
   }
   if (state.working_on_prompt !== false) pane.agent_status = "working";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
@@ -1557,6 +1559,37 @@ try {
       "an unproved working delivery must not duplicate the full prompt",
     );
     assert.equal(lostBusy.enter_keys, 1, "a working delivery still gets one protective Enter");
+
+    // If the composer visibly keeps the body after every Enter, the helper has
+    // positive proof that it is unsubmitted. It must fail before recording a
+    // submission, not downgrade that fact to an ambiguous receipt.
+    sid = startSession({
+      panes: busyPanes,
+      show_composer_when_working: true,
+      swallow_enter: true,
+      auto_ack: false,
+    });
+    assert.throws(
+      () =>
+        deliveryRun(
+          "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+          "--timeout-ms", "0", "--ack-timeout-ms", "200",
+        ),
+      /never left the partner composer/u,
+      "a body that survives every Enter must fail as visibly unsubmitted",
+    );
+    const stuckBusySession = JSON.parse(
+      readFileSync(join(deliveryHome, ".herdr-coworkers", "w1", "w1_t1", "session.json"), "utf8"),
+    );
+    assert.equal(stuckBusySession.delivery.pending.codex.seq, 1);
+    assert.equal(stuckBusySession.delivery.pending.codex.submitted_at, null);
+    const stuckBusy = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      stuckBusy.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "a visibly stuck working delivery must not resend the full prompt",
+    );
+    assert.equal(stuckBusy.enter_keys, 3, "the working path exhausts its Enter protection before failure");
 
     // The regression itself: the paste never lands. This must fail loudly and
     // keep the reservation pending, not report a delivery that did not happen.
