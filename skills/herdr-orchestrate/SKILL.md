@@ -155,7 +155,7 @@ agent states (working / blocked / idle), any PR for its branch — check merged
 and closed too, `gh pr list --state all --head <branch>` — and the newest
 `[unit ...]` line in the lead's pane output, which records what that lead last
 pushed to the run's report pane; treat an unhandled line as just received. Also map every
-shell pane labeled `ship-it · ...` in that tab: read its foreground process
+shell pane labeled `review-gate · ...` in that tab: read its foreground process
 and recent unwrapped output, and record whether its
 `SHIP_IT_VISIBLE_DONE ...` marker is present. These panes are the live
 simplify/review status surface, including prompts, stalls, failures, and
@@ -469,10 +469,11 @@ merged. Then act by kind:
   shipped diffs from its quoted SHA, and the pane makes it recoverable by a
   fresh orchestrator. Tell the user the unit is shipping.
 - `shipped` — verify the graded review and final-CI receipts match the exact PR
-  head. Every receipt must carry `Gate:`, `Risk:`, `Focused proof:`, and
-  `Regrade:` — that is the review gate's contract regardless of how the grade
-  landed,
-  and a receipt missing any of them means the gate did not run. On top of that,
+  head. Every delivery receipt must carry `Gate:`, `Risk:`, `Focused proof:`,
+  and `Regrade:` — these are the delivery receipt's contract: the embedded
+  review-gate block supplies `Gate:`, `Risk:`, and `Regrade:`, while ship-it
+  supplies `Focused proof:`. A receipt missing any of them means the delivery
+  receipt is incomplete. On top of that,
   a receipt whose execution is thinner than the provisional gate is accepted
   only when those lines justify either a semantic regrade of the actual diff or
   a capacity-degraded execution of the same grade. Either failure sends the
@@ -485,7 +486,9 @@ merged. Then act by kind:
   fetch complete paginated live reviews, issue comments, inline comments, and
   review threads with the current `gh api`; anything newer than the shipped
   timestamp or any unresolved thread returns to the lead. Any branch change
-  re-enters `ready` and the full ship-it cycle. The delivery receipt is
+  re-enters ship-it's post-gate correction rule; only a qualifying behavior,
+  scope, security, or architecture change spends its conditional review. The
+  delivery receipt is
   timestamped evidence, not merge authority.
   A `hold` unit waits for the user: acknowledge the hold to the lead in one
   line (also the handled marker in its pane), then toast the PR URL and why
@@ -523,7 +526,7 @@ Done when the report is acted on and the user has the one-line update.
 
 Answer from the phase 0 map so the user never tours the tabs. Three
 buckets, leading with what needs them: **needs you** (blocked, or a
-question waiting in an agent or `ship-it · ...` pane — quote the exact
+question waiting in an agent or `review-gate · ...` pane — quote the exact
 decision), **working** (one line each from agent or visible gate-pane
 output), **shipped / idle** (PR and CI state;
 idle-without-PR is possibly stalled — read the pane and say why). Done

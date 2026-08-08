@@ -83,6 +83,12 @@ test("ship-it keeps final validation after the gate", () => {
     orchestrate,
     /reserve ship-it's\s+proportional final-HEAD validation gate for its final push/u,
   );
+  assert.match(
+    shipIt,
+    /Post-gate correction rule\.[\s\S]*A bounded fix does not regrade,\s+simplify, or start a new full gate/u,
+  );
+  assert.doesNotMatch(shipIt, /branch mutation returns to steps 3/u);
+  assert.doesNotMatch(shipIt, /A branch change returns to steps 3/u);
 });
 
 test("every step cross-reference resolves after the renumbering", () => {
@@ -167,6 +173,12 @@ test("herdr-orchestrate points grading at the gate and delivery at ship-it", () 
   );
   assert.doesNotMatch(orchestrate, /ship-it's gate reviews quality/u);
   assert.match(orchestrate, /no `\/code-review`, `codex review`,\s+`\/simplify`, no standards passes/u);
+  assert.match(orchestrate, /shell pane labeled `review-gate · \.\.\.`/u);
+  assert.match(orchestrate, /question waiting in an agent or `review-gate · \.\.\.` pane/u);
+  assert.match(
+    orchestrate,
+    /Every delivery receipt must carry `Gate:`, `Risk:`, `Focused proof:`,\s+and `Regrade:`[\s\S]*embedded\s+review-gate block supplies `Gate:`, `Risk:`, and `Regrade:`/u,
+  );
   assert.match(models, /\[review gate\]\(\.\.\/\.\.\/review-gate\/SKILL\.md\)/u);
   assert.match(
     models,
