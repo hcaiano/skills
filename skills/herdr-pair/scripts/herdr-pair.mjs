@@ -1009,6 +1009,10 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
     const before = composerContent(paneId);
     const wasWorking = paneGet(paneId).agent_status === "working";
     herdr("agent", "prompt", paneId, message);
+    // Herdr queues a prompt sent to a working agent without exposing it in the
+    // composer. Sending Enter or retrying here duplicates the queued body. The
+    // exact sequence is proved later by the partner's receive ACK.
+    if (wasWorking) return;
     await sleep(pasteSettleMs);
     let arrived = await composerArrived(paneId, head, before, wasWorking);
     if (!arrived) {

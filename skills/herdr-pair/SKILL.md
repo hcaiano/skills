@@ -45,12 +45,14 @@ anything other than exactly one pane — and returns `PAIR_PROOF` plus the pinne
    permanently-working pane starves inbound partner traffic — run
    long-running watchers in a background terminal and keep this pane
    promptable.
-6. Give every deliberate broken-checkout experiment a visible window. Before
-   mutation testing, bisect, or a deliberate revert, send a `task` naming its
-   affected paths and stop condition, then wait for `accepted`. After clean
-   restoration, send `ready` and wait for `accepted` before the partner reads
-   or tests that checkout. Run an experiment that cannot hold that window in a
-   separate worktree.
+6. Announce every deliberate broken-checkout window. Before mutation testing,
+   bisect, or a deliberate revert, send a `task` naming the affected paths and
+   stop condition; send `ready` after the tree is restored and verified. Do not
+   wait for `accepted`: the notices are the protection. A partner that has seen
+   an open window treats that checkout's test results as unusable until the
+   close notice arrives, and asks rather than reports. Run an experiment that
+   cannot be announced, or that lasts more than a few minutes, in a separate
+   worktree.
 
 ## Protocol
 
@@ -113,16 +115,18 @@ node "$PAIR_SCRIPT" send "${PAIR_ID[@]}" --sid "$PAIR_SID" \
   --kind "$KIND" --body-file "$BODY"
 ```
 
-The sender gives a busy partner a short grace period, then delivers anyway —
-both harnesses queue a submitted prompt while working, so no message is ever
-dropped for a partner that stays busy. It reserves the sequence and message
-kind, submits header, control line, and body in one `herdr agent prompt`
-call, and proves landing from the partner's composer in both directions: the
-composer must first be seen to change, because a paste that never arrived and
-one already submitted look identical; then Enter until it no longer holds the
-text, one full resend, then a loud failure. It then waits for `receive` to
-acknowledge that sequence in `session.json`; an ACK can recover an interruption
-immediately after submission.
+The sender gives a busy partner a short grace period, then delivers anyway.
+When the partner is still working, Herdr queues exactly one `agent prompt` with
+the header, control line, and body. That path has no visible composer transition,
+so it sends no Enter and no full resend; `receive` later proves the exact
+sequence in `session.json`. Until that ACK arrives, the receipt stays pending.
+
+For an idle partner, the helper proves landing from the composer: the composer
+must first be seen to change, because a paste that never arrived and one already
+submitted look identical; then it sends Enter until the composer releases the
+text, performs one full resend, and fails loudly if delivery still cannot be
+proved. The sequence ACK can recover an interruption immediately after
+submission on either path.
 
 - `receipt=acknowledged`: the partner ran `receive` for this message.
 - `receipt=pending-partner-may-be-busy-do-not-retry`: the message landed and the

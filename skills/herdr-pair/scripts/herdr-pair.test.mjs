@@ -162,12 +162,13 @@ else if (args[0] === "agent" && args[1] === "read") {
 }
 else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
+  const wasWorking = pane.agent_status === "working";
   state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
   // Both harnesses collapse a large multi-line paste into a summary line, so
   // the composer never shows the message text itself. state.drop_paste models
   // the failure this fake used to hide: the paste silently never lands.
-  if (state.drop_paste !== true) {
+  if (state.drop_paste !== true && !(state.hide_composer_when_working === true && wasWorking)) {
     const lines = args[3].split("\\n").length;
     state.composers = state.composers ?? {};
     state.composers[args[2]] = lines > 1
@@ -1509,6 +1510,30 @@ try {
     assert.match(delivered, /receipt=acknowledged/u);
     const collapsed = JSON.parse(readFileSync(deliveryState, "utf8"));
     assert.equal(collapsed.enter_keys, 1, "a delivered paste still needs exactly one Enter");
+    assert.equal(
+      collapsed.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "an idle delivery that lands must not resend the full prompt",
+    );
+
+    // A prompt sent while the partner is already working enters Herdr's queue
+    // without appearing in the composer. That unobservable queue must get one
+    // prompt only: Enter or a full resend can duplicate the same sequence.
+    const busyPanes = JSON.parse(JSON.stringify(panes));
+    busyPanes["w1:p2"].agent_status = "working";
+    sid = startSession({ panes: busyPanes, hide_composer_when_working: true });
+    const queued = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--timeout-ms", "0", "--ack-timeout-ms", "2000",
+    );
+    assert.match(queued, /receipt=acknowledged/u);
+    const hiddenQueue = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      hiddenQueue.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      1,
+      "a working target must receive exactly one queued prompt",
+    );
+    assert.equal(hiddenQueue.enter_keys ?? 0, 0, "a working target has no composer to submit");
 
     // The regression itself: the paste never lands. This must fail loudly and
     // keep the reservation pending, not report a delivery that did not happen.
@@ -1527,6 +1552,12 @@ try {
     );
     assert.equal(lostSession.delivery.pending.codex.seq, 1);
     assert.equal(lostSession.delivery.pending.codex.submitted_at, null);
+    const lostPaste = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      lostPaste.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      2,
+      "an idle paste that never arrives gets exactly one full resend",
+    );
 
     // An idle partner that never acknowledged did not receive the message.
     // Reporting "busy, do not retry" there is what hid the loss for an hour.

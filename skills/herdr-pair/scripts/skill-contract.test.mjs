@@ -9,11 +9,30 @@ const skill = readFileSync(join(here, "../SKILL.md"), "utf8");
 test("a deliberate broken checkout is visible to both partners", () => {
   assert.match(
     skill,
-    /Give every deliberate broken-checkout experiment a visible window[\s\S]*send a `task` naming its\s+affected paths and stop condition, then wait for `accepted`[\s\S]*After clean\s+restoration, send `ready` and wait for `accepted` before the partner reads\s+or tests that checkout/u,
+    /Announce every deliberate broken-checkout window[\s\S]*send a `task` naming the affected paths and\s+stop condition; send `ready` after the tree is restored and verified/u,
   );
   assert.match(
     skill,
-    /Run an experiment that cannot hold that window in a\s+separate worktree/u,
+    /Do not\s+wait for `accepted`: the notices are the protection/u,
+  );
+  assert.match(
+    skill,
+    /open window treats that checkout's test results as unusable until the\s+close notice arrives, and asks rather than reports/u,
+  );
+  assert.match(
+    skill,
+    /cannot be announced, or that lasts more than a few minutes, in a separate\s+worktree/u,
+  );
+});
+
+test("busy and idle partners keep distinct delivery proofs", () => {
+  assert.match(
+    skill,
+    /partner is still working, Herdr queues exactly one `agent prompt`[\s\S]*sends no Enter and no full resend[\s\S]*receipt stays pending/u,
+  );
+  assert.match(
+    skill,
+    /For an idle partner, the helper proves landing from the composer[\s\S]*sends Enter until the composer releases the\s+text, performs one full resend, and fails loudly/u,
   );
 });
 
