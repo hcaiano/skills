@@ -1,6 +1,6 @@
 ---
-name: review-gate
-description: "Manual-only graded review gate for a finished change: risk grade, one simplify pass, one graded LLM review round, one material correction batch, then a receipt. Leaves a clean local HEAD and never pushes, opens, or merges anything. Invoke only when the user explicitly names review-gate or an explicitly invoked workflow delegates its graded gate."
+name: review-it
+description: "Manual-only graded review gate for a finished change: risk grade, one simplify pass, one graded LLM review round, one material correction batch, then a receipt. Leaves a clean local HEAD and never pushes, opens, or merges anything. Invoke only when the user explicitly names review-it or an explicitly invoked workflow delegates its graded gate."
 disable-model-invocation: true
 ---
 
@@ -14,7 +14,7 @@ restraint is what makes it safe to run against a branch whose PR already
 exists: it changes only the working tree and the local history its corrections
 require.
 
-Run it only when the user invokes review-gate or ship-it delegates its graded
+Run it only when the user invokes review-it or ship-it delegates its graded
 gate — finishing a change is not an invitation to review it.
 
 ## Fix the range first
