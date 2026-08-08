@@ -18,6 +18,20 @@ plain names, without a plugin namespace such as `hcaiano:`.
 
 Run the same command to update the installed copies after changing this repo.
 
+Adding never removes. When a skill is renamed or dropped here, the old copy
+stays installed and keeps answering under its old name, so remove it by name:
+
+```bash
+npx skills@latest remove <old-name> --global --agent claude-code codex --yes
+```
+
+`--global` matters: without it the command targets project scope and leaves the
+globally installed copy in place.
+
+`review-gate` was renamed to `review-it`. An install made before that rename
+carries both, and the stale one still emits the old `review-gate · ...` pane
+label that `herdr-orchestrate` no longer recognises as a gate pane.
+
 ## Skills
 
 ### Orchestration and collaboration
