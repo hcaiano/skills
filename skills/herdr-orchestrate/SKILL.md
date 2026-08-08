@@ -52,7 +52,7 @@ syntax.
    agent command targets a workspace-qualified ID returned by those calls;
    receiving another workspace's row is already an isolation failure.
 2. One work unit per tab; address only panes that unit created.
-3. The unit's agents implement; ship-it's gate reviews quality; the
+3. The unit's agents implement; the delegated review gate reviews quality; the
    orchestrator aims and holds **scope authority**. It never edits or
    reviews the unit's code — no `/code-review`, `codex review`,
    `/simplify`, no standards passes; its checkpoints are scope scans (the

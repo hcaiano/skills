@@ -161,6 +161,12 @@ test("the receipt embeds the gate's block and adds only delivery's own fields", 
 });
 
 test("herdr-orchestrate points grading at the gate and delivery at ship-it", () => {
+  assert.match(
+    orchestrate,
+    /The unit's agents implement; the delegated review gate reviews quality; the\s+orchestrator aims and holds \*\*scope authority\*\*/u,
+  );
+  assert.doesNotMatch(orchestrate, /ship-it's gate reviews quality/u);
+  assert.match(orchestrate, /no `\/code-review`, `codex review`,\s+`\/simplify`, no standards passes/u);
   assert.match(models, /\[review gate\]\(\.\.\/\.\.\/review-gate\/SKILL\.md\)/u);
   assert.match(
     models,
