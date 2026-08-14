@@ -57,12 +57,12 @@ Before starting any simplify or review command, read and follow
 command in the current agent pane is already visible; every external Claude or
 Codex command runs through the transport, which records whether it ran in a
 visible Herdr pane or as a local background process. The visible backend needs
-`herdr-pair` installed beside this skill for its caller-pane proof, and the two
+`pair` installed beside this skill for its caller-pane proof, and the two
 environments resolve its absence differently. Outside `HERDR_ENV=1` the
 transport selects `local`, and the gate records that its runs had no live
 surface for the user to watch or interject in. Inside `HERDR_ENV=1` a missing
 proof stops the gate: a gate Herdr is hosting runs where the user can see it,
-so tell the user to install `herdr-pair` rather than demoting the run to an
+so tell the user to install `pair` rather than demoting the run to an
 invisible process.
 
 Done when the range, the pool state, and any required transport pin are
@@ -205,7 +205,7 @@ not count. Model budget: Claude uses Opus (`--model opus`), never Fable; Codex
 uses its default model with no extra-high reasoning. Fable is advisor-only.
 
 `dual` only — start the Standards and Spec reviews in distinct panes before
-waiting for either. In a herdr-pair session, ask the Claude peer through the
+waiting for either. In a `pair` session, ask the Claude peer through the
 pair channel to run its visible native slash command when applicable; external
 commands still use the transport.
 

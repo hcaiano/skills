@@ -18,7 +18,7 @@ defensible choice. Do not implement the product while this skill is active.
 - Run intake as a grilling conversation: investigate facts yourself, ask
   decisions one at a time, include your recommended answer, and wait for the
   user's reply. No separate intake skill is required.
-- If the current runtime cannot generate images, use `herdr-pair` to give a
+- If the current runtime cannot generate images, use `pair` to give a
   Codex peer the generation brief. When image generation is available directly,
   Herdr is unnecessary.
 - Obey the current project's agent, product, brand, and design-system
