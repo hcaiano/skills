@@ -73,6 +73,7 @@ if (mode !== "nosid") process.stderr.write("session id: ${CODEX_SID}\\n");
 const out = argv[argv.indexOf("-o") + 1];
 if (mode === "fail") { process.stderr.write("rate limit\\n"); process.exit(1); }
 if (mode === "empty") { fs.writeFileSync(out, "   \\n"); process.exit(0); }
+if (mode === "big") { fs.writeFileSync(out, "[agent codex -> claude kind=ready sid=${CODEX_SID}]\\n\\n" + "x".repeat(300000) + "\\n"); process.exit(0); }
 fs.writeFileSync(out, "[agent codex -> claude kind=ready sid=${CODEX_SID}]\\n\\nlease accepted\\n");
 process.exit(0);
 `,
@@ -713,6 +714,43 @@ test("a turn whose marker was replaced reports it instead of clearing someone el
   assert.match(receipt.in_flight_note, /left an in-flight marker owned by seq 99 pid 4242/u);
   assert.equal(existsSync(lockPath), true, "the other run's marker survives this turn's release");
   unlinkSync(lockPath);
+});
+
+test("a reply larger than the pipe buffer still arrives as one receipt", () => {
+  const repo = newRepo("big-reply");
+  run("ok", "claude", "init", "--repo", repo);
+  const sent = run("big", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("read it all"));
+  // execFileSync reads the helper through a pipe, exactly where an unflushed
+  // stdout truncates at the buffer size and breaks the caller's JSON.parse.
+  assert.equal(sent.receipt.status, "replied");
+  assert.ok(sent.receipt.reply.length > 65536, `reply survived the pipe: ${sent.receipt.reply.length} bytes`);
+});
+
+test("init refuses to replace a pair recorded with the other partner", () => {
+  const repo = newRepo("partner-mismatch");
+  run("ok", "claude", "init", "--repo", repo); // records partner: codex
+  const before = readFileSync(join(realpathSync(repo), ".git", "pair", "session.json"), "utf8");
+  const refused = run("ok", "codex", "init", "--repo", repo); // resolves partner: claude
+  assert.equal(refused.receipt.ok, false);
+  assert.match(refused.receipt.reason, /a codex pair already exists here/u);
+  assert.equal(
+    readFileSync(join(realpathSync(repo), ".git", "pair", "session.json"), "utf8"),
+    before,
+    "the recorded session survives untouched",
+  );
+});
+
+test("end refuses while a turn is in flight", () => {
+  const repo = newRepo("end-in-flight");
+  run("ok", "claude", "init", "--repo", repo);
+  const lockPath = join(realpathSync(repo), ".git", "pair", "in-flight.json");
+  writeFileSync(lockPath, JSON.stringify({ seq: 1, pid: process.pid, started_at: "now" }));
+  const refused = run("ok", "claude", "end", "--repo", repo);
+  assert.equal(refused.receipt.ok, false);
+  assert.match(refused.receipt.reason, /in flight/u);
+  assert.equal(existsSync(join(realpathSync(repo), ".git", "pair", "session.json")), true, "nothing was trashed");
+  unlinkSync(lockPath);
+  assert.equal(run("ok", "claude", "end", "--repo", repo).receipt.status, "ended");
 });
 
 test("status reports the session and end trashes it", () => {

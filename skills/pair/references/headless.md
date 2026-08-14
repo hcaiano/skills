@@ -109,4 +109,7 @@ compaction. Its `session_known` reports a positive absence only: `false` proves
 the CLI's session store was readable and did not hold this session, while
 `true` also covers a store that could not be read at all, so it is evidence of
 loss and never proof of health. `end` trashes the session directory, and runs
-only when the user explicitly asks to end the pair.
+only when the user explicitly asks to end the pair. It refuses while an
+in-flight marker exists — wait for the turn or run `clear` first — because
+trashing the session mid-turn destroys the running transcript and leaves a
+write-lease partner editing with no record.

@@ -95,6 +95,10 @@ npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code cod
 
 `skills update` re-appends that subpath, so updates keep working.
 
+Keeping `herdr-pair` covers only the pair protocol itself. `review-it`'s
+visible Herdr gate and `herdr-orchestrate` now read their caller-pane proof
+from `pair`, so install `pair` as well — the two coexist without conflict.
+
 ## Dependencies
 
 - `herdr-orchestrate`, and `pair`'s Herdr backend, require the `herdr` CLI and

@@ -16,7 +16,10 @@ const receiptTokens = (text) =>
 
 test("the skill routes to exactly one backend", () => {
   assert.match(skill, /^name: pair$/mu);
-  assert.match(skill, /`HERDR_ENV=1` and `herdr` on `PATH` → \[Herdr backend\]\(references\/herdr\.md\)/u);
+  assert.match(skill, /`HERDR_ENV=1` → \[Herdr backend\]\(references\/herdr\.md\)/u);
+  // A Herdr environment missing the CLI must stop in herdr.md's preconditions,
+  // never fall through to a hidden headless session.
+  assert.match(skill, /stops there\s+instead of falling through to a hidden headless session/u);
   assert.match(skill, /Otherwise → \[Headless backend\]\(references\/headless\.md\)/u);
   assert.match(
     skill,

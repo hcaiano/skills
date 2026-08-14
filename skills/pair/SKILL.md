@@ -17,7 +17,9 @@ headless session of the opposite CLI.
 
 Read one backend reference in full and follow it:
 
-- `HERDR_ENV=1` and `herdr` on `PATH` → [Herdr backend](references/herdr.md).
+- `HERDR_ENV=1` → [Herdr backend](references/herdr.md). Its preconditions
+  own the `herdr` CLI check: a Herdr environment missing the CLI stops there
+  instead of falling through to a hidden headless session.
 - Otherwise → [Headless backend](references/headless.md).
 
 An inbound `[agent ...]` or `[herdr-pair control ...]` line always means the

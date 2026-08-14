@@ -61,8 +61,21 @@ const command = argv[0];
 // path this helper was actually invoked by.
 const helperPath = process.argv[1] ?? "pair-headless.mjs";
 
+// Blocking write straight to fd 1: `process.stdout.write` + `process.exit`
+// truncates at the pipe buffer (~64 KiB measured), and the receipt's `reply`
+// is its last key — a long partner reply would turn a replied turn into a
+// caller-side parse failure. EAGAIN means the caller has not drained the pipe
+// yet; retry until the whole receipt is out, then exit.
 const emit = (record, code) => {
-  process.stdout.write(`${JSON.stringify(record, null, 2)}\n`);
+  const payload = Buffer.from(`${JSON.stringify(record, null, 2)}\n`);
+  let written = 0;
+  while (written < payload.length) {
+    try {
+      written += writeSync(1, payload, written);
+    } catch (error) {
+      if (error?.code !== "EAGAIN") throw error;
+    }
+  }
   process.exit(code);
 };
 const fail = (reason, code = 1) => emit({ ok: false, reason }, code);
@@ -492,6 +505,14 @@ const runInit = () => {
   const { partner, self, error } = resolvePartner(opt("partner"));
   if (error) fail(error, 2);
   const existing = readState(place.statePath);
+  // A recorded pair with the other partner is an active choice, never an
+  // overwrite: replacing it here would discard that pair's sid and history
+  // behind a receipt that reads as a plain create.
+  if (existing?.sid && existing.partner !== partner) {
+    fail(
+      `a ${existing.partner} pair already exists here (sid ${existing.sid}) — end it first, or pass --partner ${existing.partner} to resume it`,
+    );
+  }
   if (existing?.sid && existing.partner === partner && sessionKnown(partner, existing.sid, place.root)) {
     emit(
       {
@@ -781,6 +802,14 @@ const runClear = () => {
 const runEnd = () => {
   const place = requirePlace();
   if (!existsSync(place.stateDir)) fail(`no pair session at ${place.stateDir}`);
+  // Ending under a live marker would trash the running turn's transcript and
+  // reply target mid-write and leave a write-lease partner editing the
+  // workspace with no record of it.
+  if (existsSync(place.lockPath)) {
+    fail(
+      `a turn is in flight (or its marker remains) at ${place.lockPath} — wait for it to finish, or run clear first`,
+    );
+  }
   const trashed = spawnSync("trash", [place.stateDir], { encoding: "utf8" });
   if (trashed.error) fail(`trash is required to end a pair: ${trashed.error.message}`);
   if (trashed.status !== 0) fail(`trash failed: ${(trashed.stderr || "").trim()}`);
