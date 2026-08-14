@@ -27,10 +27,10 @@ syntax.
   `herdr agent prompt`), `gh`, `jq`, and `trash` on `PATH`, plus
   `HERDR_ENV=1`. If any is missing, stop and say so.
 - Set `PAIR_SCRIPT` to the absolute
-  `<herdr-pair skill dir>/scripts/herdr-pair.mjs` path. Before any GitHub,
+  `<pair skill dir>/scripts/herdr-pair.mjs` path. Before any GitHub,
   Project, branch, worktree, tab, pane, agent, or message mutation, read and
   execute
-  `<herdr-pair skill dir>/references/caller-pane-resolution.md`.
+  `<pair skill dir>/references/caller-pane-resolution.md`.
   That proof resolves the explicit task repository and returns `PAIR_PROOF`
   plus `PAIR_ID`. Pin `PAIR_PROOF.pane` as the report pane and
   `PAIR_PROOF.workspace_id` plus `PAIR_PROOF.tab_id` as this run's exact Herdr
@@ -65,9 +65,9 @@ syntax.
    feedback; a follow-up issue records out-of-scope findings, never
    quality debt the unit created. A pane showing its CLI's rate or
    session limit is restaffed to the other pool now, not waited out.
-4. Pair units: the delegate's `herdr-pair` run owns the pair protocol. Start
+4. Pair units: the delegate's `pair` run owns the pair protocol. Start
    the pair's two agents yourself at the unit's graded models and effort —
-   `herdr-pair` adopts an existing peer and only spawns (at default effort
+   `pair` adopts an existing peer and only spawns (at default effort
    and model) when one is missing.
 5. The project's own tooling (worktree script, triage skill, implement skill)
    controls provisioning.
@@ -384,7 +384,7 @@ Suggested approach (from the orchestrator; deviate with reason):
 <approach, key files/areas, pitfalls, constraints — and for multi-issue
 units the suggested order and why>
 
-1. (pair) Run the herdr-pair skill to pair with the peer already running in
+1. (pair) Run the `pair` skill to pair with the peer already running in
    this tab. You two are equals: co-plan the scope split, hold the write
    lease on your own scopes, and review each other's ready.
 2. Implement the issue(s) with the project's implement skill (pair:

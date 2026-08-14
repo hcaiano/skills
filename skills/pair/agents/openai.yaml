@@ -1,0 +1,7 @@
+interface:
+  display_name: "Pair"
+  short_description: "Keep Claude and Codex paired, in Herdr or headless"
+  default_prompt: "Use $pair to keep Claude and Codex collaborating on this task until I end the pair."
+
+policy:
+  allow_implicit_invocation: true

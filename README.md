@@ -50,8 +50,8 @@ label that `herdr-orchestrate` no longer recognises as a gate pane.
 - `herdr-orchestrate` — manually orchestrate GitHub issues through dedicated
   Herdr work units, from triage and delegation through shipping, merging, and
   teardown.
-- `herdr-pair` — keep Claude and Codex collaborating inside one Herdr tab with
-  durable, workspace-scoped transport.
+- `pair` — keep Claude and Codex collaborating persistently: a visible Herdr
+  tab inside Herdr, persistent headless CLI sessions anywhere else.
 - `ask-peer` — request one focused opinion, review, or bounded work pass from
   the opposite model without starting a persistent pair.
 
@@ -80,21 +80,38 @@ label that `herdr-orchestrate` no longer recognises as a gate pane.
 - `review-pr-comments` — handle feedback that actually appears on an existing
   PR, batching valid fixes and leaving the PR merge-ready.
 
+## Deprecated
+
+Frozen skills live in the root `deprecated/` folder. The Skills CLI scans the
+repo root at depth 1 and `skills/` at depth 3, so that location keeps them out
+of `--skill '*'` by design — moving them under `skills/` would publish them
+again.
+
+- `herdr-pair` — replaced by `pair`. Existing users keep it with:
+
+```bash
+npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex --skill herdr-pair --yes
+```
+
+`skills update` re-appends that subpath, so updates keep working.
+
 ## Dependencies
 
-- `herdr-orchestrate` and `herdr-pair` require the `herdr` CLI and the separate
-  upstream `herdr` skill. This repository does not vendor either one.
+- `herdr-orchestrate`, and `pair`'s Herdr backend, require the `herdr` CLI and
+  the separate upstream `herdr` skill. This repository does not vendor either
+  one. `pair`'s headless backend needs only the partner CLI (`codex` or
+  `claude`).
 - `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
   through Claude; Claude Code consults Codex.
 - `art-director` composes the external `imagegen` skill. It uses `brandkit`
-  only when a selected identity direction needs system proof, and `herdr-pair`
+  only when a selected identity direction needs system proof, and `pair`
   only when the current runtime cannot generate images directly.
 - `ship-it` requires `review-it` installed alongside it: it delegates its
   graded gate and never reimplements one.
 - `review-it` reads the usage-state helper bundled with `herdr-orchestrate`
-  to size its review pools, and reads `herdr-pair`'s caller-pane proof to run a
+  to size its review pools, and reads `pair`'s caller-pane proof to run a
   gate command in a visible Herdr pane. A missing usage-state helper records an
-  unread pool state and changes nothing else. A missing `herdr-pair` runs the
+  unread pool state and changes nothing else. A missing `pair` runs the
   gate locally outside Herdr, and stops it inside Herdr rather than hiding a
   hosted run.
 

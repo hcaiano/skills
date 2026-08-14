@@ -261,7 +261,7 @@ test("the extracted gate stands on its own", () => {
     reviewIt,
     /pool state unread \(usage-state\.mjs not installed\)[\s\S]*leaves\s+the semantic grade, the reviewer count, and simplify exactly as graded/u,
   );
-  // The two environments resolve a missing herdr-pair differently, because
+  // The two environments resolve a missing `pair` differently, because
   // run-transport.mjs hard-stops an incomplete pin under HERDR_ENV=1 rather
   // than demoting a hosted run to an invisible one. A single "falls back to
   // local" rule would promise a run that cannot start.

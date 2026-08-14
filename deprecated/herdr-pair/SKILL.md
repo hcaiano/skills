@@ -210,3 +210,10 @@ ends the panes naturally; stale state is never borrowed by another tab.
 
 Read `references/workbench-tab.md` only when a separate tab is needed for a
 long-running shared process.
+
+## Deprecated
+
+This skill is frozen. Its successor is the `pair` skill in the same repository,
+which keeps this Herdr backend byte-for-byte and adds a headless backend for
+pairing outside Herdr. Install `pair` for new work; `herdr-pair` stays here so
+existing installs keep running.

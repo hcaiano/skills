@@ -138,7 +138,7 @@ test("start validates the pin and launches in a visible sibling pane", () => {
     .map(JSON.parse);
   assert.ok(seen.some((args) => args[0] === "pane" && args[1] === "split"));
   assert.ok(seen.some((args) => args[0] === "pane" && args[1] === "run"));
-  // The pane must declare itself a process pane, or a live herdr-pair in this
+  // The pane must declare itself a process pane, or a live pair in this
   // tab counts it as a third agent and its channel goes silent for the gate.
   const declared = seen.find((args) => args[0] === "pane" && args[1] === "report-metadata");
   assert.ok(declared, "a process pane must declare its role");
