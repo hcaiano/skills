@@ -18,7 +18,16 @@ import { fileURLToPath } from "node:url";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
-const schemaVersion = 2;
+// Every agent kind `herdr agent start --kind` can bring up. A pair is always
+// exactly two of them, and never twice the same one: two panes of one CLI echo
+// each other instead of reviewing each other.
+const agentKinds = ["claude", "codex", "cursor", "grok"];
+const kindList = agentKinds.join("|");
+const roles = ["peer", "executor"];
+// Schema 3 keys participants by agent kind across four kinds and records the
+// role. There is no migration from the two-kind schemas: an old session names
+// panes a new one cannot place, so it is ended rather than rewritten.
+const schemaVersion = 3;
 const staleLockMs = 60000;
 const pasteSettleMs = 400;
 const processStartFormat = "ps-lstart-c-utc-v1";
@@ -139,7 +148,7 @@ function currentPane() {
       "herdr-pair requires the transcript-proven --pane, --workspace, --tab-id, --as, --terminal-id, and --repo-root pin",
     );
   }
-  if (!["claude", "codex"].includes(callerContext.agent)) {
+  if (!agentKinds.includes(callerContext.agent)) {
     fail(`unsupported caller agent: ${callerContext.agent}`);
   }
 
@@ -208,23 +217,21 @@ function pinnedCliText(pane, repoRoot) {
     .join(" ");
 }
 
-function opposite(agent) {
-  if (agent === "claude") return "codex";
-  if (agent === "codex") return "claude";
-  fail(`unsupported current agent: ${agent ?? "unknown"}`);
-}
-
 function sessionPath(self) {
   const slug = self.tab_id.replaceAll(":", "_");
   return join(homedir(), ".herdr-coworkers", self.workspace_id, slug, "session.json");
 }
 
+function byKind(value) {
+  return Object.fromEntries(agentKinds.map((kind) => [kind, value]));
+}
+
 function emptyDelivery() {
   return {
-    next: { claude: 0, codex: 0 },
-    submitted: { claude: 0, codex: 0 },
-    received: { claude: 0, codex: 0 },
-    pending: { claude: null, codex: null },
+    next: byKind(0),
+    submitted: byKind(0),
+    received: byKind(0),
+    pending: byKind(null),
   };
 }
 
@@ -238,15 +245,6 @@ function normalizeSession(session, live) {
   let changed = false;
   const normalized = structuredClone(session);
 
-  if (!normalized.participants && normalized.self && normalized.partner) {
-    normalized.participants = {
-      [normalized.self.agent]: { pane_id: normalized.self.pane_id },
-      [normalized.partner.agent]: { pane_id: normalized.partner.pane_id },
-    };
-    delete normalized.self;
-    delete normalized.partner;
-    changed = true;
-  }
   if (normalized.participants && live?.self && live?.partner) {
     for (const pane of [live.self, live.partner]) {
       const record = normalized.participants[pane.agent];
@@ -270,8 +268,12 @@ function normalizeSession(session, live) {
     normalized.schema_version = schemaVersion;
     changed = true;
   }
-  if (normalized.initiator !== "claude" && normalized.initiator !== "codex") {
+  if (!agentKinds.includes(normalized.initiator)) {
     normalized.initiator = live?.self.agent ?? null;
+    changed = true;
+  }
+  if (!roles.includes(normalized.role)) {
+    normalized.role = "peer";
     changed = true;
   }
   if (normalized.active === undefined) {
@@ -288,10 +290,10 @@ function normalizeSession(session, live) {
   } else {
     for (const field of ["next", "submitted", "received"]) {
       if (!normalized.delivery[field]) {
-        normalized.delivery[field] = { claude: 0, codex: 0 };
+        normalized.delivery[field] = byKind(0);
         changed = true;
       }
-      for (const agent of ["claude", "codex"]) {
+      for (const agent of agentKinds) {
         if (
           !Number.isInteger(normalized.delivery[field][agent]) ||
           normalized.delivery[field][agent] < 0
@@ -302,10 +304,10 @@ function normalizeSession(session, live) {
       }
     }
     if (!normalized.delivery.pending) {
-      normalized.delivery.pending = { claude: null, codex: null };
+      normalized.delivery.pending = byKind(null);
       changed = true;
     }
-    for (const agent of ["claude", "codex"]) {
+    for (const agent of agentKinds) {
       const pending = normalized.delivery.pending[agent];
       if (
         pending !== null &&
@@ -315,7 +317,7 @@ function normalizeSession(session, live) {
         changed = true;
       }
     }
-    for (const agent of ["claude", "codex"]) {
+    for (const agent of agentKinds) {
       const pending = normalized.delivery.pending[agent];
       const pendingSequence = pending?.seq ?? 0;
       const next = Math.max(
@@ -378,20 +380,22 @@ function isGateProcessPane(pane, selfPaneId) {
   });
 }
 
-function discover({ allowMissing = false, allowStalePartner = false } = {}) {
+// The partner is whichever other agent pane shares the tab. Its kind is read
+// off that pane rather than derived from the caller's, which is what makes any
+// of the four kinds pairable — and a second pane of the caller's own kind is
+// refused rather than accepted as a partner.
+function discover({ allowMissing = false, allowStalePartner = false, requestedPartner = null } = {}) {
   const self = currentPane();
-  const partnerAgent = opposite(self.agent);
   const tabAgents = paneList(self.workspace_id).filter(
     (pane) =>
       pane.tab_id === self.tab_id &&
       pane.workspace_id === self.workspace_id &&
-      ["claude", "codex"].includes(pane.agent) &&
+      agentKinds.includes(pane.agent) &&
       !isGateProcessPane(pane, self.pane_id),
   );
   const selfMatches = tabAgents.filter((pane) => pane.pane_id === self.pane_id);
-  const candidates = tabAgents.filter(
-    (pane) => pane.agent === partnerAgent && pane.pane_id !== self.pane_id,
-  );
+  const candidates = tabAgents.filter((pane) => pane.pane_id !== self.pane_id);
+  const partnerAgent = requestedPartner ?? candidates[0]?.agent ?? null;
 
   if (selfMatches.length !== 1) {
     fail(`current pane ${self.pane_id} is not uniquely present in current tab ${self.tab_id}`);
@@ -401,7 +405,12 @@ function discover({ allowMissing = false, allowStalePartner = false } = {}) {
   }
   if (candidates.length !== 1 || tabAgents.length !== 2) {
     fail(
-      `expected exactly two agent panes in current tab ${self.tab_id} (self + one ${partnerAgent}); found ${tabAgents.length} agents and ${candidates.length} partners`,
+      `expected exactly two agent panes in current tab ${self.tab_id} (self + one partner); found ${tabAgents.length} agents and ${candidates.length} partners`,
+    );
+  }
+  if (candidates[0].agent === self.agent) {
+    fail(
+      `refusing to pair ${self.agent} with itself: pane ${candidates[0].pane_id} runs the same CLI — the partner must be one of ${agentKinds.filter((kind) => kind !== self.agent).join(", ")}`,
     );
   }
 
@@ -420,7 +429,7 @@ function discover({ allowMissing = false, allowStalePartner = false } = {}) {
       `pane ${partner.pane_id} has no live foreground ${partner.agent} process rooted at ${callerContext.repoRoot}`,
     );
   }
-  return { self, partner, partnerAgent };
+  return { self, partner, partnerAgent: partner.agent };
 }
 
 // herdr accepts an agent name of 1-32 characters, starting with a lowercase
@@ -437,12 +446,55 @@ function pairAgentName(partnerAgent, tabId) {
   return `pair-${partnerAgent}-${digest}`.slice(0, 32);
 }
 
-async function spawn() {
-  const binding = discover({ allowMissing: true });
+// The partner CLI's own arguments, after `--`. They reach a pane that is being
+// created and nothing else: a live pane already runs the model it was started
+// with, and restarting it to change that would discard its conversation.
+function agentStartArguments(partnerAgent, options) {
+  const model = options.model ?? null;
+  const effort = options.effort ?? null;
+  if (effort && partnerAgent === "claude") {
+    fail("claude has no reasoning-effort control — drop --effort");
+  }
+  if (partnerAgent === "cursor") {
+    if (effort && !model) {
+      fail("cursor carries effort inside the model name, so --effort needs --model");
+    }
+    const named = effort && !/\[/u.test(model) ? `${model}[effort=${effort}]` : model;
+    return named ? ["--model", named] : [];
+  }
+  if (partnerAgent === "claude") return model ? ["--model", model] : [];
+  if (partnerAgent === "codex") {
+    return [
+      ...(model ? ["-m", model] : []),
+      ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+    ];
+  }
+  return [
+    ...(model ? ["-m", model] : []),
+    ...(effort ? ["--reasoning-effort", effort] : []),
+  ];
+}
+
+async function spawn(args) {
+  const options = parseOptions(args);
+  const requestedPartner = options.partner ?? null;
+  if (requestedPartner && !agentKinds.includes(requestedPartner)) {
+    fail(`unknown partner ${requestedPartner} — use one of ${kindList}`);
+  }
+  const binding = discover({ allowMissing: true, requestedPartner });
   if (binding.partner) {
     process.stdout.write(`${JSON.stringify(binding, null, 2)}\n`);
     return;
   }
+  if (!binding.partnerAgent) {
+    fail(`spawn requires --partner ${kindList} (any CLI other than ${binding.self.agent})`);
+  }
+  if (binding.partnerAgent === binding.self.agent) {
+    fail(
+      `refusing to pair ${binding.self.agent} with itself — choose one of ${agentKinds.filter((kind) => kind !== binding.self.agent).join(", ")}`,
+    );
+  }
+  const agentArguments = agentStartArguments(binding.partnerAgent, options);
 
   const split = result(
     "pane",
@@ -465,6 +517,7 @@ async function spawn() {
     split.pane_id,
     "--timeout",
     "60000",
+    ...(agentArguments.length > 0 ? ["--", ...agentArguments] : []),
   );
 
   const pane = paneGet(split.pane_id);
@@ -647,7 +700,10 @@ async function acquireLock(lock, timeoutMs, label) {
   }
 }
 
-async function initSession() {
+async function initSession(args) {
+  const options = parseOptions(args);
+  const role = options.role ?? "peer";
+  if (!roles.includes(role)) fail(`unknown role ${role} — use ${roles.join(" or ")}`);
   const binding = discover();
   const path = sessionPath(binding.self);
   const directory = dirname(path);
@@ -682,17 +738,14 @@ async function initSession() {
       workspace_id: binding.self.workspace_id,
       tab_id: binding.self.tab_id,
       initiator: binding.self.agent,
+      role,
       active: true,
       participants: {
-        claude: participantRecord(
-          binding.self.agent === "claude" ? binding.self : binding.partner,
-        ),
-        codex: participantRecord(
-          binding.self.agent === "codex" ? binding.self : binding.partner,
-        ),
+        [binding.self.agent]: participantRecord(binding.self),
+        [binding.partner.agent]: participantRecord(binding.partner),
       },
       round: 0,
-      last_status: { claude: null, codex: null },
+      last_status: byKind(null),
       completed_cycles: 0,
       no_progress_count: 0,
       delivery: emptyDelivery(),
@@ -720,6 +773,14 @@ function validateSessionEnvelope(session, live) {
     session.schema_version > schemaVersion
   ) {
     fail(`session schema ${session.schema_version} is newer than supported schema ${schemaVersion}`);
+  }
+  // A pre-universal session records two fixed kinds and, in the oldest shape,
+  // no participants at all. It is not rewritten: end that pair first, then
+  // start a new one with the partner you want.
+  if (!Number.isInteger(session.schema_version) || session.schema_version < schemaVersion) {
+    fail(
+      `session schema ${session.schema_version ?? "unset"} predates the universal pair (schema ${schemaVersion}) — end that pair with: node ${shellQuote(scriptPath)} end ${pinnedCliText(live.self, callerContext.repoRoot)} --sid ${shellQuote(session.sid ?? "<sid>")} --stale true, then init a new one`,
+    );
   }
 }
 
@@ -817,15 +878,22 @@ async function acknowledgeInbound(path, sid, from, sequence) {
   });
 }
 
+// A cycle completes when both of THIS pair's participants have accepted, so
+// the check reads the participants the session records rather than a fixed
+// pair of kinds — the other two kinds are absent, not pending.
+function bothAccepted(session) {
+  const participants = Object.keys(session.participants ?? {});
+  return (
+    participants.length === 2 &&
+    participants.every((agent) => session.last_status[agent] === "accepted")
+  );
+}
+
 function applyAcknowledgedStatus(session, agent, pending) {
-  const wasComplete =
-    session.last_status.claude === "accepted" &&
-    session.last_status.codex === "accepted";
+  const wasComplete = bothAccepted(session);
   session.round += 1;
   session.last_status[agent] = pending.kind;
-  const isComplete =
-    session.last_status.claude === "accepted" &&
-    session.last_status.codex === "accepted";
+  const isComplete = bothAccepted(session);
   if (!wasComplete && isComplete) {
     session.completed_cycles += 1;
     session.last_completed_at = new Date().toISOString();
@@ -834,7 +902,7 @@ function applyAcknowledgedStatus(session, agent, pending) {
 
 function reconcileSessionState(session) {
   const reconciled = [];
-  for (const agent of ["claude", "codex"]) {
+  for (const agent of agentKinds) {
     const pending = session.delivery?.pending?.[agent];
     if (pending && (session.delivery.received[agent] ?? 0) >= pending.seq) {
       session.delivery.submitted[agent] = Math.max(
@@ -1108,7 +1176,7 @@ async function resetSession() {
       fail(`cannot reset while ${pending[0]} seq ${pending[1].seq} awaits receipt`);
     }
     session.round = 0;
-    session.last_status = { claude: null, codex: null };
+    session.last_status = byKind(null);
     session.no_progress_count = 0;
     session.last_reset_at = new Date().toISOString();
   });
@@ -1149,12 +1217,13 @@ async function endSession(args) {
     const normalized = normalizeSession(session, binding).session;
     let participantMismatch = binding.partner === null;
     if (binding.partner) {
-      for (const agent of ["claude", "codex"]) {
-        const expected =
-          agent === binding.self.agent ? binding.self : binding.partner;
-        if (!participantMatches(normalized.participants?.[agent], expected)) {
+      for (const pane of [binding.self, binding.partner]) {
+        if (!participantMatches(normalized.participants?.[pane.agent], pane)) {
           participantMismatch = true;
         }
+      }
+      if (Object.keys(normalized.participants ?? {}).length !== 2) {
+        participantMismatch = true;
       }
     }
     if (!allowStale && participantMismatch) {
@@ -1311,7 +1380,7 @@ async function reconcileSession(args) {
       }
       const record = { ...pending, cleared_at: new Date().toISOString() };
       session.delivery.pending[agent] = null;
-      session.delivery.last_cleared_pending ??= { claude: null, codex: null };
+      session.delivery.last_cleared_pending ??= byKind(null);
       session.delivery.last_cleared_pending[agent] = record;
       return { reconciled: applied, cleared: { agent, ...record } };
     });
@@ -1425,8 +1494,8 @@ function conversationMarkers(path) {
 function identify(options) {
   if (process.env.HERDR_ENV !== "1") fail("id requires HERDR_ENV=1");
   const agent = options.as;
-  if (!["claude", "codex"].includes(agent ?? "")) {
-    fail("id requires --as claude|codex (the agent you are)");
+  if (!agentKinds.includes(agent ?? "")) {
+    fail(`id requires --as ${kindList} (the agent you are)`);
   }
   const repoRoot = options["repo-root"];
   if (!repoRoot || !repoRoot.startsWith("/")) {
@@ -1590,9 +1659,9 @@ async function main() {
   } else if (command === "discover") {
     process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
   } else if (command === "spawn") {
-    await spawn();
+    await spawn(args);
   } else if (command === "init") {
-    await initSession();
+    await initSession(args);
   } else if (command === "verify") {
     const binding = await verifiedSession();
     await reconcileAcknowledged(binding.path, binding.session.sid);
@@ -1612,7 +1681,7 @@ async function main() {
     await endSession(args);
   } else {
     fail(
-      "usage: herdr-pair.mjs id --as claude|codex --repo-root PATH --conversation-markers-file FILE, or COMMAND --pane ID --workspace ID --tab-id ID --as claude|codex --terminal-id ID --repo-root PATH [options]",
+      `usage: herdr-pair.mjs id --as ${kindList} --repo-root PATH --conversation-markers-file FILE, or COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--partner ${kindList}] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
     );
   }
 }
