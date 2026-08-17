@@ -413,6 +413,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
       bin: "cursor-agent",
       args: [
         "-p",
+        "--trust", // headless runs refuse an untrusted directory outright; the repo is the user's own task repo
         "--output-format",
         "json",
         ...(resume ? ["--resume", sid] : []),

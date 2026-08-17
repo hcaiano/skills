@@ -278,13 +278,13 @@ test("cursor and grok turns carry each CLI's own read-only and resume flags", ()
     turnCommand({ partner: "cursor", sid: null, resume: false, write: false, model: "claude-opus-4-8", effort: "high" }),
     {
       bin: "cursor-agent",
-      args: ["-p", "--output-format", "json", "--model", "claude-opus-4-8[effort=high]", "--mode", "plan"],
+      args: ["-p", "--trust", "--output-format", "json", "--model", "claude-opus-4-8[effort=high]", "--mode", "plan"],
       promptVia: "stdin",
     },
   );
   assert.deepEqual(
     turnCommand({ partner: "cursor", sid: "chat-1", resume: true, write: true }).args,
-    ["-p", "--output-format", "json", "--resume", "chat-1"],
+    ["-p", "--trust", "--output-format", "json", "--resume", "chat-1"],
   );
   // Cursor parameterizes the model itself, so effort has nowhere to go without one.
   assert.equal(cursorModel(null, "high"), null);
@@ -604,7 +604,7 @@ test("a cursor partner's chat id comes out of its JSON, and its reply with it", 
   assert.equal(created.partner, "cursor");
   assert.equal(created.sid, CURSOR_SID);
   const [boot] = invocations();
-  assert.deepEqual(boot.argv, ["-p", "--output-format", "json", "--mode", "plan"]);
+  assert.deepEqual(boot.argv, ["-p", "--trust", "--output-format", "json", "--mode", "plan"]);
   const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("read it"));
   assert.equal(sent.receipt.status, "replied");
   assert.match(sent.receipt.reply, /cursor reviewed/u);
