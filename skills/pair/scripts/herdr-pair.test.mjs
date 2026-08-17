@@ -180,7 +180,7 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   }
   if (state.working_on_prompt !== false) pane.agent_status = "working";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
-  const sender = state.last_message.match(/^\\[agent (claude|codex) ->/)?.[1];
+  const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok) ->/)?.[1];
   if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
     const sequence = Number(control[2]);
     const slug = pane.tab_id.replaceAll(":", "_");
@@ -220,6 +220,7 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   pane.agent = args[args.indexOf("--kind") + 1];
   pane.agent_status = "idle";
   state.last_agent_name = args[2];
+  state.last_agent_start_argv = args;
   save();
   output({ agent: pane });
 } else if (args[0] === "agent" && args[1] === "send-keys") {
@@ -787,7 +788,7 @@ try {
   writeFileSync(statePath, `${JSON.stringify(identityState, null, 2)}\n`);
 
   const created = JSON.parse(run("init"));
-  assert.equal(created.schema_version, 2);
+  assert.equal(created.schema_version, 3);
   assert.equal(created.active, true);
   assert.equal(created.round, 0);
 
@@ -1133,7 +1134,13 @@ try {
     /receipt=acknowledged/u,
   );
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
-  assert.deepEqual(session.last_status, { claude: "accepted", codex: "accepted" });
+  // The two kinds this pair does not use stay absent, never pending.
+  assert.deepEqual(session.last_status, {
+    claude: "accepted",
+    codex: "accepted",
+    cursor: null,
+    grok: null,
+  });
   assert.equal(session.completed_cycles, 1);
   assert.equal(existsSync(sessionPath), true);
   assert.equal(JSON.parse(run("init")).resumed, true);
@@ -1147,7 +1154,7 @@ try {
   const reset = JSON.parse(run("reset"));
   assert.equal(reset.reset, true);
   assert.equal(reset.round, 0);
-  assert.deepEqual(reset.last_status, { claude: null, codex: null });
+  assert.deepEqual(reset.last_status, { claude: null, codex: null, cursor: null, grok: null });
   assert.equal(reset.delivery.received.codex, 6);
 
   // A partner that never idles still gets the message: the send waits only a
@@ -1198,7 +1205,7 @@ try {
   const repairedSessions = repairedOutputs.map((output) => JSON.parse(output));
   assert.equal(repairedSessions[0].sid, repairedSessions[1].sid);
   const repaired = repairedSessions[0];
-  assert.equal(repaired.schema_version, 2);
+  assert.equal(repaired.schema_version, 3);
   assert.equal(repaired.active, true);
   assert.equal(existsSync(orphanLock), false);
   run("end", "--sid", repaired.sid);
@@ -1275,9 +1282,28 @@ try {
       },
     }, null, 2)}\n`,
   );
-  let migrated = JSON.parse(run("verify")).session;
-  assert.equal(migrated.schema_version, 2);
-  assert.equal(migrated.active, true);
+  // A pre-universal session is refused, never rewritten, and the refusal names
+  // the exact end command that clears the way for a new pair.
+  for (const command of ["verify", "init", "reset"]) {
+    assert.throws(
+      () => run(command),
+      /schema unset predates the universal pair \(schema 3\)[\s\S]*--sid 'legacy-1' --stale true/u,
+      `${command} must refuse a pre-universal session`,
+    );
+  }
+  assert.throws(
+    () => run("verify"),
+    /end '--pane' 'w1:p1'/u,
+    "the refusal must carry the caller's own pin",
+  );
+  assert.equal(existsSync(`${legacyDirectory}.init.lock`), false);
+  // Ending it is the way out, and it leaves nothing behind for the next pair.
+  run("end", "--sid", "legacy-1", "--stale", "true");
+  assert.equal(existsSync(sessionPath), false);
+
+  let migrated = JSON.parse(run("init"));
+  assert.equal(migrated.schema_version, 3);
+  assert.equal(migrated.role, "peer");
   assert.deepEqual(migrated.participants, {
     codex: {
       pane_id: "w1:p1",
@@ -1290,12 +1316,9 @@ try {
       agent_session_id: "claude-session-w1-p2",
     },
   });
-  assert.equal(migrated.delivery.next.codex, 8);
-  assert.equal(migrated.delivery.submitted.codex, 7);
-  assert.equal(migrated.delivery.received.codex, 6);
-  migrated = JSON.parse(
-    run("reconcile", "--sid", "legacy-1", "--clear-pending", "true"),
-  ).session;
+  run("end", "--sid", migrated.sid);
+  mkdirSync(legacyDirectory, { recursive: true });
+  migrated = { ...migrated, sid: "legacy-1" };
   const future = { ...migrated, schema_version: 99 };
   writeFileSync(sessionPath, `${JSON.stringify(future, null, 2)}\n`);
   assert.throws(() => run("init"), /session schema 99 is newer/u);
@@ -1401,10 +1424,10 @@ try {
   // Spawning derives the peer's agent name from the tab id, and herdr rejects
   // anything but 1-32 lowercase characters. Workspace ids carry uppercase
   // (wY:t1) and long ones overflow the limit — both broke the spawn outright.
-  for (const [paneId, tabId, workspaceId, expected, paneCwd, repoRoot] of [
-    ["wY:p1", "wY:t1", "wY", "pair-claude-wy_t1", "/workspace", "/workspace"],
-    ["w655f3dd90835016:p1", "w655f3dd90835016:t123", "w655f3dd90835016", "pair-claude-f0e59f4e", "/workspace", "/workspace"],
-    ["wZ:p1", "wZ:t1", "wZ", "pair-claude-wz_t1", "/shell-home", "/workspace"],
+  for (const [paneId, tabId, workspaceId, expected, paneCwd, repoRoot, partner] of [
+    ["wY:p1", "wY:t1", "wY", "pair-claude-wy_t1", "/workspace", "/workspace", "claude"],
+    ["w655f3dd90835016:p1", "w655f3dd90835016:t123", "w655f3dd90835016", "pair-cursor-f0e59f4e", "/workspace", "/workspace", "cursor"],
+    ["wZ:p1", "wZ:t1", "wZ", "pair-grok-wz_t1", "/shell-home", "/workspace", "grok"],
   ]) {
     const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
     spawnState.panes = {
@@ -1436,12 +1459,126 @@ try {
       `term-${paneId}`,
       "--repo-root",
       repoRoot,
+      "--partner",
+      partner,
     );
-    const named = JSON.parse(readFileSync(statePath, "utf8")).last_agent_name;
+    const spawnedState = JSON.parse(readFileSync(statePath, "utf8"));
+    const named = spawnedState.last_agent_name;
     assert.equal(named, expected, `spawn used an agent name herdr would reject: ${named}`);
     assert.match(named, /^[a-z][a-z0-9_-]{0,31}$/u);
-    const spawned = JSON.parse(readFileSync(statePath, "utf8")).panes[`${paneId}s`];
+    const spawned = spawnedState.panes[`${paneId}s`];
     assert.equal(spawned.cwd, repoRoot);
+    assert.equal(spawned.agent, partner, "the spawned pane must run the requested CLI");
+  }
+
+  // Model and effort reach the new pane as the partner CLI's own arguments,
+  // after `--`, and each CLI takes them through its own door.
+  for (const [partner, extra, expected] of [
+    ["grok", ["--model", "grok-5", "--effort", "high"], ["--", "-m", "grok-5", "--reasoning-effort", "high"]],
+    ["codex", ["--model", "gpt-5", "--effort", "high"], ["--", "-m", "gpt-5", "-c", 'model_reasoning_effort="high"']],
+    ["cursor", ["--model", "claude-opus-4-8", "--effort", "high"], ["--", "--model", "claude-opus-4-8[effort=high]"]],
+    ["claude", ["--model", "opus"], ["--", "--model", "opus"]],
+    ["claude", [], []],
+  ]) {
+    // The lead is any CLI other than the one being spawned.
+    const lead = partner === "grok" ? "claude" : "grok";
+    const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
+    spawnState.panes = {
+      "wM:p1": {
+        agent: lead, agent_session: { value: "session-wM" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wM:p1",
+        tab_id: "wM:t1", terminal_id: "term-wM-p1", workspace_id: "wM",
+      },
+    };
+    spawnState.processes = { "wM:p1": [{ argv: [lead], cwd: "/workspace", name: lead }] };
+    delete spawnState.last_agent_start_argv;
+    writeFileSync(statePath, `${JSON.stringify(spawnState, null, 2)}\n`);
+    runRaw(
+      "spawn", "--pane", "wM:p1", "--workspace", "wM", "--tab-id", "wM:t1",
+      "--as", lead, "--terminal-id", "term-wM-p1", "--repo-root", "/workspace",
+      "--partner", partner, ...extra,
+    );
+    const argv = JSON.parse(readFileSync(statePath, "utf8")).last_agent_start_argv;
+    assert.deepEqual(argv.slice(argv.indexOf("60000") + 1), expected, `${partner} agent arguments`);
+  }
+
+  // A pane of the caller's own CLI is not a partner: it echoes rather than reviews.
+  {
+    const sameState = JSON.parse(readFileSync(statePath, "utf8"));
+    sameState.panes = {
+      "wS:p1": {
+        agent: "codex", agent_session: { value: "s1" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wS:p1",
+        tab_id: "wS:t1", terminal_id: "term-wS-p1", workspace_id: "wS",
+      },
+      "wS:p2": {
+        agent: "codex", agent_session: { value: "s2" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wS:p2",
+        tab_id: "wS:t1", terminal_id: "term-wS-p2", workspace_id: "wS",
+      },
+    };
+    sameState.processes = {
+      "wS:p1": [{ argv: ["codex"], cwd: "/workspace", name: "codex" }],
+      "wS:p2": [{ argv: ["codex"], cwd: "/workspace", name: "codex" }],
+    };
+    writeFileSync(statePath, `${JSON.stringify(sameState, null, 2)}\n`);
+    const samePin = [
+      "--pane", "wS:p1", "--workspace", "wS", "--tab-id", "wS:t1",
+      "--as", "codex", "--terminal-id", "term-wS-p1", "--repo-root", "/workspace",
+    ];
+    assert.throws(
+      () => runRaw("discover", ...samePin),
+      /refusing to pair codex with itself/u,
+    );
+    assert.throws(
+      () => runRaw("init", ...samePin),
+      /refusing to pair codex with itself/u,
+    );
+  }
+
+  // A cursor lead and a grok partner is one pair like any other.
+  {
+    const mixedState = JSON.parse(readFileSync(statePath, "utf8"));
+    mixedState.panes = {
+      "wX:p1": {
+        agent: "cursor", agent_session: { value: "cursor-1" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wX:p1",
+        tab_id: "wX:t1", terminal_id: "term-wX-p1", workspace_id: "wX",
+      },
+      "wX:p2": {
+        agent: "grok", agent_session: { value: "grok-1" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wX:p2",
+        tab_id: "wX:t1", terminal_id: "term-wX-p2", workspace_id: "wX",
+      },
+    };
+    mixedState.processes = {
+      "wX:p1": [{ argv: ["cursor-agent"], argv0: "cursor", cwd: "/workspace", name: "cursor" }],
+      "wX:p2": [{ argv: ["grok"], cwd: "/workspace", name: "grok" }],
+    };
+    mixedState.auto_ack = true;
+    writeFileSync(statePath, `${JSON.stringify(mixedState, null, 2)}\n`);
+    const cursorPin = [
+      "--pane", "wX:p1", "--workspace", "wX", "--tab-id", "wX:t1",
+      "--as", "cursor", "--terminal-id", "term-wX-p1", "--repo-root", "/workspace",
+    ];
+    const mixed = JSON.parse(runRaw("init", ...cursorPin, "--role", "executor"));
+    assert.equal(mixed.role, "executor");
+    assert.equal(mixed.initiator, "cursor");
+    assert.deepEqual(Object.keys(mixed.participants).sort(), ["cursor", "grok"]);
+    const mixedBody = join(root, "mixed-body.txt");
+    writeFileSync(mixedBody, "own the parser scope\n");
+    const mixedSent = runRaw(
+      "send", ...cursorPin,
+      "--sid", mixed.sid, "--kind", "task", "--body-file", mixedBody,
+      "--ack-timeout-ms", "1000",
+    );
+    assert.match(mixedSent, /^\[agent cursor -> grok kind=task sid=/u);
+    assert.match(mixedSent, /receipt=acknowledged/u);
+    const mixedSession = JSON.parse(
+      readFileSync(join(home, ".herdr-coworkers", "wX", "wX_t1", "session.json"), "utf8"),
+    );
+    assert.equal(mixedSession.delivery.received.cursor, 1);
+    runRaw("end", ...cursorPin, "--sid", mixed.sid);
   }
 
   // Delivery proof. A `ready` was lost on 2026-08-07: the helper reported it

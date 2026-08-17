@@ -7,7 +7,7 @@ contract for `pair` and `herdr-orchestrate`.
 
 ```sh
 TASK_REPO=$(git -C <task-repository> rev-parse --show-toplevel)
-PAIR_PROOF=$(node "$PAIR_SCRIPT" id --as <claude|codex> --repo-root "$TASK_REPO")
+PAIR_PROOF=$(node "$PAIR_SCRIPT" id --as <claude|codex|cursor|grok> --repo-root "$TASK_REPO")
 ```
 
 The helper walks your own process ancestry and looks for a pane whose live

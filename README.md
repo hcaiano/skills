@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Personal agent skills shared across Claude Code and Codex.
+Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
 The repository contains ten active skills under `skills/` and small maintenance
 scripts under `scripts/`.
@@ -10,10 +10,10 @@ scripts under `scripts/`.
 ## Install
 
 ```bash
-npx skills@latest add hcaiano/skills --global --agent claude-code codex --skill '*' --yes
+npx skills@latest add hcaiano/skills --global --agent claude-code codex cursor grok --skill '*' --yes
 ```
 
-This installs every active skill for Claude Code and Codex. Skills keep their
+This installs every active skill for all four agents. Skills keep their
 plain names, without a plugin namespace such as `hcaiano:`.
 
 Run the same command to update the installed copies after changing this repo.
@@ -50,8 +50,9 @@ label that `herdr-orchestrate` no longer recognises as a gate pane.
 - `herdr-orchestrate` — manually orchestrate GitHub issues through dedicated
   Herdr work units, from triage and delegation through shipping, merging, and
   teardown.
-- `pair` — keep Claude and Codex collaborating persistently: a visible Herdr
-  tab inside Herdr, persistent headless CLI sessions anywhere else.
+- `pair` — keep two agents collaborating persistently, any pair of `claude`,
+  `codex`, `cursor`, and `grok`: a visible Herdr tab inside Herdr, persistent
+  headless CLI sessions anywhere else.
 - `ask-peer` — request one focused opinion, review, or bounded work pass from
   the opposite model without starting a persistent pair.
 
@@ -90,7 +91,7 @@ again.
 - `herdr-pair` — replaced by `pair`. Existing users keep it with:
 
 ```bash
-npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex --skill herdr-pair --yes
+npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-pair --yes
 ```
 
 `skills update` re-appends that subpath, so updates keep working.
@@ -103,8 +104,8 @@ from `pair`, so install `pair` as well — the two coexist without conflict.
 
 - `herdr-orchestrate`, and `pair`'s Herdr backend, require the `herdr` CLI and
   the separate upstream `herdr` skill. This repository does not vendor either
-  one. `pair`'s headless backend needs only the partner CLI (`codex` or
-  `claude`).
+  one. `pair`'s headless backend needs only the chosen partner CLI (`claude`,
+  `codex`, `cursor-agent`, or `grok`).
 - `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
   through Claude; Claude Code consults Codex.
 - `art-director` composes the external `imagegen` skill. It uses `brandkit`

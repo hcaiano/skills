@@ -4,13 +4,20 @@ This repository is the source of truth for Henrique's custom agent workflow skil
 
 Installed third-party skills should stay managed by their upstream sources and lock files. Custom skills in this repo may be linked into:
 
-- `~/.agents/skills`
+- `~/.agents/skills` — the one canonical copy every agent reads
 - `~/.claude/skills`
 - `~/.codex/skills`
+- `~/.cursor/skills`
+- `~/.grok/skills`
+
+Each agent directory holds symlinks into `~/.agents/skills`, written by the
+Skills CLI when the agent is named in `--agent`. Registering a new agent means
+adding it to that flag, never hand-linking the directory.
 
 Active skills should have names that include the runtime they bind to when a skill is tied to one (`herdr-orchestrate`). A skill that detects its own runtime takes the bare verb (`pair`), as does a runtime-independent one (`ship-it`, `debug-mode`).
 
-`pair`'s Herdr backend has an external runtime dependency on the `herdr` CLI and the separate `herdr` skill; its headless backend depends only on the partner CLI (`codex` or `claude`). Do not copy herdr primitives into this skill unless the upstream skill becomes unavailable; document the dependency instead.
+`pair`'s Herdr backend has an external runtime dependency on the `herdr` CLI and the separate `herdr` skill; its headless backend depends only on the chosen partner CLI (`claude`, `codex`,
+`cursor-agent`, or `grok`). Do not copy herdr primitives into this skill unless the upstream skill becomes unavailable; document the dependency instead.
 
 The root `deprecated/` folder holds frozen, self-contained copies of removed skills. The Skills CLI scans the repo root at depth 1 and `skills/` at depth 3, so that root location is what keeps them invisible to `--skill '*'`; existing users install them from the `hcaiano/skills/deprecated` subpath.
 
