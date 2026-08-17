@@ -608,7 +608,7 @@ test("a cursor partner's chat id comes out of its JSON, and its reply with it", 
   const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("read it"));
   assert.equal(sent.receipt.status, "replied");
   assert.match(sent.receipt.reply, /cursor reviewed/u);
-  assert.deepEqual(invocations()[0].argv, ["-p", "--output-format", "json", "--resume", CURSOR_SID, "--mode", "plan"]);
+  assert.deepEqual(invocations()[0].argv, ["-p", "--trust", "--output-format", "json", "--resume", CURSOR_SID, "--mode", "plan"]);
   assert.equal(invocations()[0].stdin, `[agent claude -> cursor kind=review sid=${CURSOR_SID}]\n\nread it\n`);
 });
 
