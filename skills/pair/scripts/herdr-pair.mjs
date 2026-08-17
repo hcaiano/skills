@@ -836,7 +836,7 @@ async function verifiedSession() {
     partner.agent !== live.partner.agent ||
     !participantMatches(partnerRecord, partner)
   ) {
-    fail("recorded partner is no longer the opposite agent in the caller's current tab");
+    fail("recorded partner is no longer the partner agent in the caller's current tab");
   }
 
   return { ...live, partner, path, session };
