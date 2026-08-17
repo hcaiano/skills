@@ -1,17 +1,49 @@
 ---
 name: pair
-description: "Persistent Claude-Codex pairing, in a Herdr tab or headless outside it. Use for live peer work, workflows requesting a pair, any inbound `[agent ...]` / `[herdr-pair control ...]` line, resuming a pair after context compaction, or pairing with the opposite model when Herdr is absent."
+description: "Persistent two-agent pairing across claude, codex, cursor, and grok, in a Herdr tab or headless outside it. Use for live peer work, workflows requesting a pair, any inbound `[agent ...]` / `[herdr-pair control ...]` line, resuming a pair after context compaction, or pairing with another CLI when Herdr is absent."
 ---
 
 # Pair
 
-Pair Claude and Codex as equals on one task. Keep the pair and its `sid` alive
-across tasks, accepted work cycles, and context compaction. Keep protocol
-headers and identifiers literal.
+Pair two agents on one task: you are the **lead**, and the partner is one of
+`claude`, `codex`, `cursor`, or `grok` — any of them except the CLI you are
+already running, because two panes of one CLI echo rather than review. Keep the
+pair and its `sid` alive across tasks, accepted work cycles, and context
+compaction. Keep protocol headers and identifiers literal.
 
 Two backends carry the same protocol. Inside Herdr the partner is a visible
 pane the user can read and interject in; outside it the partner is a persistent
-headless session of the opposite CLI.
+headless session of the partner CLI.
+
+## Choose the pair
+
+Look for an existing pair before proposing one: a Herdr pane in this tab, or a
+headless `session.json` in this repository (the backend reference names the
+exact command). An existing pair is resumed as it is. When its partner, model,
+or effort differs from what the user just asked for, say so and keep going —
+respawning discards the pair's whole history, and a model is changed by ending
+the pair, not by restarting its pane.
+
+With no pair to resume, ask the user in plain chat text — no structured-question
+tool needed — for three things, and start nothing until they answer:
+
+- **Partner**: which of the four CLIs, other than yours.
+- **Model**: `CLI default`, or any model name they name. There is no catalog
+  here: for a cursor partner run `cursor-agent --list-models` and offer what it
+  prints; for the others take the answer as given.
+- **Effort**: only for a partner that has it — grok (`--reasoning-effort`),
+  codex (`model_reasoning_effort`), cursor (an `[effort=…]` suffix on the model
+  name, so it needs a model too). Claude Code has none; do not ask.
+
+Then ask for the **role**, which sets who holds the write leases by default:
+
+- `peer` (default): equals. Split scopes, one lease per scope, review each
+  other's `ready`.
+- `executor`: the partner holds the write leases and implements; you plan and
+  review. Any individual `task` still redistributes leases.
+
+The backend records partner, model, effort, and role in the session, so a
+resumed pair keeps them without asking again.
 
 ## Choose the backend
 
@@ -58,7 +90,11 @@ Give one agent the write lease for each file scope: owner, target files,
 forbidden changes, validation, and stop point. The partner stays read-only on
 that scope until handoff.
 
-The partners are equals: propose a scope split — one write lease per scope,
+The role sets the opening distribution, and each `task` may redistribute from
+there. Under `executor` the partner holds every lease until a task says
+otherwise, and you review rather than edit.
+
+Under `peer` the partners are equals: propose a scope split — one write lease per scope,
 each partner implementing its own scopes and reviewing the other's `ready` —
 and include enough context for independent work; the partner accepts or
 counters before implementing. A task with no independent scopes takes one

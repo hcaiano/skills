@@ -1,6 +1,7 @@
 # Herdr backend
 
-Pair Claude and Codex in one Herdr tab. The user can read and interject in
+Pair two agents — any two of `claude`, `codex`, `cursor`, and `grok`, never
+twice the same kind — in one Herdr tab. The user can read and interject in
 either pane. The protocol, kinds, write leases, broken-checkout announcements,
 and work cycles are in [`SKILL.md`](../SKILL.md); this file owns the transport.
 
@@ -46,13 +47,26 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
 ## Start or resume
 
 1. Run
-   `node "$PAIR_SCRIPT" discover "${CALLER_ID[@]}"`.
-   If no opposite agent exists, run
-   `node "$PAIR_SCRIPT" spawn "${CALLER_ID[@]}"` once.
-   Stop on multiple candidates or spawn failure.
-2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}"`.
+   `node "$PAIR_SCRIPT" discover "${CALLER_ID[@]}"`. A partner pane already in
+   the tab is the pair: resume it whatever kind it runs, and never respawn to
+   change its model. If none exists, ask the user for partner, model, and
+   effort as `SKILL.md` describes, then run once:
+
+   ```bash
+   node "$PAIR_SCRIPT" spawn "${CALLER_ID[@]}" --partner "$PARTNER" \
+     [--model "$MODEL"] [--effort "$EFFORT"]
+   ```
+
+   The model and effort reach the new pane as the partner CLI's own arguments
+   after `--`, which only a pane being created can take. Stop on multiple
+   candidates or spawn failure.
+2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}" [--role peer|executor]`.
    It creates a new tab-scoped session or
-   idempotently resumes the exact live session.
+   idempotently resumes the exact live session. The role is recorded and
+   contractual here — Herdr panes hold no per-turn permission switch, so an
+   `executor` partner holds the write leases because the protocol says so.
+   A session written before the four-kind schema is refused with the exact
+   `end … --stale true` command that clears it; there is no migration.
    Record its exact `sid` as `PAIR_SID`; every send is
    bound to it so a wrong same-kind pane cannot borrow another tab's session.
 3. Send the first `task` through the helper, splitting scopes and write leases
@@ -79,7 +93,9 @@ model context has been compacted.
 
 The sender gives a busy partner a short grace period, then delivers anyway.
 Measured on Herdr 0.8.0, Claude accepts a mid-turn prompt atomically, while a
-multi-line prompt to Codex still needs Enter. When the partner is still working,
+multi-line prompt to Codex still needs Enter. Cursor and Grok are unmeasured
+here and take the conservative Codex-shaped path: one prompt, the Enter
+protection, and proof only from the `receive` ACK. When the partner is still working,
 the helper sends exactly one `agent prompt` with the header, control line, and
 body, then runs the harmless Enter loop. It skips the visible-arrival check and
 the full resend because that status has no reliable composer signal and a

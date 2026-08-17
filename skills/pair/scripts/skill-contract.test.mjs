@@ -38,6 +38,67 @@ test("the description carries every trigger", () => {
   ]) {
     assert.match(description, trigger);
   }
+  // The pair is no longer two fixed CLIs, and the description is where a
+  // cursor or grok user finds that out.
+  for (const kind of ["claude", "codex", "cursor", "grok"]) {
+    assert.match(description, new RegExp(`\\b${kind}\\b`, "u"));
+  }
+  assert.doesNotMatch(description, /Claude-Codex/u);
+});
+
+test("the four kinds, the partner rule, and the roles are the same everywhere", () => {
+  const kinds = ["claude", "codex", "cursor", "grok"];
+  for (const kind of kinds) {
+    assert.match(skill, new RegExp(`\`${kind}\``, "u"), `SKILL.md must name ${kind}`);
+  }
+  // Same CLI on both sides is the one combination that is refused, in prose
+  // and in both helpers.
+  assert.match(skill, /except the CLI you are\s+already running/u);
+  assert.match(helper, /refusing to pair \$\{self\.agent\} with itself/u);
+  assert.match(headlessHelper, /refusing to pair \$\{self\} with itself/u);
+  assert.deepEqual(
+    JSON.parse(helper.match(/^const agentKinds = (\[[^\]]+\]);$/mu)[1].replaceAll(/(\w+)/gu, '"$1"').replaceAll('""', '"')),
+    kinds,
+  );
+
+  // The role decides the default lease distribution and nothing else.
+  for (const role of ["peer", "executor"]) {
+    assert.match(skill, new RegExp(`\`${role}\``, "u"));
+    assert.match(headlessBackend, new RegExp(`\`${role}\``, "u"));
+  }
+  assert.match(skill, /Any individual `task` still redistributes leases/u);
+  assert.match(headlessBackend, /under `executor` it is writable unless you pass\s+`--read-only`/u);
+  assert.match(herdrBackend, /contractual here/u);
+});
+
+test("an existing pair is resumed, never respawned to change its model", () => {
+  assert.match(
+    skill,
+    /Look for an existing pair before proposing one[\s\S]*resumed as it is/u,
+  );
+  assert.match(
+    skill,
+    /respawning discards the pair's whole history, and a model is changed by ending\s+the pair/u,
+  );
+  // No hardcoded catalog: cursor's own list is the catalog.
+  assert.match(skill, /cursor-agent --list-models/u);
+  assert.match(skill, /`CLI default`/u);
+  // Effort exists only where the CLI has a door for it.
+  assert.match(skill, /Claude Code has none; do not ask/u);
+  assert.match(headlessBackend, /`\[effort=…\]` suffix inside `--model`/u);
+});
+
+test("cursor and grok delivery is documented as conservative, never as measured", () => {
+  assert.match(
+    herdrBackend,
+    /Cursor and Grok are unmeasured\s+here and take the conservative Codex-shaped path/u,
+  );
+});
+
+test("the old two-kind session is ended, never migrated", () => {
+  assert.match(herdrBackend, /refused with the exact\s+`end … --stale true` command/u);
+  assert.match(herdrBackend, /there is no migration/u);
+  assert.match(helper, /predates the universal pair/u);
 });
 
 test("protocol, kinds, and write leases stay backend-neutral", () => {
@@ -125,7 +186,7 @@ test("the headless backend documents the helper's whole command surface", () => 
   assert.match(headlessBackend, /scripts\/pair-headless\.mjs/u);
   assert.match(headlessBackend, /half-duplex/u);
   assert.match(headlessBackend, /`<git-dir>\/pair\/session\.json`/u);
-  assert.match(headlessBackend, /refuses to pair a\s+model with itself/u);
+  assert.match(headlessBackend, /the helper refuses\s+to pair a model with itself/u);
 });
 
 test("the headless backend states what each guarantee is actually worth", () => {
@@ -135,7 +196,13 @@ test("the headless backend states what each guarantee is actually worth", () => 
   // A permission mode is not an OS sandbox, and the reader must not read it as one.
   assert.match(
     headlessBackend,
-    /Codex turn is held by a\s+filesystem sandbox[\s\S]*Claude turn is held by a permission mode[\s\S]*without being an OS sandbox/u,
+    /Codex turn is held by a filesystem\s+sandbox[\s\S]*Claude turn is\s+held by a permission mode[\s\S]*without being an OS sandbox/u,
+  );
+  // Cursor writes by default in --print, which is the trap: its read-only turn
+  // is the one that had to ask.
+  assert.match(
+    headlessBackend,
+    /Cursor turn writes by default in\s+`--print`[\s\S]*`--mode plan`[\s\S]*not an OS sandbox either/u,
   );
   // An empty reply may still have consumed the prompt, so resending can duplicate work.
   assert.match(
@@ -145,7 +212,7 @@ test("the headless backend states what each guarantee is actually worth", () => 
   // session_known is evidence of loss, never proof of health.
   assert.match(
     headlessBackend,
-    /`session_known` reports a positive absence only[\s\S]*never proof of health/u,
+    /`session_known` reports a positive absence\s+only[\s\S]*never proof of health/u,
   );
   // The lock is a file, and the prose has to name the file the reader will find
   // and the one command that removes it — a send never removes one itself.

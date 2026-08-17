@@ -19,19 +19,25 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  AGENT_KINDS,
   acquireMarker,
   bootstrapPrompt,
   clearMarker,
+  cursorModel,
   detectSelf,
   locate,
   markerAlive,
   messagePrompt,
   minutesToMs,
+  newSessionId,
   parseClaudeResult,
+  parseCursorSessionId,
   parseSessionId,
+  parseTextReply,
   processAlive,
   releaseMarker,
   resolvePartner,
+  resolveWrite,
   sessionKnown,
   turnCommand,
 } from "./pair-headless.mjs";
@@ -46,6 +52,7 @@ mkdirSync(bin, { recursive: true });
 // prove the exact command surface without a live codex or claude session.
 const CODEX_SID = "11111111-2222-3333-4444-555555555555";
 const CLAUDE_SID = "claude-session-abc";
+const CURSOR_SID = "cursor-chat-7f3a";
 const log = join(root, "invocations.jsonl");
 
 // Every fake CLI records the in-flight marker it can see while it runs — the
@@ -100,6 +107,44 @@ process.stdout.write(JSON.stringify({
 process.exit(0);
 `,
 );
+// Cursor prints one JSON object holding the chat id and the answer; Grok
+// prints the answer only, because its session id was handed to it.
+writeFileSync(
+  join(bin, "cursor-agent"),
+  `#!/usr/bin/env node
+const fs = require("node:fs");
+const argv = process.argv.slice(2);
+const mode = process.env.FAKE_MODE || "ok";
+${markerProbe}
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "cursor-agent", argv, stdin, cwd: process.cwd() }) + "\\n");
+if (mode === "fail") { process.stderr.write("cursor auth expired\\n"); process.exit(1); }
+process.stdout.write(JSON.stringify({
+  type: "result",
+  chat_id: "${CURSOR_SID}",
+  result: mode === "empty" ? "" : "[agent cursor -> claude kind=ready sid=${CURSOR_SID}]\\n\\ncursor reviewed",
+}) + "\\n");
+process.exit(0);
+`,
+);
+writeFileSync(
+  join(bin, "grok"),
+  `#!/usr/bin/env node
+const fs = require("node:fs");
+const argv = process.argv.slice(2);
+const mode = process.env.FAKE_MODE || "ok";
+${markerProbe}
+const promptFile = argv[argv.indexOf("--prompt-file") + 1];
+const stdin = fs.readFileSync(promptFile, "utf8");
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "grok", argv, stdin, cwd: process.cwd() }) + "\\n");
+if (mode === "fail") { process.stderr.write("grok rate limit\\n"); process.exit(1); }
+process.stdout.write(JSON.stringify({
+  type: "result",
+  response: mode === "empty" ? "" : "grok reviewed",
+}) + "\\n");
+process.exit(0);
+`,
+);
 // A stand-in for `trash`: it moves the directory aside instead of deleting it,
 // which is exactly the property the real command guarantees.
 writeFileSync(
@@ -109,7 +154,7 @@ const fs = require("node:fs");
 fs.renameSync(process.argv[2], process.argv[2] + ".trashed");
 `,
 );
-for (const name of ["codex", "claude", "trash"]) chmodSync(join(bin, name), 0o755);
+for (const name of ["codex", "claude", "cursor-agent", "grok", "trash"]) chmodSync(join(bin, name), 0o755);
 
 const newRepo = (name) => {
   const repo = join(root, name);
@@ -129,6 +174,11 @@ const env = (mode, self = "claude") => ({
   CODEX_SANDBOX: self === "codex" ? "seatbelt" : "",
   CODEX_HOME: "",
   CLAUDE_CODE_ENTRYPOINT: "",
+  CURSOR_AGENT: self === "cursor" ? "1" : "",
+  CURSOR_AGENT_CHAT_ID: "",
+  GROK_SESSION_ID: self === "grok" ? "grok-lead" : "",
+  GROK_AGENT: "",
+  GROK_HOME: "",
 });
 
 const run = (mode, self, ...args) => {
@@ -158,15 +208,30 @@ const bodyFile = (text) => {
   return path;
 };
 
-test("the partner is always the opposite CLI", () => {
+test("the partner is chosen, and never the CLI the lead is already running", () => {
   assert.equal(detectSelf({ CLAUDECODE: "1" }), "claude");
   assert.equal(detectSelf({ CODEX_SANDBOX: "seatbelt" }), "codex");
+  assert.equal(detectSelf({ CURSOR_AGENT: "1" }), "cursor");
+  assert.equal(detectSelf({ GROK_SESSION_ID: "s" }), "grok");
   assert.equal(detectSelf({}), null);
-  assert.deepEqual(resolvePartner(null, { CLAUDECODE: "1" }), { partner: "codex", self: "claude" });
-  assert.deepEqual(resolvePartner(null, { CODEX_THREAD_ID: "t" }), { partner: "claude", self: "codex" });
-  assert.match(resolvePartner("claude", { CLAUDECODE: "1" }).error, /refusing to pair claude with itself/u);
+  assert.deepEqual(resolvePartner("grok", { CLAUDECODE: "1" }), { partner: "grok", self: "claude" });
+  assert.deepEqual(resolvePartner("cursor", { CODEX_THREAD_ID: "t" }), { partner: "cursor", self: "codex" });
+  // An undetectable harness still pairs: the choice is explicit either way.
+  assert.deepEqual(resolvePartner("codex", {}), { partner: "codex", self: "lead" });
+  for (const self of AGENT_KINDS) {
+    const env = { claude: { CLAUDECODE: "1" }, codex: { CODEX_SANDBOX: "s" }, cursor: { CURSOR_AGENT: "1" }, grok: { GROK_SESSION_ID: "s" } }[self];
+    assert.match(resolvePartner(self, env).error, new RegExp(`refusing to pair ${self} with itself`, "u"));
+  }
   assert.match(resolvePartner("gemini", {}).error, /unknown partner gemini/u);
-  assert.match(resolvePartner(null, {}).error, /pass --partner/u);
+  assert.match(resolvePartner(null, {}).error, /missing --partner/u);
+});
+
+test("the role sets the default lease and any turn may override it", () => {
+  assert.deepEqual(resolveWrite("peer", {}), { write: false });
+  assert.deepEqual(resolveWrite("executor", {}), { write: true });
+  assert.deepEqual(resolveWrite("peer", { write: true }), { write: true });
+  assert.deepEqual(resolveWrite("executor", { readOnly: true }), { write: false });
+  assert.match(resolveWrite("peer", { write: true, readOnly: true }).error, /contradict/u);
 });
 
 test("a headless pair requires a git repository", () => {
@@ -181,24 +246,88 @@ test("a headless pair requires a git repository", () => {
 });
 
 test("each turn's command matches the flags the installed CLIs accept", () => {
-  const create = turnCommand({ partner: "codex", sid: null, replyFile: "/r", root: "/repo", write: false });
-  assert.deepEqual(create, { bin: "codex", args: ["exec", "-s", "read-only", "-C", "/repo", "-o", "/r", "-"] });
-  const resume = turnCommand({ partner: "codex", sid: "S", replyFile: "/r", root: "/repo", write: true });
+  const create = turnCommand({ partner: "codex", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false });
+  assert.deepEqual(create, {
+    bin: "codex",
+    args: ["exec", "-s", "read-only", "-C", "/repo", "-o", "/r", "-"],
+    promptVia: "stdin",
+  });
+  // Model and effort are session settings: they go in when it is created.
+  assert.deepEqual(
+    turnCommand({ partner: "codex", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false, model: "gpt-5", effort: "high" }).args,
+    ["exec", "-s", "read-only", "-C", "/repo", "-m", "gpt-5", "-c", 'model_reasoning_effort="high"', "-o", "/r", "-"],
+  );
+  const resume = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true });
   // `codex exec resume` accepts neither -C nor -s, so the sandbox arrives as a
   // config override and the directory through the spawn's cwd.
-  assert.deepEqual(resume, {
-    bin: "codex",
-    args: ["exec", "resume", "S", "-c", 'sandbox_mode="workspace-write"', "-o", "/r", "-"],
-  });
-  const claudeCreate = turnCommand({ partner: "claude", sid: null, replyFile: "/r", root: "/repo", write: false });
+  assert.deepEqual(resume.args, ["exec", "resume", "S", "-c", 'sandbox_mode="workspace-write"', "-o", "/r", "-"]);
+  const claudeCreate = turnCommand({ partner: "claude", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false });
   // stream-json, not json: a `json` run stays silent until it finishes, which
   // would make the idle deadline kill a long working turn.
   assert.deepEqual(claudeCreate.args.slice(0, 4), ["-p", "--output-format", "stream-json", "--verbose"]);
   assert.ok(claudeCreate.args.includes("--strict-mcp-config"));
   assert.equal(claudeCreate.args.at(-1), "plan");
-  const claudeResume = turnCommand({ partner: "claude", sid: "S", replyFile: "/r", root: "/repo", write: true });
+  const claudeResume = turnCommand({ partner: "claude", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true });
   assert.deepEqual(claudeResume.args.slice(0, 3), ["-p", "--resume", "S"]);
   assert.equal(claudeResume.args.at(-1), "acceptEdits");
+});
+
+test("cursor and grok turns carry each CLI's own read-only and resume flags", () => {
+  // `-p` writes by default, so read-only is the mode that has to be asked for.
+  assert.deepEqual(
+    turnCommand({ partner: "cursor", sid: null, resume: false, write: false, model: "claude-opus-4-8", effort: "high" }),
+    {
+      bin: "cursor-agent",
+      args: ["-p", "--trust", "--output-format", "json", "--model", "claude-opus-4-8[effort=high]", "--mode", "plan"],
+      promptVia: "stdin",
+    },
+  );
+  assert.deepEqual(
+    turnCommand({ partner: "cursor", sid: "chat-1", resume: true, write: true }).args,
+    ["-p", "--trust", "--output-format", "json", "--resume", "chat-1"],
+  );
+  // Cursor parameterizes the model itself, so effort has nowhere to go without one.
+  assert.equal(cursorModel(null, "high"), null);
+  assert.equal(cursorModel("m[context=1m]", "high"), "m[context=1m]");
+
+  // Grok takes its prompt from a file and names a NEW session itself.
+  assert.deepEqual(
+    turnCommand({ partner: "grok", sid: "u-1", resume: false, promptFile: "/p", write: false, model: "grok-5", effort: "high" }),
+    {
+      bin: "grok",
+      args: [
+        "--prompt-file", "/p", "--output-format", "json", "--session-id", "u-1",
+        "--permission-mode", "plan", "-m", "grok-5", "--reasoning-effort", "high",
+      ],
+      promptVia: "file",
+    },
+  );
+  assert.deepEqual(
+    turnCommand({ partner: "grok", sid: "u-1", resume: true, promptFile: "/p", write: true }).args,
+    ["--prompt-file", "/p", "--output-format", "json", "--resume", "u-1", "--permission-mode", "acceptEdits"],
+  );
+  assert.match(newSessionId("grok"), /^[0-9a-f-]{36}$/u);
+  for (const partner of ["claude", "codex", "cursor"]) assert.equal(newSessionId(partner), null);
+});
+
+test("every flag the four CLIs are sent is one they accept", (t) => {
+  const surfaces = [
+    ["cursor-agent", ["--help"], turnCommand({ partner: "cursor", sid: "S", resume: true, write: false }).args],
+    ["grok", ["--help"], turnCommand({ partner: "grok", sid: "S", resume: true, promptFile: "/p", write: false }).args],
+  ];
+  for (const [binary, helpArgs, args] of surfaces) {
+    const help = spawnSync(binary, helpArgs, { encoding: "utf8" });
+    if (help.status !== 0) {
+      t.diagnostic(`${binary} is not installed`);
+      continue;
+    }
+    const accepted = new Set(help.stdout.match(/--[a-z][a-z-]+/gu));
+    accepted.add("-p");
+    accepted.add("-m");
+    for (const token of args.filter((part) => part.startsWith("-"))) {
+      assert.ok(accepted.has(token), `${binary} does not accept ${token}`);
+    }
+  }
 });
 
 test("every flag the helper sends is one the installed CLIs accept", (t) => {
@@ -207,7 +336,7 @@ test("every flag the helper sends is one the installed CLIs accept", (t) => {
   const accepted = new Set(help.stdout.match(/--[a-z][a-z-]+/gu));
   accepted.add("-c");
   accepted.add("-o");
-  const { args } = turnCommand({ partner: "codex", sid: "S", replyFile: "/r", root: "/repo", write: false });
+  const { args } = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: false });
   for (const token of args.filter((part) => part.startsWith("-") && part !== "-")) {
     assert.ok(accepted.has(token), `codex exec resume does not accept ${token}`);
   }
@@ -216,7 +345,7 @@ test("every flag the helper sends is one the installed CLIs accept", (t) => {
   if (claudeHelp.status !== 0) return t.skip("claude is not installed");
   const claudeAccepted = new Set(claudeHelp.stdout.match(/--[a-z][a-z-]+/gu));
   claudeAccepted.add("-p");
-  const claudeArgs = turnCommand({ partner: "claude", sid: "S", replyFile: "/r", root: "/repo", write: true }).args;
+  const claudeArgs = turnCommand({ partner: "claude", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true }).args;
   for (const token of claudeArgs.filter((part) => part.startsWith("-"))) {
     assert.ok(claudeAccepted.has(token), `claude does not accept ${token}`);
   }
@@ -269,7 +398,7 @@ test("a deadline that is not a positive number is a usage error", () => {
   assert.equal(minutesToMs("0.5", "idle-min").ms, 30000);
 
   const repo = newRepo("deadline-guard");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const bad = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go"), "--idle-min", "abc");
   assert.equal(bad.receipt.ok, false);
   assert.match(bad.receipt.reason, /--idle-min must be a positive number/u);
@@ -355,7 +484,7 @@ test("an unreadable claude store never reads as an absent session", (t) => {
 
 test("init creates the session, records it, and is idempotent afterwards", () => {
   const repo = newRepo("init-codex");
-  const created = run("ok", "claude", "init", "--repo", repo);
+  const created = run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   assert.equal(created.receipt.ok, true);
   assert.equal(created.receipt.status, "created");
   assert.equal(created.receipt.sid, CODEX_SID);
@@ -373,7 +502,7 @@ test("init creates the session, records it, and is idempotent afterwards", () =>
   );
 
   // The second init spends no partner turn: the recorded session is resumed.
-  const again = run("ok", "claude", "init", "--repo", repo);
+  const again = run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   assert.equal(again.receipt.status, "resumed");
   assert.equal(again.receipt.sid, CODEX_SID);
   assert.deepEqual(invocations(), []);
@@ -381,7 +510,7 @@ test("init creates the session, records it, and is idempotent afterwards", () =>
 
 test("send resumes the exact session, sequences it, and returns the reply", () => {
   const repo = newRepo("send-codex");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("own scripts/"));
   assert.equal(sent.receipt.ok, true);
   assert.equal(sent.receipt.status, "replied");
@@ -402,7 +531,7 @@ test("send resumes the exact session, sequences it, and returns the reply", () =
 
 test("--write is the only thing that opens the sandbox for a turn", () => {
   const repo = newRepo("write-lease");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("implement"), "--write");
   assert.equal(invocations()[0].argv[4], 'sandbox_mode="workspace-write"');
 });
@@ -411,7 +540,7 @@ test("send refuses a body or kind the protocol does not define", () => {
   const repo = newRepo("send-guards");
   const noSession = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("x"));
   assert.match(noSession.receipt.reason, /no pair session/u);
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const badKind = run("ok", "claude", "send", "--repo", repo, "--kind", "gossip", "--body-file", bodyFile("x"));
   assert.match(badKind.receipt.reason, /unknown kind gossip/u);
   const empty = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("   \n"));
@@ -422,7 +551,7 @@ test("send refuses a body or kind the protocol does not define", () => {
 
 test("a clean exit with nothing in it is a failed turn, not a reply", () => {
   const repo = newRepo("empty-reply");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const empty = run("empty", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("q"));
   assert.equal(empty.receipt.ok, false);
   assert.equal(empty.receipt.status, "empty-reply");
@@ -431,7 +560,7 @@ test("a clean exit with nothing in it is a failed turn, not a reply", () => {
 
 test("a nonzero exit fails the turn and keeps the transcript", () => {
   const repo = newRepo("failed-turn");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const failed = run("fail", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("q"));
   assert.equal(failed.receipt.status, "failed");
   assert.match(readFileSync(failed.receipt.transcript, "utf8"), /rate limit/u);
@@ -439,7 +568,7 @@ test("a nonzero exit fails the turn and keeps the transcript", () => {
 
 test("init fails loudly when the CLI reports no resumable session", () => {
   const repo = newRepo("no-sid");
-  const receipt = run("nosid", "claude", "init", "--repo", repo).receipt;
+  const receipt = run("nosid", "claude", "init", "--repo", repo, "--partner", "codex").receipt;
   assert.equal(receipt.ok, false);
   assert.match(receipt.reason, /no session id/u);
   assert.equal(existsSync(join(repo, ".git", "pair", "session.json")), false);
@@ -447,7 +576,7 @@ test("init fails loudly when the CLI reports no resumable session", () => {
 
 test("a hung turn is killed on its idle deadline", () => {
   const repo = newRepo("hang");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const hung = run("hang", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("q"), "--idle-min", "0.05");
   assert.equal(hung.receipt.status, "hang-killed");
   assert.match(hung.receipt.reason, /hang: no output for/u);
@@ -455,7 +584,7 @@ test("a hung turn is killed on its idle deadline", () => {
 
 test("a Codex lead pairs with a headless Claude partner", () => {
   const repo = newRepo("claude-partner");
-  const created = run("ok", "codex", "init", "--repo", repo);
+  const created = run("ok", "codex", "init", "--repo", repo, "--partner", "claude");
   assert.equal(created.receipt.partner, "claude");
   assert.equal(created.receipt.sid, CLAUDE_SID);
   const sent = run("ok", "codex", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("review this"));
@@ -467,6 +596,85 @@ test("a Codex lead pairs with a headless Claude partner", () => {
   const errored = run("error", "codex", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("q"));
   assert.equal(errored.receipt.status, "failed");
   assert.match(errored.receipt.reason, /is_error/u);
+});
+
+test("a cursor partner's chat id comes out of its JSON, and its reply with it", () => {
+  const repo = newRepo("cursor-partner");
+  const created = run("ok", "claude", "init", "--repo", repo, "--partner", "cursor").receipt;
+  assert.equal(created.partner, "cursor");
+  assert.equal(created.sid, CURSOR_SID);
+  const [boot] = invocations();
+  assert.deepEqual(boot.argv, ["-p", "--trust", "--output-format", "json", "--mode", "plan"]);
+  const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("read it"));
+  assert.equal(sent.receipt.status, "replied");
+  assert.match(sent.receipt.reply, /cursor reviewed/u);
+  assert.deepEqual(invocations()[0].argv, ["-p", "--trust", "--output-format", "json", "--resume", CURSOR_SID, "--mode", "plan"]);
+  assert.equal(invocations()[0].stdin, `[agent claude -> cursor kind=review sid=${CURSOR_SID}]\n\nread it\n`);
+});
+
+test("a grok partner is handed the session id it will resume, and reads its prompt from a file", () => {
+  const repo = newRepo("grok-partner");
+  const created = run("ok", "claude", "init", "--repo", repo, "--partner", "grok", "--role", "executor").receipt;
+  assert.equal(created.partner, "grok");
+  assert.match(created.sid, /^[0-9a-f-]{36}$/u);
+  assert.equal(created.role, "executor");
+  const [boot] = invocations();
+  assert.deepEqual(boot.argv.slice(0, 6), ["--prompt-file", boot.argv[1], "--output-format", "json", "--session-id", created.sid]);
+  assert.match(boot.stdin, /You are the executor/u);
+
+  // An executor partner holds the write lease by default; the turn can still
+  // take it back.
+  const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("implement")).receipt;
+  assert.equal(sent.status, "replied");
+  assert.equal(sent.write, true);
+  const resumed = invocations()[0];
+  assert.deepEqual(resumed.argv.slice(2), ["--output-format", "json", "--resume", created.sid, "--permission-mode", "acceptEdits"]);
+  assert.equal(resumed.stdin, `[agent claude -> grok kind=task sid=${created.sid}]\n\nimplement\n`);
+  const reviewed = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("look"), "--read-only").receipt;
+  assert.equal(reviewed.write, false);
+  assert.equal(invocations()[0].argv.at(-1), "plan");
+  assert.equal(run("ok", "claude", "status", "--repo", repo).receipt.role, "executor");
+});
+
+test("init refuses a partner the lead is already running, and an effort the CLI has no door for", () => {
+  const repo = newRepo("same-cli");
+  const refused = run("ok", "claude", "init", "--repo", repo, "--partner", "claude").receipt;
+  assert.match(refused.reason, /refusing to pair claude with itself/u);
+  assert.deepEqual(invocations(), []);
+  const missing = run("ok", "claude", "init", "--repo", repo).receipt;
+  assert.match(missing.reason, /missing --partner/u);
+  const noEffort = run("ok", "codex", "init", "--repo", repo, "--partner", "claude", "--effort", "high").receipt;
+  assert.match(noEffort.reason, /claude has no reasoning-effort control/u);
+  const bareEffort = run("ok", "claude", "init", "--repo", repo, "--partner", "cursor", "--effort", "high").receipt;
+  assert.match(bareEffort.reason, /--effort needs --model/u);
+  const badRole = run("ok", "claude", "init", "--repo", repo, "--partner", "codex", "--role", "boss").receipt;
+  assert.match(badRole.reason, /unknown role boss/u);
+});
+
+test("cursor and grok replies are lifted out of the run's own output", () => {
+  assert.equal(parseCursorSessionId('{"type":"result","chat_id":"c-1","result":"hi"}'), "c-1");
+  assert.equal(parseCursorSessionId("no json here"), null);
+  // Pretty-printed single objects and NDJSON both have to parse.
+  assert.equal(parseCursorSessionId('{\n  "session_id": "c-2"\n}'), "c-2");
+  assert.equal(parseTextReply('{"response":"first"}\n{"response":"last"}'), "last");
+  assert.equal(parseTextReply('{"response":""}'), null);
+  assert.equal(parseSessionId("grok", "anything at all"), null);
+});
+
+test("the cursor and grok session stores answer the same positive-absence rule", () => {
+  const home = join(root, "store-home");
+  mkdirSync(join(home, ".cursor", "chats", "abc123", CURSOR_SID), { recursive: true });
+  assert.equal(sessionKnown("cursor", CURSOR_SID, "/repo", {}, home), true);
+  assert.equal(sessionKnown("cursor", "no-such-chat", "/repo", {}, home), false);
+
+  const grokHome = join(home, ".grok");
+  mkdirSync(join(grokHome, "sessions", "%2Fworkspace"), { recursive: true });
+  writeFileSync(join(grokHome, "sessions", "%2Fworkspace", "session-uuid-1"), "{}\n");
+  assert.equal(sessionKnown("grok", "session-uuid-1", "/repo", { GROK_HOME: grokHome }, home), true);
+  assert.equal(sessionKnown("grok", "other", "/repo", { GROK_HOME: grokHome }, home), false);
+  // A store that is not there at all cannot disprove anything.
+  assert.equal(sessionKnown("grok", "other", "/repo", { GROK_HOME: join(root, "absent") }, home), true);
+  assert.equal(sessionKnown("cursor", "other", "/repo", {}, join(root, "absent-home")), true);
 });
 
 test("the lock is published by a link, so a collision is decided by the kernel", () => {
@@ -612,7 +820,7 @@ test("a marker is released only by the run that created it", () => {
 
 test("one turn at a time: a second send refuses against the in-flight marker", () => {
   const repo = newRepo("in-flight");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const pairDir = join(realpathSync(repo), ".git", "pair");
   const statePath = join(pairDir, "session.json");
   const lockPath = join(pairDir, "in-flight.json");
@@ -676,7 +884,7 @@ test("one turn at a time: a second send refuses against the in-flight marker", (
 
 test("every terminal path clears the in-flight marker", () => {
   const repo = newRepo("in-flight-clear");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const lockPath = join(realpathSync(repo), ".git", "pair", "in-flight.json");
   for (const [mode, status] of [["ok", "replied"], ["empty", "empty-reply"], ["fail", "failed"]]) {
     const receipt = run(mode, "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("q")).receipt;
@@ -691,7 +899,7 @@ test("every terminal path clears the in-flight marker", () => {
 
 test("the marker carries the partner process once it exists", () => {
   const repo = newRepo("marker-child");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   // The fake CLI writes the marker it finds to disk, which is the only way to
   // observe a marker that a completed turn has already cleared.
   const receipt = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go")).receipt;
@@ -705,7 +913,7 @@ test("the marker carries the partner process once it exists", () => {
 
 test("a turn whose marker was replaced reports it instead of clearing someone else's", () => {
   const repo = newRepo("marker-stolen");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const lockPath = join(realpathSync(repo), ".git", "pair", "in-flight.json");
   // STEAL_MARKER makes the fake CLI overwrite the marker mid-turn, standing in
   // for a stale takeover by another run while this one was still working.
@@ -718,7 +926,7 @@ test("a turn whose marker was replaced reports it instead of clearing someone el
 
 test("a reply larger than the pipe buffer still arrives as one receipt", () => {
   const repo = newRepo("big-reply");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const sent = run("big", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("read it all"));
   // execFileSync reads the helper through a pipe, exactly where an unflushed
   // stdout truncates at the buffer size and breaks the caller's JSON.parse.
@@ -728,9 +936,9 @@ test("a reply larger than the pipe buffer still arrives as one receipt", () => {
 
 test("init refuses to replace a pair recorded with the other partner", () => {
   const repo = newRepo("partner-mismatch");
-  run("ok", "claude", "init", "--repo", repo); // records partner: codex
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex"); // records partner: codex
   const before = readFileSync(join(realpathSync(repo), ".git", "pair", "session.json"), "utf8");
-  const refused = run("ok", "codex", "init", "--repo", repo); // resolves partner: claude
+  const refused = run("ok", "codex", "init", "--repo", repo, "--partner", "claude"); // resolves partner: claude
   assert.equal(refused.receipt.ok, false);
   assert.match(refused.receipt.reason, /a codex pair already exists here/u);
   assert.equal(
@@ -742,7 +950,7 @@ test("init refuses to replace a pair recorded with the other partner", () => {
 
 test("end refuses while a turn is in flight", () => {
   const repo = newRepo("end-in-flight");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   const lockPath = join(realpathSync(repo), ".git", "pair", "in-flight.json");
   writeFileSync(lockPath, JSON.stringify({ seq: 1, pid: process.pid, started_at: "now" }));
   const refused = run("ok", "claude", "end", "--repo", repo);
@@ -755,7 +963,7 @@ test("end refuses while a turn is in flight", () => {
 
 test("status reports the session and end trashes it", () => {
   const repo = newRepo("lifecycle");
-  run("ok", "claude", "init", "--repo", repo);
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go"));
   const status = run("ok", "claude", "status", "--repo", repo).receipt;
   assert.equal(status.sid, CODEX_SID);
