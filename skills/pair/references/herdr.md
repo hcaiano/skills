@@ -14,12 +14,17 @@ Require `herdr` with the agent automation commands (`herdr agent start`,
 `herdr agent prompt`), `jq`, and `trash` on `PATH`, plus `HERDR_ENV=1`. If
 any is missing, stop and tell the user to install or start (or update) Herdr.
 
-Before any Herdr mutation, read and execute
-[Caller pane proof](caller-pane-resolution.md). It resolves the
-explicit task repository, proves the unique caller from its own process
-ancestry — falling back to conversation markers when that ancestry matches
-anything other than exactly one pane — and returns `PAIR_PROOF` plus the pinned
-`PAIR_ID`, including `--tab-id`. Stop when that proof does not complete exactly.
+This backend also requires the `herdr-orchestrate` skill installed beside this
+one: it owns the caller pane proof. When it is absent, stop and tell the user
+to install it.
+
+Before any Herdr mutation, read and execute that skill's
+`references/caller-pane-resolution.md`, running its
+`scripts/caller-proof.mjs` helper. It resolves the explicit task repository,
+proves the unique caller from its own process ancestry — falling back to
+conversation markers when that ancestry matches anything other than exactly one
+pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
+`--tab-id`. Stop when that proof does not complete exactly.
 
 ## Guardrails
 
@@ -41,11 +46,11 @@ anything other than exactly one pane — and returns `PAIR_PROOF` plus the pinne
 ## Start or resume
 
 1. Run
-   `node "$PAIR_SCRIPT" discover "${PAIR_ID[@]}"`.
+   `node "$PAIR_SCRIPT" discover "${CALLER_ID[@]}"`.
    If no opposite agent exists, run
-   `node "$PAIR_SCRIPT" spawn "${PAIR_ID[@]}"` once.
+   `node "$PAIR_SCRIPT" spawn "${CALLER_ID[@]}"` once.
    Stop on multiple candidates or spawn failure.
-2. Run `node "$PAIR_SCRIPT" init "${PAIR_ID[@]}"`.
+2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}"`.
    It creates a new tab-scoped session or
    idempotently resumes the exact live session.
    Record its exact `sid` as `PAIR_SID`; every send is
@@ -63,7 +68,7 @@ Write only the body to a temp file, then invoke:
 ```bash
 BODY=$(mktemp); trap 'trash "$BODY"' EXIT
 # Write the partner message body to "$BODY".
-node "$PAIR_SCRIPT" send "${PAIR_ID[@]}" --sid "$PAIR_SID" \
+node "$PAIR_SCRIPT" send "${CALLER_ID[@]}" --sid "$PAIR_SID" \
   --kind "$KIND" --body-file "$BODY"
 ```
 
@@ -111,7 +116,7 @@ If inspection proves a pending message never reached the partner, clear only
 that delivery with explicit user approval:
 
 ```bash
-node "$PAIR_SCRIPT" reconcile "${PAIR_ID[@]}" --sid "<sid>" \
+node "$PAIR_SCRIPT" reconcile "${CALLER_ID[@]}" --sid "<sid>" \
   --clear-pending true
 ```
 
@@ -132,20 +137,20 @@ and verified session.
 
 ## Reset and end
 
-Use `node "$PAIR_SCRIPT" reset "${PAIR_ID[@]}"` only to clear work-cycle
+Use `node "$PAIR_SCRIPT" reset "${CALLER_ID[@]}"` only to clear work-cycle
 counters/statuses in a verified live pair; it preserves identity and delivery
 history.
 
 End and trash the session only when the user explicitly asks to end the pair:
 
 ```bash
-node "$PAIR_SCRIPT" end "${PAIR_ID[@]}" --sid "<sid>"
+node "$PAIR_SCRIPT" end "${CALLER_ID[@]}" --sid "<sid>"
 ```
 
 The script verifies sid, workspace, tab, and participants itself, and
 refuses while delivery is pending (wait for the ACK or use the inspected
 clear path). If old pane IDs or a missing partner prevent resume, explain
-the mismatch and use `end "${PAIR_ID[@]}" --sid "<sid>" --stale true` only
+the mismatch and use `end "${CALLER_ID[@]}" --sid "<sid>" --stale true` only
 with explicit user approval — a stale end may discard pending state only
 when the partner pane is gone, its recorded binding is stale, or its
 foreground agent process/repository no longer matches. Closing the Herdr tab
