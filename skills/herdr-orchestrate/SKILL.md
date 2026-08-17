@@ -26,15 +26,14 @@ syntax.
 - `herdr` with the agent automation commands (`herdr agent start`,
   `herdr agent prompt`), `gh`, `jq`, and `trash` on `PATH`, plus
   `HERDR_ENV=1`. If any is missing, stop and say so.
-- Set `PAIR_SCRIPT` to the absolute
-  `<pair skill dir>/scripts/herdr-pair.mjs` path. Before any GitHub,
-  Project, branch, worktree, tab, pane, agent, or message mutation, read and
-  execute
-  `<pair skill dir>/references/caller-pane-resolution.md`.
-  That proof resolves the explicit task repository and returns `PAIR_PROOF`
-  plus `PAIR_ID`. Pin `PAIR_PROOF.pane` as the report pane and
-  `PAIR_PROOF.workspace_id` plus `PAIR_PROOF.tab_id` as this run's exact Herdr
-  origin. Stop when the proof does not complete exactly.
+- Set `CALLER_PROOF_SCRIPT` to this skill's absolute
+  `scripts/caller-proof.mjs` path. Before any GitHub, Project, branch,
+  worktree, tab, pane, agent, or message mutation, read and execute
+  [Caller pane proof](references/caller-pane-resolution.md).
+  That proof resolves the explicit task repository and returns `CALLER_PROOF`
+  plus `CALLER_ID`. Pin `CALLER_PROOF.pane` as the report pane and
+  `CALLER_PROOF.workspace_id` plus `CALLER_PROOF.tab_id` as this run's exact
+  Herdr origin. Stop when the proof does not complete exactly.
 - A unit milestone carries the pinned `workspace_id`; use it to resume the
   run. User navigation never changes the pin and existing runs never resolve
   focus again. A continuation without the pin stops.

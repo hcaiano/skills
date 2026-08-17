@@ -118,6 +118,16 @@ test("a complete pin inside Herdr dispatches to the Herdr backend", () => {
   assert.doesNotMatch(failed.stdout, /"transport": "local"/u);
 });
 
+test("the pin carries whatever agent kind the caller proved, not a fixed roster", () => {
+  const grokPin = PIN.map((value) => (value === "claude" ? "grok" : value));
+  const failed = runFail({ HERDR_ENV: "1" }, "start", ...grokPin, "--label", "l", "--", "true");
+  // It reached the Herdr backend rather than being rejected as an unknown
+  // kind, and it never demoted itself to a local run.
+  assert.match(failed.stderr, /herdr transport failed/u);
+  assert.doesNotMatch(failed.stderr, /unsupported caller agent/u);
+  assert.doesNotMatch(failed.stdout, /"transport": "local"/u);
+});
+
 test("target-pane reuse belongs to the Herdr backend alone", () => {
   const failed = runFail({}, "start", "--label", "l", "--target-pane", "w1:p9", "--", "true");
   assert.match(failed.stderr, /--target-pane needs the herdr transport/u);

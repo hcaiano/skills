@@ -12,16 +12,16 @@ tail that file when needed.
 ## Select and launch
 
 Set `RUN_TRANSPORT` to this skill's `scripts/run-transport.mjs`. When
-`HERDR_ENV=1`, locate the `pair` skill installed beside this one, then read
-and execute its `references/caller-pane-resolution.md` proof for the task
-repository. Build the `PAIR_ID` argument array exactly as that reference
+`HERDR_ENV=1`, locate the `herdr-orchestrate` skill installed beside this one,
+then read and execute its `references/caller-pane-resolution.md` proof for the
+task repository. Build the `CALLER_ID` argument array exactly as that reference
 derives it from the proof JSON. The proof's pane, workspace, tab, terminal,
 agent, and repository form one immutable pin, and its tab is the work unit.
 
 Start each command without moving the user's focus:
 
 ```bash
-RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
+RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
   --label "review-it · <simplify|standards review|spec review|combined review>" \
   -- <command> <args...> --receipt "<wrapper-result.json>")
 RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
@@ -34,7 +34,7 @@ it sends anything into it. `start` and `wait` are the whole public surface;
 `--target-pane` is what routes the launch to pane reuse:
 
 ```bash
-RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
+RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
   --label "review-it · <axis>" \
   --target-pane "<pane_id>" \
   --prior-receipt "<prior completion receipt>" \
@@ -45,7 +45,7 @@ RUN=$(node "$RUN_TRANSPORT" start "${PAIR_ID[@]}" \
 Those three flags belong to the Herdr backend alone; the local backend has no
 panes and rejects them.
 
-Outside Herdr, omit `PAIR_ID`; the helper selects `local`. With `HERDR_ENV=1`,
+Outside Herdr, omit `CALLER_ID`; the helper selects `local`. With `HERDR_ENV=1`,
 the caller proof must be complete for `herdr` selection. An incomplete or
 drifted Herdr pin stops the gate instead of silently running invisibly.
 Retain the run file and its `transport`, `pane_id`, `pid`, `token`, `marker`,

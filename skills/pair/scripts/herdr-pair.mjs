@@ -65,22 +65,6 @@ function paneList(workspaceId) {
   return result("pane", "list", "--workspace", workspaceId).panes;
 }
 
-function workspaceGet(workspaceId) {
-  const workspace = result("workspace", "get", workspaceId).workspace;
-  if (!workspace || workspace.workspace_id !== workspaceId) {
-    fail(`herdr did not return the exact requested workspace ${workspaceId}`);
-  }
-  return workspace;
-}
-
-function sessionSnapshot() {
-  const snapshot = result("api", "snapshot").snapshot;
-  if (!snapshot || !Array.isArray(snapshot.agents)) {
-    fail("herdr api snapshot did not return .result.snapshot.agents");
-  }
-  return snapshot;
-}
-
 function processInfo(paneId) {
   const info = result("pane", "process-info", "--pane", paneId).process_info;
   if (
@@ -1395,253 +1379,6 @@ async function reconcileSession(args) {
   process.stdout.write(`${JSON.stringify({ reconciled, cleared, session }, null, 2)}\n`);
 }
 
-// The caller's own process ancestry is the one signal nothing can forge or
-// stale out: it comes from the live process table, not from anything Herdr
-// injected at start. `HERDR_PANE_ID` and the `agent_session` binding both
-// derive from the same injected variable — the integration hook reports the
-// session *to* `$HERDR_PANE_ID` — so after a pane move they agree on the wrong
-// pane together. A parent process cannot be wrong about who its child is.
-function ancestorPids() {
-  const chain = new Set();
-  let pid = process.pid;
-  for (let depth = 0; depth < 16 && pid > 1; depth += 1) {
-    chain.add(String(pid));
-    let parent;
-    try {
-      parent = execFileSync("ps", ["-o", "ppid=", "-p", String(pid)], {
-        encoding: "utf8",
-      }).trim();
-    } catch {
-      break;
-    }
-    if (!/^\d+$/u.test(parent)) break;
-    pid = Number(parent);
-  }
-  return chain;
-}
-
-// Panes share ancestors further up (every pane descends from the Herdr server),
-// so a chain that matches more than one pane proves nothing and must fall back.
-function identifyByAncestry(snapshot, agent, repoRoot) {
-  const chain = ancestorPids();
-  const matches = [];
-  for (const pane of snapshot.agents) {
-    let info;
-    try {
-      info = processInfo(pane.pane_id);
-    } catch {
-      // A pane we cannot read is not a pane we can rule out. Treating it as a
-      // non-match would turn "one match plus one unknown" into false
-      // uniqueness and authorize the remaining pane, so an unreadable
-      // candidate abandons this path entirely.
-      return null;
-    }
-    // Same for a pane whose processes report no pid: nothing here can say
-    // whether we descend from it.
-    if (info.foreground_processes.some((entry) => entry.pid === undefined)) return null;
-    if (info.foreground_processes.some((entry) => chain.has(String(entry.pid)))) {
-      matches.push(pane);
-    }
-  }
-  if (matches.length !== 1) return null;
-  const pane = matches[0];
-  if (pane.agent !== agent) {
-    fail(
-      `the caller's process runs in a ${pane.agent} pane; --as ${agent} does not match`,
-    );
-  }
-  if (pane.cwd !== repoRoot && pane.foreground_cwd !== repoRoot) {
-    fail(
-      `caller pane ${pane.pane_id} is rooted at ${pane.cwd}, not the declared --repo-root ${repoRoot}`,
-    );
-  }
-  return pane;
-}
-
-function conversationMarkers(path) {
-  if (!path) {
-    fail(
-      "id could not resolve the caller from its own process ancestry (it matched zero or several panes) and therefore requires --conversation-markers-file",
-    );
-  }
-  let markers;
-  try {
-    markers = JSON.parse(readFileSync(path, "utf8"));
-  } catch (error) {
-    fail(`cannot read conversation markers from ${path}: ${error.message}`);
-  }
-  const values = [
-    markers?.newest_user_request,
-    markers?.recent_caller_output,
-  ];
-  if (
-    typeof values[0] !== "string" ||
-    values[0].trim().length === 0 ||
-    typeof values[1] !== "string" ||
-    values[1].trim().length < 12 ||
-    values[0].trim() === values[1].trim()
-  ) {
-    fail(
-      "conversation markers require a nonempty newest_user_request and a distinct recent_caller_output of at least 12 characters",
-    );
-  }
-  return values.map((value) => value.trim());
-}
-
-// Resolve the caller from its own process ancestry, falling back to exact
-// conversation evidence, and confirm it with foreground-process proof. Session
-// bindings are diagnostic metadata only.
-function identify(options) {
-  if (process.env.HERDR_ENV !== "1") fail("id requires HERDR_ENV=1");
-  const agent = options.as;
-  if (!agentKinds.includes(agent ?? "")) {
-    fail(`id requires --as ${kindList} (the agent you are)`);
-  }
-  const repoRoot = options["repo-root"];
-  if (!repoRoot || !repoRoot.startsWith("/")) {
-    fail("id requires an absolute --repo-root resolved with git -C <task-repository>");
-  }
-  const snapshot = sessionSnapshot();
-
-  const byAncestry = identifyByAncestry(snapshot, agent, repoRoot);
-  if (byAncestry) {
-    requireForegroundProcess(byAncestry.pane_id, agent, repoRoot);
-    reportIdentity(snapshot, byAncestry, agent, repoRoot, options, "process-ancestry");
-    return;
-  }
-
-  const markers = conversationMarkers(options["conversation-markers-file"]);
-  const repositoryMatches = snapshot.agents.filter(
-    (pane) =>
-      pane.agent === agent &&
-      (pane.cwd === repoRoot || pane.foreground_cwd === repoRoot),
-  );
-  if (repositoryMatches.length === 0) {
-    fail(`snapshot has no ${agent} agent rooted at ${repoRoot}`);
-  }
-
-  const candidates = [];
-  for (const pane of repositoryMatches) {
-    let info;
-    try {
-      info = processInfo(pane.pane_id);
-    } catch (error) {
-      fail(`cannot prove foreground process for candidate ${pane.pane_id}: ${error.message}`);
-    }
-    if (matchingForegroundProcess(info, agent, repoRoot)) candidates.push(pane);
-  }
-  if (candidates.length === 0) {
-    fail(`no snapshot candidate has a live foreground ${agent} process at ${repoRoot}`);
-  }
-
-  const transcriptMatches = [];
-  for (const pane of candidates) {
-    let transcript;
-    try {
-      transcript = herdr(
-        "agent",
-        "read",
-        pane.pane_id,
-        "--source",
-        "recent-unwrapped",
-        "--lines",
-        "200",
-      );
-    } catch (error) {
-      // A pane mid-tool-call refuses scrollback capture (`agent_not_idle`),
-      // and the caller's own pane is always working while it runs this proof.
-      // The visible screen is still an exact live read of that one pane, so it
-      // proves the same binding over a shorter window.
-      if (!/agent_not_idle/.test(error.message)) {
-        fail(`cannot read candidate transcript ${pane.pane_id}: ${error.message}`);
-      }
-      try {
-        transcript = herdr(
-          "agent",
-          "read",
-          pane.pane_id,
-          "--source",
-          "visible",
-          "--lines",
-          "200",
-        );
-      } catch (visibleError) {
-        fail(`cannot read candidate transcript ${pane.pane_id}: ${visibleError.message}`);
-      }
-    }
-    if (!transcript.trim()) {
-      fail(`candidate transcript ${pane.pane_id} is empty`);
-    }
-    if (markers.every((marker) => transcript.includes(marker))) {
-      transcriptMatches.push(pane);
-    }
-  }
-  if (transcriptMatches.length !== 1) {
-    fail(
-      `current conversation matched ${transcriptMatches.length} candidate transcripts; require exactly one`,
-    );
-  }
-
-  const pane = transcriptMatches[0];
-  requireForegroundProcess(pane.pane_id, agent, repoRoot);
-  reportIdentity(snapshot, pane, agent, repoRoot, options, "conversation-markers");
-}
-
-// Re-read the resolved pane, refuse it if it drifted mid-proof, and emit the
-// pin. `proof` names which of the two resolutions selected it.
-function reportIdentity(snapshot, pane, agent, repoRoot, options, proof) {
-  const livePane = paneGet(pane.pane_id);
-  if (
-    livePane.agent !== agent ||
-    livePane.workspace_id !== pane.workspace_id ||
-    livePane.tab_id !== pane.tab_id ||
-    livePane.terminal_id !== pane.terminal_id
-  ) {
-    fail(`caller pane ${pane.pane_id} changed during identity proof`);
-  }
-  if (!livePane.terminal_id) {
-    fail(`caller pane ${pane.pane_id} has no terminal_id; cannot pin identity`);
-  }
-  const workspace = workspaceGet(pane.workspace_id);
-
-  const sessionId = pane.agent_session?.value ?? null;
-  let sessionBindingWarning = null;
-  if (sessionId) {
-    const owners = snapshot.agents.filter(
-      (candidate) => candidate.agent_session?.value === sessionId,
-    );
-    if (owners.length !== 1) {
-      sessionBindingWarning =
-        `agent_session ${sessionId} appears on ${owners.length} panes and was ignored`;
-    }
-  }
-
-  const cli = pinnedCliArguments(livePane, repoRoot);
-  if (options.format === "shell") {
-    process.stdout.write(`${cli.map(shellQuote).join(" ")}\n`);
-    return;
-  }
-  process.stdout.write(
-    `${JSON.stringify(
-      {
-        pane: livePane.pane_id,
-        workspace_id: livePane.workspace_id,
-        workspace_label: workspace.label ?? null,
-        tab_id: livePane.tab_id,
-        terminal_id: livePane.terminal_id,
-        as: agent,
-        repo_root: repoRoot,
-        proof,
-        agent_session: sessionId,
-        session_binding_warning: sessionBindingWarning,
-        args: cli,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-}
-
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   const options = parseOptions(args);
@@ -1654,9 +1391,7 @@ async function main() {
     repoRoot: options["repo-root"] ?? null,
   };
 
-  if (command === "id") {
-    identify(options);
-  } else if (command === "discover") {
+  if (command === "discover") {
     process.stdout.write(`${JSON.stringify(discover(), null, 2)}\n`);
   } else if (command === "spawn") {
     await spawn(args);
@@ -1681,7 +1416,7 @@ async function main() {
     await endSession(args);
   } else {
     fail(
-      `usage: herdr-pair.mjs id --as ${kindList} --repo-root PATH --conversation-markers-file FILE, or COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--partner ${kindList}] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
+      `usage: herdr-pair.mjs COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--partner ${kindList}] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
     );
   }
 }

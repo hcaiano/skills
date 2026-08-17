@@ -119,7 +119,12 @@ const foregroundProcesses = (paneId, role, allowTransient = false) => {
 
 const validateCaller = ({ pane, workspace, tabId, terminalId, agent, repoRoot }) => {
   if (process.env.HERDR_ENV !== "1") fail("visible gate runs require HERDR_ENV=1");
-  if (!["claude", "codex"].includes(agent)) fail(`unsupported caller agent: ${agent}`);
+  // Any kind herdr reports in `pane.agent` may host this gate. The pin below
+  // proves the pane really is that kind, so a fixed roster here would only
+  // lock out harnesses the proof already validates.
+  if (typeof agent !== "string" || agent.trim().length === 0) {
+    fail("--as must name the caller's agent kind as herdr reports it");
+  }
   if (!isAbsolute(repoRoot)) fail("--repo-root must be absolute");
   const root = run("git", ["-C", repoRoot, "rev-parse", "--show-toplevel"]);
   if (

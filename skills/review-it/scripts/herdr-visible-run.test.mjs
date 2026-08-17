@@ -32,7 +32,8 @@ if (key === "pane get") {
   result({ pane: {
     pane_id: id, workspace_id: process.env.BAD_WORKSPACE ? "w2" : "w1",
     tab_id: "w1:t1", terminal_id: id === "w1:p1" ? "term-1" : "term-2",
-    agent: id === "w1:p1" ? "codex" : null, cwd: process.env.HERDR_TEST_REPO
+    agent: id === "w1:p1" ? (process.env.CALLER_AGENT || "codex") : null,
+    cwd: process.env.HERDR_TEST_REPO
   } });
 } else if (key === "pane process-info") {
   const id = args.at(-1);
@@ -53,7 +54,7 @@ if (key === "pane get") {
   const launchVisible =
     launched && (!process.env.DELAY_LAUNCH || targetProbes >= 8);
   const command = id === "w1:p1"
-    ? ["codex"]
+    ? [process.env.CALLER_AGENT || "codex"]
     : process.env.BUSY_TARGET
       ? ["node", "busy.js"]
       : launchVisible
@@ -146,6 +147,36 @@ test("start validates the pin and launches in a visible sibling pane", () => {
   assert.ok(
     !seen.find((args) => args[0] === "pane" && args[1] === "run").join(" ").includes(longPrompt),
     "long command argv must travel through a private command file",
+  );
+});
+
+test("any caller agent kind herdr reports can host a visible run", () => {
+  writeFileSync(calls, "");
+  const grokPin = pin.map((value) => (value === "codex" ? "grok" : value));
+  const output = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [script, "start", ...grokPin, "--label", "review-it · grok review", "--", "printf", "ok"],
+      { encoding: "utf8", env: { ...baseEnv, CALLER_AGENT: "grok" } },
+    ),
+  );
+  assert.equal(output.started, true);
+  assert.equal(output.pane_id, "w1:p2");
+
+  // A kind that does not match the live pane is still a hard stop.
+  writeFileSync(calls, "");
+  assert.throws(
+    () =>
+      execFileSync(
+        process.execPath,
+        [script, "start", ...pin, "--label", "review", "--", "printf", "ok"],
+        {
+          encoding: "utf8",
+          env: { ...baseEnv, CALLER_AGENT: "grok" },
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      ),
+    /Command failed/u,
   );
 });
 

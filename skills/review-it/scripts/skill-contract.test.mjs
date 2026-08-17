@@ -175,7 +175,7 @@ test("external gate commands select and record an honest transport", () => {
   assert.match(processTransport, /scripts\/run-transport\.mjs/u);
   assert.match(
     processTransport,
-    /Outside Herdr, omit `PAIR_ID`; the helper selects `local`\. With `HERDR_ENV=1`,\s+the caller proof must be complete for `herdr` selection/u,
+    /Outside Herdr, omit `CALLER_ID`; the helper selects `local`\. With `HERDR_ENV=1`,\s+the caller proof must be complete for `herdr` selection/u,
   );
   assert.match(
     processTransport,
@@ -261,7 +261,23 @@ test("the extracted gate stands on its own", () => {
     reviewIt,
     /pool state unread \(usage-state\.mjs not installed\)[\s\S]*leaves\s+the semantic grade, the reviewer count, and simplify exactly as graded/u,
   );
-  // The two environments resolve a missing `pair` differently, because
+  // The caller-pane proof is herdr-orchestrate's, not pair's: a gate run must
+  // never appear to need a pairing session, and any agent kind Herdr hosts
+  // must be able to run it.
+  assert.match(
+    reviewIt,
+    /visible backend needs\s+`herdr-orchestrate` installed beside this skill for its caller-pane proof/u,
+  );
+  assert.match(
+    reviewIt,
+    /tell the user to install `herdr-orchestrate`/u,
+  );
+  assert.match(
+    processTransport,
+    /locate the `herdr-orchestrate` skill installed beside this one,\s+then read and execute its `references\/caller-pane-resolution\.md` proof/u,
+  );
+  assert.doesNotMatch(processTransport, /`pair`/u);
+  // The two environments resolve a missing proof differently, because
   // run-transport.mjs hard-stops an incomplete pin under HERDR_ENV=1 rather
   // than demoting a hosted run to an invisible one. A single "falls back to
   // local" rule would promise a run that cannot start.
