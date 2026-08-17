@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The headless backend's transport: one persistent, resumable session of the
-// chosen partner CLI, driven half-duplex — the lead sends, and the partner's reply is
-// that run's output. There is no pane, so there is no composer proof and no
+// chosen partner CLI, driven half-duplex — the lead sends, and the partner's
+// reply is that run's output. There is no pane, so there is no composer proof and no
 // delivery receipt beyond the run receipt: a turn either produced a reply or it
 // did not, and the transcript is the evidence either way.
 //
@@ -206,7 +206,7 @@ const readMarker = (lockPath) => {
 };
 
 // The child CLI is the real work, so it decides: a helper killed mid-turn
-// leaves a live codex or claude still resuming the session, and a second send
+// leaves a live partner CLI still resuming the session, and a second send
 // into that session is the corruption the lock exists to prevent.
 export const markerAlive = (marker, alive = processAlive) => {
   if (!marker) return false;
