@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 // The headless backend's transport: one persistent, resumable session of the
-// opposite CLI, driven half-duplex — the lead sends, and the partner's reply is
+// chosen partner CLI, driven half-duplex — the lead sends, and the partner's reply is
 // that run's output. There is no pane, so there is no composer proof and no
 // delivery receipt beyond the run receipt: a turn either produced a reply or it
 // did not, and the transcript is the evidence either way.
 //
-//   node pair-headless.mjs init   --repo <root> [--partner codex|claude]
-//   node pair-headless.mjs send   --repo <root> --kind <kind> --body-file <path> [--write]
+//   node pair-headless.mjs init   --repo <root> --partner claude|codex|cursor|grok
+//                                 [--model <name>] [--effort <level>] [--role peer|executor]
+//   node pair-headless.mjs send   --repo <root> --kind <kind> --body-file <path> [--write|--read-only]
 //   node pair-headless.mjs status --repo <root>
 //   node pair-headless.mjs clear  --repo <root>
 //   node pair-headless.mjs end    --repo <root>
@@ -25,6 +26,7 @@
 // Exit 0: JSON receipt {ok: true, ...}. Exit 1: {ok: false, reason, ...}.
 // Exit 2: usage error.
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -91,31 +93,51 @@ const flag = (name) => argv.includes(`--${name}`);
 
 // --- identity ---------------------------------------------------------------
 
-const OPPOSITE = { claude: "codex", codex: "claude" };
+export const AGENT_KINDS = ["claude", "codex", "cursor", "grok"];
+const kindList = AGENT_KINDS.join("|");
 
-// Which CLI is running this helper. The partner is the other one: pairing a
-// model with itself through its own CLI produces an echo, not a peer.
+// Which CLI is running this helper. Detection is best-effort — it only has the
+// environment each harness happens to export into its own shells — so it never
+// decides the partner on its own: it exists to catch a same-CLI pairing, which
+// produces an echo rather than a peer.
 export const detectSelf = (env = process.env) => {
   if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
   if (env.CODEX_SANDBOX || env.CODEX_THREAD_ID || env.CODEX_HOME) return "codex";
+  if (env.CURSOR_AGENT || env.CURSOR_AGENT_CHAT_ID) return "cursor";
+  if (env.GROK_SESSION_ID || env.GROK_AGENT) return "grok";
   return null;
 };
 
+// The partner is always chosen, never derived: with four CLIs there is no
+// "opposite" to fall back on. The only rule is that it differs from the lead.
 export const resolvePartner = (requested, env = process.env) => {
   const self = detectSelf(env);
-  if (requested) {
-    if (!OPPOSITE[requested]) {
-      return { error: `unknown partner ${requested} — use codex or claude` };
-    }
-    if (self && requested === self) {
-      return { error: `refusing to pair ${self} with itself — the partner must be ${OPPOSITE[self]}` };
-    }
-    return { partner: requested, self: self ?? OPPOSITE[requested] };
+  if (!requested) {
+    return { error: `missing --partner — choose one of ${kindList}, other than the CLI you are` };
   }
-  if (!self) {
-    return { error: "cannot tell which CLI is running this pair — pass --partner codex|claude" };
+  if (!AGENT_KINDS.includes(requested)) {
+    return { error: `unknown partner ${requested} — use one of ${kindList}` };
   }
-  return { partner: OPPOSITE[self], self };
+  if (self && requested === self) {
+    return {
+      error: `refusing to pair ${self} with itself — the partner must be a different CLI (${AGENT_KINDS.filter((kind) => kind !== self).join(", ")})`,
+    };
+  }
+  return { partner: requested, self: self ?? "lead" };
+};
+
+export const ROLES = ["peer", "executor"];
+
+// The role sets the default lease distribution, and nothing else: an executor
+// partner holds the write lease unless a turn takes it back, a peer holds it
+// only for the turns that hand it over. Every turn can still say otherwise.
+export const resolveWrite = (role, { write, readOnly }) => {
+  if (write && readOnly) {
+    return { error: "--write and --read-only contradict each other on one turn" };
+  }
+  if (write) return { write: true };
+  if (readOnly) return { write: false };
+  return { write: role === "executor" };
 };
 
 // --- repository state -------------------------------------------------------
@@ -263,30 +285,42 @@ export const releaseMarker = (lockPath, marker) => {
 // answers false for a path it was not allowed to look at, which turns an EACCES
 // into a confident "the session is gone" — the exact false negative this
 // function is built to avoid.
+// Codex, Grok, and Cursor all keep one directory tree of sessions named after
+// their own ids, so one walker serves all three: a name that contains the sid
+// is a hit whether it is a file (Codex rollouts, Grok session files) or a
+// directory (a Cursor chat).
+const storeHolds = (store, sid) => {
+  let unreadable = false;
+  const walk = (directory, depth) => {
+    if (depth > 6) {
+      unreadable = true; // the store is deeper than the probe looks
+      return false;
+    }
+    let entries;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      unreadable = true;
+      return false;
+    }
+    for (const entry of entries) {
+      if (entry.name.includes(sid)) return true;
+      if (entry.isDirectory() && walk(join(directory, entry.name), depth + 1)) return true;
+    }
+    return false;
+  };
+  return walk(store, 0) || unreadable;
+};
+
 export const sessionKnown = (partner, sid, root, env = process.env, home = homedir()) => {
   if (partner === "codex") {
-    const sessions = join(env.CODEX_HOME || join(home, ".codex"), "sessions");
-    let unreadable = false;
-    const walk = (directory, depth) => {
-      if (depth > 6) {
-        unreadable = true; // the store is deeper than the probe looks
-        return false;
-      }
-      let entries;
-      try {
-        entries = readdirSync(directory, { withFileTypes: true });
-      } catch {
-        unreadable = true;
-        return false;
-      }
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          if (walk(join(directory, entry.name), depth + 1)) return true;
-        } else if (entry.name.includes(sid)) return true;
-      }
-      return false;
-    };
-    return walk(sessions, 0) || unreadable;
+    return storeHolds(join(env.CODEX_HOME || join(home, ".codex"), "sessions"), sid);
+  }
+  if (partner === "grok") {
+    return storeHolds(join(env.GROK_HOME || join(home, ".grok"), "sessions"), sid);
+  }
+  if (partner === "cursor") {
+    return storeHolds(join(home, ".cursor", "chats"), sid);
   }
   const projects = join(home, ".claude", "projects");
   const project = join(projects, root.replace(/[^A-Za-z0-9]/gu, "-"));
@@ -313,30 +347,160 @@ export const sessionKnown = (partner, sid, root, env = process.env, home = homed
 
 // --- partner turns ----------------------------------------------------------
 
+// Reasoning effort reaches each CLI through a different door, and one of them
+// has no door at all: Grok takes a flag, Codex a config override, Cursor a
+// bracket suffix inside the model name, and Claude Code exposes none.
+export const EFFORT_SUPPORT = { claude: false, codex: true, cursor: true, grok: true };
+
+// Cursor parameterizes the model itself, so an effort with no model has nowhere
+// to go and the caller has to name one.
+export const cursorModel = (model, effort) => {
+  if (!effort) return model;
+  if (!model) return null;
+  return /\[/u.test(model) ? model : `${model}[effort=${effort}]`;
+};
+
 // `codex exec resume` accepts neither -C nor -s, so the working directory
 // arrives through the spawn and the sandbox through a config override — the
-// same split ask-peer measured.
-export const turnCommand = ({ partner, sid, replyFile, root, write }) => {
-  const sandbox = write ? "workspace-write" : "read-only";
+// same split ask-peer measured. Model and effort are settings of the session,
+// so they are passed when it is created and never on a resume.
+export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, write, model, effort }) => {
   if (partner === "codex") {
-    return sid
-      ? { bin: "codex", args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, "-o", replyFile, "-"] }
-      : { bin: "codex", args: ["exec", "-s", sandbox, "-C", root, "-o", replyFile, "-"] };
+    const sandbox = write ? "workspace-write" : "read-only";
+    if (resume) {
+      return { bin: "codex", args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, "-o", replyFile, "-"], promptVia: "stdin" };
+    }
+    return {
+      bin: "codex",
+      args: [
+        "exec",
+        "-s",
+        sandbox,
+        "-C",
+        root,
+        ...(model ? ["-m", model] : []),
+        ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+        "-o",
+        replyFile,
+        "-",
+      ],
+      promptVia: "stdin",
+    };
   }
-  // stream-json, not json: a `json` run emits nothing until it finishes, so a
-  // long silent turn would trip the idle deadline and be killed mid-work. The
-  // streamed events are the liveness signal, and `--verbose` is what -p
-  // requires to emit them.
-  const base = ["-p", "--output-format", "stream-json", "--verbose", "--strict-mcp-config", "--no-chrome", "--permission-mode", write ? "acceptEdits" : "plan"];
-  return { bin: "claude", args: sid ? ["-p", "--resume", sid, ...base.slice(1)] : base };
+  if (partner === "claude") {
+    // stream-json, not json: a `json` run emits nothing until it finishes, so a
+    // long silent turn would trip the idle deadline and be killed mid-work. The
+    // streamed events are the liveness signal, and `--verbose` is what -p
+    // requires to emit them.
+    const tail = [
+      "--output-format",
+      "stream-json",
+      "--verbose",
+      "--strict-mcp-config",
+      "--no-chrome",
+      ...(model && !resume ? ["--model", model] : []),
+      "--permission-mode",
+      write ? "acceptEdits" : "plan",
+    ];
+    return { bin: "claude", args: ["-p", ...(resume ? ["--resume", sid] : []), ...tail], promptVia: "stdin" };
+  }
+  if (partner === "cursor") {
+    // `-p` is write-capable by default, so read-only is the mode that has to be
+    // asked for; the chat id only exists after the first run, so it is parsed
+    // out of the JSON that run prints.
+    const named = cursorModel(model, effort);
+    return {
+      bin: "cursor-agent",
+      args: [
+        "-p",
+        "--output-format",
+        "json",
+        ...(resume ? ["--resume", sid] : []),
+        ...(named && !resume ? ["--model", named] : []),
+        ...(write ? [] : ["--mode", "plan"]),
+      ],
+      promptVia: "stdin",
+    };
+  }
+  // Grok takes the prompt from a file rather than stdin, and accepts the
+  // session id for a NEW conversation — so the pair names the session itself
+  // and never has to find it in the output.
+  return {
+    bin: "grok",
+    args: [
+      "--prompt-file",
+      promptFile,
+      "--output-format",
+      "json",
+      ...(resume ? ["--resume", sid] : ["--session-id", sid]),
+      "--permission-mode",
+      write ? "acceptEdits" : "plan",
+      ...(model && !resume ? ["-m", model] : []),
+      ...(effort && !resume ? ["--reasoning-effort", effort] : []),
+    ],
+    promptVia: "file",
+  };
 };
+
+// Grok is the one partner whose session id exists before its first run.
+export const newSessionId = (partner) => (partner === "grok" ? randomUUID() : null);
 
 export const parseSessionId = (partner, transcript) => {
   if (partner === "codex") {
     const match = transcript.match(/session id:\s*(\S+)/iu);
     return match ? match[1] : null;
   }
+  if (partner === "cursor") return parseCursorSessionId(transcript);
+  if (partner === "grok") return null; // pre-generated, never parsed
   return parseClaudeResult(transcript)?.session_id ?? null;
+};
+
+// Every JSON object the run printed, whether one per line or one for the whole
+// run. A tolerant scan, because the only fixed point across these CLIs is that
+// the answer arrives as JSON somewhere in the output.
+export const parseJsonObjects = (transcript) => {
+  const objects = [];
+  const push = (text) => {
+    const start = text.indexOf("{");
+    if (start === -1) return;
+    try {
+      const parsed = JSON.parse(text.slice(start));
+      if (parsed && typeof parsed === "object") objects.push(parsed);
+    } catch {
+      /* not an event line */
+    }
+  };
+  for (const line of transcript.split("\n")) push(line);
+  if (objects.length === 0) push(transcript); // a single pretty-printed object
+  return objects;
+};
+
+const SESSION_ID_KEYS = ["chat_id", "chatId", "session_id", "sessionId", "id"];
+
+// Cursor names the chat differently across output shapes, so take the first
+// key that carries one and keep the parser tolerant rather than guess a shape.
+export const parseCursorSessionId = (transcript) => {
+  for (const object of parseJsonObjects(transcript)) {
+    for (const key of SESSION_ID_KEYS) {
+      if (typeof object[key] === "string" && object[key].trim()) return object[key];
+    }
+  }
+  return null;
+};
+
+const REPLY_KEYS = ["result", "response", "text", "content", "message"];
+
+// Cursor and Grok print the answer rather than writing it to a file, so the
+// helper has to lift it out: the last object carrying a nonempty text field.
+export const parseTextReply = (transcript) => {
+  const objects = parseJsonObjects(transcript);
+  for (let index = objects.length - 1; index >= 0; index--) {
+    for (const key of REPLY_KEYS) {
+      const value = objects[index][key];
+      if (typeof value === "string" && value.trim()) return value;
+    }
+  }
+  return null;
 };
 
 // The stream carries many objects and several of them hold a session_id — the
@@ -363,6 +527,16 @@ export const parseClaudeResult = (transcript) => {
     if ("session_id" in objects[index]) return objects[index];
   }
   return null;
+};
+
+// Codex is the only partner that writes the reply itself (`-o`); for the other
+// three the reply has to be lifted out of the run's own output and put where
+// the caller was told to read it.
+const writeReply = (partner, replyFile, transcript) => {
+  if (partner === "codex") return;
+  const reply =
+    partner === "claude" ? parseClaudeResult(transcript)?.result : parseTextReply(transcript);
+  writeFileSync(replyFile, `${(reply ?? "").trim()}\n`);
 };
 
 // Detached so a signal aimed at this helper's process group cannot decapitate a
@@ -445,9 +619,12 @@ const supervise = ({ bin, args, cwd, prompt, transcriptPath, idleMs, totalMs, on
 
 // --- prompts ----------------------------------------------------------------
 
-export const bootstrapPrompt = ({ self, partner, root }) =>
+export const bootstrapPrompt = ({ self, partner, root, role = "peer" }) =>
   [
     `You are the pair partner for a ${self} lead working in ${root}.`,
+    role === "executor"
+      ? "You are the executor: you hold the write leases by default and implement; the lead plans and reviews."
+      : "You and the lead are peers: you split scopes as equals and review each other's work.",
     "This session persists: every later message resumes this exact session, so keep the task state you build here.",
     "",
     "Protocol. Every message you receive starts with a header line",
@@ -504,6 +681,16 @@ const runInit = () => {
   const place = requirePlace();
   const { partner, self, error } = resolvePartner(opt("partner"));
   if (error) fail(error, 2);
+  const role = opt("role", "peer");
+  if (!ROLES.includes(role)) fail(`unknown role ${role} — use ${ROLES.join(" or ")}`, 2);
+  const model = opt("model");
+  const effort = opt("effort");
+  if (effort && !EFFORT_SUPPORT[partner]) {
+    fail(`${partner} has no reasoning-effort control — drop --effort`, 2);
+  }
+  if (partner === "cursor" && effort && !model) {
+    fail("cursor carries effort inside the model name, so --effort needs --model", 2);
+  }
   const existing = readState(place.statePath);
   // A recorded pair with the other partner is an active choice, never an
   // overwrite: replacing it here would discard that pair's sid and history
@@ -520,6 +707,9 @@ const runInit = () => {
         status: "resumed",
         sid: existing.sid,
         partner: existing.partner,
+        role: existing.role ?? "peer",
+        model: existing.model ?? null,
+        effort: existing.effort ?? null,
         state_file: place.statePath,
         transcripts: existing.transcripts ?? place.transcripts,
       },
@@ -530,14 +720,28 @@ const runInit = () => {
   mkdirSync(place.transcripts, { recursive: true });
   const transcriptPath = join(place.transcripts, "0000-init.log");
   const replyFile = join(place.transcripts, "0000-init-reply.md");
-  const { bin, args } = turnCommand({ partner, sid: null, replyFile, root: place.root, write: false });
+  const promptFile = join(place.transcripts, "0000-init-prompt.md");
+  const presetSid = newSessionId(partner);
+  const { bin, args, promptVia } = turnCommand({
+    partner,
+    sid: presetSid,
+    resume: false,
+    replyFile,
+    promptFile,
+    root: place.root,
+    write: false,
+    model,
+    effort,
+  });
   const { idleMs, totalMs } = deadlines();
+  const prompt = bootstrapPrompt({ self, partner, root: place.root, role });
+  if (promptVia === "file") writeFileSync(promptFile, `${prompt}\n`);
 
   supervise({
     bin,
     args,
     cwd: place.root,
-    prompt: bootstrapPrompt({ self, partner, root: place.root }),
+    prompt: promptVia === "file" ? "" : prompt,
     transcriptPath,
     idleMs,
     totalMs,
@@ -546,17 +750,18 @@ const runInit = () => {
       if (exit !== 0) {
         fail(`${bin} exited ${exit} during init — see ${transcriptPath}`);
       }
-      const sid = parseSessionId(partner, transcript);
+      const sid = presetSid ?? parseSessionId(partner, transcript);
       if (!sid) {
         fail(`${bin} produced no session id — a pair needs a resumable session; see ${transcriptPath}`);
       }
-      if (partner === "claude") {
-        writeFileSync(replyFile, `${(parseClaudeResult(transcript)?.result ?? "").trim()}\n`);
-      }
+      writeReply(partner, replyFile, transcript);
       writeState(place.statePath, {
         schema: SCHEMA,
         partner,
         self,
+        role,
+        model: model ?? null,
+        effort: effort ?? null,
         sid,
         seq: 0,
         created_at: new Date().toISOString(),
@@ -568,6 +773,9 @@ const runInit = () => {
           status: "created",
           sid,
           partner,
+          role,
+          model: model ?? null,
+          effort: effort ?? null,
           state_file: place.statePath,
           transcripts: place.transcripts,
           transcript: transcriptPath,
@@ -586,7 +794,6 @@ const runSend = () => {
   const place = requirePlace();
   const kind = opt("kind");
   const bodyFile = opt("body-file");
-  const write = flag("write");
   if (!kind) fail("missing --kind", 2);
   if (!KINDS.has(kind)) fail(`unknown kind ${kind} — use one of ${[...KINDS].join(", ")}`, 2);
   if (!bodyFile) fail("missing --body-file", 2);
@@ -594,12 +801,16 @@ const runSend = () => {
 
   const state = readState(place.statePath);
   if (!state?.sid) fail(`no pair session in ${place.statePath} — run init first`);
+  const lease = resolveWrite(state.role ?? "peer", { write: flag("write"), readOnly: flag("read-only") });
+  if (lease.error) fail(lease.error, 2);
+  const write = lease.write;
 
   const seq = (state.seq ?? 0) + 1;
   const stamp = String(seq).padStart(4, "0");
   mkdirSync(place.transcripts, { recursive: true });
   const transcriptPath = join(place.transcripts, `${stamp}-${kind}.log`);
   const replyFile = join(place.transcripts, `${stamp}-${kind}-reply.md`);
+  const promptFile = join(place.transcripts, `${stamp}-${kind}-prompt.md`);
   const body = readFileSync(bodyFile, "utf8");
   if (!body.trim()) fail("the body file is empty — a partner turn needs a message", 2);
   // Read before the marker is written, so a usage error never leaves one behind.
@@ -631,13 +842,23 @@ const runSend = () => {
   // let the next send reuse a sequence number the partner has already seen.
   writeState(place.statePath, { ...state, seq, in_flight: null });
 
-  const { bin, args } = turnCommand({
+  const { bin, args, promptVia } = turnCommand({
     partner: state.partner,
     sid: state.sid,
+    resume: true,
     replyFile,
+    promptFile,
     root: place.root,
     write,
   });
+  const prompt = messagePrompt({
+    self: state.self ?? "lead",
+    partner: state.partner,
+    kind,
+    sid: state.sid,
+    body,
+  });
+  if (promptVia === "file") writeFileSync(promptFile, prompt);
   // Every terminal path goes through here, which is what keeps the in-flight
   // marker from outliving the turn it guards.
   const receipt = (extra, code) => {
@@ -663,13 +884,7 @@ const runSend = () => {
     bin,
     args,
     cwd: place.root,
-    prompt: messagePrompt({
-      self: state.self ?? OPPOSITE[state.partner],
-      partner: state.partner,
-      kind,
-      sid: state.sid,
-      body,
-    }),
+    prompt: promptVia === "file" ? "" : prompt,
     transcriptPath,
     idleMs,
     totalMs,
@@ -691,13 +906,10 @@ const runSend = () => {
       if (exit !== 0) {
         receipt({ ok: false, status: "failed", reason: `${bin} exited ${exit} — read the transcript`, exit_code: exit, seconds }, 1);
       }
-      if (state.partner === "claude") {
-        const parsed = parseClaudeResult(transcript);
-        if (parsed?.is_error) {
-          receipt({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1);
-        }
-        writeFileSync(replyFile, `${(parsed?.result ?? "").trim()}\n`);
+      if (state.partner === "claude" && parseClaudeResult(transcript)?.is_error) {
+        receipt({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1);
       }
+      writeReply(state.partner, replyFile, transcript);
       const reply = existsSync(replyFile) ? readFileSync(replyFile, "utf8").trim() : "";
       if (!reply) {
         receipt({ ok: false, status: "empty-reply", reason: "the partner exited 0 with no reply — read the transcript before resending, the prompt may already be consumed", exit_code: exit, seconds }, 1);
@@ -717,6 +929,9 @@ const runStatus = () => {
       ok: true,
       sid: state.sid,
       partner: state.partner,
+      role: state.role ?? "peer",
+      model: state.model ?? null,
+      effort: state.effort ?? null,
       seq: state.seq ?? 0,
       created_at: state.created_at,
       state_file: place.statePath,
@@ -822,7 +1037,7 @@ if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   const run = COMMANDS[command];
   if (!run) {
     fail(
-      "usage: pair-headless.mjs <init|send|status|clear|end> --repo <root> [--partner codex|claude] [--kind <kind>] [--body-file <path>] [--write] [--idle-min N] [--total-min N]",
+      `usage: pair-headless.mjs <init|send|status|clear|end> --repo <root> [--partner ${kindList}] [--model <name>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--idle-min N] [--total-min N]`,
       2,
     );
   }
