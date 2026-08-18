@@ -207,11 +207,28 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   state.panes[pane.pane_id] = pane;
   save();
   output({ pane });
+} else if (args[0] === "pane" && args[1] === "close") {
+  state.mutations.push({ command: "pane close", pane: args[2] });
+  delete state.panes[args[2]];
+  save();
+  output({});
 } else if (args[0] === "agent" && args[1] === "start") {
   // herdr's own rule, enforced here so a name it would reject fails the suite
   // instead of only failing in production.
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2])) {
     process.stderr.write("invalid_agent_name: " + args[2] + "\\n");
+    process.exit(1);
+  }
+  // A fresh split can answer agent_pane_busy while its shell starts up; the
+  // countdown models that transient window.
+  if (state.agent_start_busy_remaining > 0) {
+    state.agent_start_busy_remaining -= 1;
+    save();
+    process.stderr.write("agent_pane_busy: agent target pane is not an available shell\\n");
+    process.exit(1);
+  }
+  if (state.fail_agent_start === true) {
+    process.stderr.write("simulated agent start failure\\n");
     process.exit(1);
   }
   const paneId = args[args.indexOf("--pane") + 1];
@@ -491,9 +508,27 @@ try {
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
   assert.throws(
     () => run("verify"),
-    /live panes do not match the participants recorded for this tab/u,
+    /recorded partner is no longer the partner agent/u,
   );
   recycledState.panes["w1:p2"].terminal_id = "term-w1-p2";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+
+  // A replacement conversation in the SAME pane and terminal must not inherit
+  // the pair: the recorded agent_session_id pins the partner's conversation.
+  recycledState.panes["w1:p2"].agent_session.value = "claude-session-replacement";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+  assert.throws(
+    () => run("verify"),
+    /recorded partner is no longer the partner agent/u,
+  );
+  recycledState.panes["w1:p1"].agent_session.value = "codex-session-replacement";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+  assert.throws(
+    () => run("verify"),
+    /live panes do not match the participants recorded for this tab/u,
+  );
+  recycledState.panes["w1:p1"].agent_session.value = "codex-session-w1-p1";
+  recycledState.panes["w1:p2"].agent_session.value = "claude-session-w1-p2";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
 
   const nullSessionBinding = JSON.parse(readFileSync(sessionPath, "utf8"));
@@ -1162,6 +1197,12 @@ try {
     ["cursor", ["--model", "claude-opus-4-8", "--effort", "high"], ["--", "--model", "claude-opus-4-8[effort=high]"]],
     ["claude", ["--model", "opus"], ["--", "--model", "opus"]],
     ["claude", [], []],
+    // --autonomy full launches the partner past its permission prompts, each
+    // CLI through its own verified flag.
+    ["claude", ["--autonomy", "full"], ["--", "--permission-mode", "acceptEdits"]],
+    ["grok", ["--autonomy", "full", "--model", "grok-5"], ["--", "--permission-mode", "acceptEdits", "-m", "grok-5"]],
+    ["codex", ["--autonomy", "full"], ["--", "-a", "on-failure", "-s", "workspace-write"]],
+    ["cursor", ["--autonomy", "full"], ["--", "--force"]],
   ]) {
     // The lead is any CLI other than the one being spawned.
     const lead = partner === "grok" ? "claude" : "grok";
@@ -1262,6 +1303,121 @@ try {
     );
     assert.equal(mixedSession.delivery.received.cursor, 1);
     runRaw("end", ...cursorPin, "--sid", mixed.sid);
+  }
+
+  // A fresh split can report agent_pane_busy while its shell is still coming
+  // up; the spawn retries through that window instead of failing, and a spawn
+  // that does fail closes its own split pane instead of orphaning it.
+  {
+    const busyState = JSON.parse(readFileSync(statePath, "utf8"));
+    busyState.panes = {
+      "wB:p1": {
+        agent: "claude", agent_session: { value: "claude-b" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wB:p1",
+        tab_id: "wB:t1", terminal_id: "term-wB-p1", workspace_id: "wB",
+      },
+    };
+    busyState.processes = { "wB:p1": [{ argv: ["claude"], cwd: "/workspace", name: "claude" }] };
+    busyState.agent_start_busy_remaining = 2;
+    writeFileSync(statePath, `${JSON.stringify(busyState, null, 2)}\n`);
+    const busyPin = [
+      "--pane", "wB:p1", "--workspace", "wB", "--tab-id", "wB:t1",
+      "--as", "claude", "--terminal-id", "term-wB-p1", "--repo-root", "/workspace",
+    ];
+    const spawned = JSON.parse(runRaw("spawn", ...busyPin, "--partner", "grok"));
+    assert.equal(spawned.partner.agent, "grok");
+    const afterBusy = JSON.parse(readFileSync(statePath, "utf8"));
+    assert.equal(afterBusy.agent_start_busy_remaining, 0);
+    assert.equal(afterBusy.panes["wB:p1s"].agent, "grok");
+
+    const orphanState = JSON.parse(readFileSync(statePath, "utf8"));
+    orphanState.panes = {
+      "wO:p1": {
+        agent: "claude", agent_session: { value: "claude-o" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wO:p1",
+        tab_id: "wO:t1", terminal_id: "term-wO-p1", workspace_id: "wO",
+      },
+    };
+    orphanState.processes = { "wO:p1": [{ argv: ["claude"], cwd: "/workspace", name: "claude" }] };
+    orphanState.fail_agent_start = true;
+    writeFileSync(statePath, `${JSON.stringify(orphanState, null, 2)}\n`);
+    assert.throws(
+      () => runRaw(
+        "spawn", "--pane", "wO:p1", "--workspace", "wO", "--tab-id", "wO:t1",
+        "--as", "claude", "--terminal-id", "term-wO-p1", "--repo-root", "/workspace",
+        "--partner", "grok",
+      ),
+      /simulated agent start failure/u,
+    );
+    const afterOrphan = JSON.parse(readFileSync(statePath, "utf8"));
+    assert.equal(afterOrphan.panes["wO:p1s"], undefined, "a failed spawn must close its split pane");
+    assert.deepEqual(afterOrphan.mutations.at(-1), { command: "pane close", pane: "wO:p1s" });
+    delete afterOrphan.fail_agent_start;
+    writeFileSync(statePath, `${JSON.stringify(afterOrphan, null, 2)}\n`);
+  }
+
+  // An established pair follows its recorded panes: a third agent joining the
+  // tab later must not silence verify/send/end. Forming a NEW pair there still
+  // refuses — one pair per tab.
+  {
+    const crowdState = JSON.parse(readFileSync(statePath, "utf8"));
+    crowdState.panes = {
+      "wT:p1": {
+        agent: "claude", agent_session: { value: "claude-t" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wT:p1",
+        tab_id: "wT:t1", terminal_id: "term-wT-p1", workspace_id: "wT",
+      },
+      "wT:p2": {
+        agent: "grok", agent_session: { value: "grok-t2" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wT:p2",
+        tab_id: "wT:t1", terminal_id: "term-wT-p2", workspace_id: "wT",
+      },
+    };
+    crowdState.processes = {
+      "wT:p1": [{ argv: ["claude"], cwd: "/workspace", name: "claude" }],
+      "wT:p2": [{ argv: ["grok"], cwd: "/workspace", name: "grok" }],
+    };
+    writeFileSync(statePath, `${JSON.stringify(crowdState, null, 2)}\n`);
+    const crowdPin = [
+      "--pane", "wT:p1", "--workspace", "wT", "--tab-id", "wT:t1",
+      "--as", "claude", "--terminal-id", "term-wT-p1", "--repo-root", "/workspace",
+    ];
+    const crowded = JSON.parse(runRaw("init", ...crowdPin));
+
+    const withThird = JSON.parse(readFileSync(statePath, "utf8"));
+    withThird.panes["wT:p3"] = {
+      agent: "grok", agent_session: { value: "grok-t3" }, agent_status: "idle",
+      cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wT:p3",
+      tab_id: "wT:t1", terminal_id: "term-wT-p3", workspace_id: "wT",
+    };
+    withThird.processes["wT:p3"] = [{ argv: ["grok"], cwd: "/workspace", name: "grok" }];
+    writeFileSync(statePath, `${JSON.stringify(withThird, null, 2)}\n`);
+
+    assert.throws(
+      () => runRaw("discover", ...crowdPin),
+      /expected exactly two agent panes/u,
+    );
+    const verified = JSON.parse(runRaw("verify", ...crowdPin));
+    assert.equal(verified.partner.pane_id, "wT:p2", "verify must follow the recorded partner pane");
+    // init resumes through the recorded panes too: it must not re-run the
+    // FORMING-only exactly-two gate on a session that already exists.
+    const resumedCrowded = JSON.parse(runRaw("init", ...crowdPin));
+    assert.equal(resumedCrowded.resumed, true, "init must resume with a third agent pane in the tab");
+    assert.equal(resumedCrowded.sid, crowded.sid);
+    const crowdBody = join(root, "crowd-body.txt");
+    writeFileSync(crowdBody, "still your pair\n");
+    const crowdSent = runRaw(
+      "send", ...crowdPin,
+      "--sid", crowded.sid, "--kind", "task", "--body-file", crowdBody,
+      "--ack-timeout-ms", "1000",
+    );
+    assert.match(crowdSent, /^\[agent claude -> grok kind=task sid=/u);
+    runRaw("end", ...crowdPin, "--sid", crowded.sid);
+    assert.equal(
+      existsSync(join(home, ".herdr-coworkers", "wT", "wT_t1", "session.json")),
+      false,
+      "end must work with a third agent pane in the tab",
+    );
   }
 
   // Delivery proof. A `ready` was lost on 2026-08-07: the helper reported it
