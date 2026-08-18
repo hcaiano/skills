@@ -1499,6 +1499,21 @@ try {
     const secondName = JSON.parse(readFileSync(statePath, "utf8")).last_agent_name;
     assert.notEqual(first.partner.pane_id, second.partner.pane_id);
     assert.notEqual(firstName, secondName, "each spawned partner needs its own agent name");
+    // A named pane that already runs the requested CLI is reused, never split
+    // again: a retried spawn must not pile up partners.
+    const paneCountBeforeReuse = Object.keys(
+      JSON.parse(readFileSync(statePath, "utf8")).panes,
+    ).length;
+    const reused = JSON.parse(
+      runRaw("spawn", ...leadPin, "--partner", "grok", "--partner-pane", first.partner.pane_id),
+    );
+    assert.equal(reused.partner.pane_id, first.partner.pane_id);
+    assert.equal(
+      Object.keys(JSON.parse(readFileSync(statePath, "utf8")).panes).length,
+      paneCountBeforeReuse,
+      "a spawn that reuses a named partner pane must not split a new one",
+    );
+
     const spawnedPanes = JSON.parse(readFileSync(statePath, "utf8")).panes;
     assert.equal(spawnedPanes[first.partner.pane_id].agent, "grok");
     assert.equal(spawnedPanes[second.partner.pane_id].agent, "grok");
