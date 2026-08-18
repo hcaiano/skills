@@ -54,17 +54,27 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
 
    ```bash
    node "$PAIR_SCRIPT" spawn "${CALLER_ID[@]}" --partner "$PARTNER" \
-     [--model "$MODEL"] [--effort "$EFFORT"]
+     [--model "$MODEL"] [--effort "$EFFORT"] [--autonomy full]
    ```
 
    The model and effort reach the new pane as the partner CLI's own arguments
-   after `--`, which only a pane being created can take. Stop on multiple
-   candidates or spawn failure.
+   after `--`, which only a pane being created can take. `--autonomy full`
+   launches the partner past its permission prompts (each CLI through its own
+   flag) — required for an unattended run, since a pane has no per-turn
+   permission switch. The spawn retries a still-starting shell and closes its
+   own split pane on failure. Stop on multiple candidates or spawn failure.
+
+   One pair per tab: a pair only FORMS in a tab holding just its two agents,
+   so spawn additional partners from panes in their own tabs. An
+   already-initialized pair keeps working when other agent panes join later —
+   send/receive/reconcile/end follow the session's recorded panes.
 2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}" [--role peer|executor]`.
    It creates a new tab-scoped session or
    idempotently resumes the exact live session. The role is recorded and
    contractual here — Herdr panes hold no per-turn permission switch, so an
-   `executor` partner holds the write leases because the protocol says so.
+   `executor` partner holds the write leases because the protocol says so
+   (spawn with `--autonomy full` when the partner must also clear its own
+   CLI's permission prompts unattended).
    A session written before the four-kind schema is refused with the exact
    `end … --stale true` command that clears it; there is no migration.
    Record its exact `sid` as `PAIR_SID`; every send is

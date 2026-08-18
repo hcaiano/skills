@@ -389,7 +389,7 @@ function discover({ allowMissing = false, allowStalePartner = false, requestedPa
   }
   if (candidates.length !== 1 || tabAgents.length !== 2) {
     fail(
-      `expected exactly two agent panes in current tab ${self.tab_id} (self + one partner); found ${tabAgents.length} agents and ${candidates.length} partners`,
+      `expected exactly two agent panes in current tab ${self.tab_id} (self + one partner); found ${tabAgents.length} agents and ${candidates.length} partners. A pair FORMS only in a tab holding just its two agents — one pair per tab; spawn extra partners from panes in their own tabs. An already-initialized pair keeps working here: send/receive/reconcile/end follow the session's recorded panes`,
     );
   }
   if (candidates[0].agent === self.agent) {
@@ -433,9 +433,24 @@ function pairAgentName(partnerAgent, tabId) {
 // The partner CLI's own arguments, after `--`. They reach a pane that is being
 // created and nothing else: a live pane already runs the model it was started
 // with, and restarting it to change that would discard its conversation.
+// Interactive-CLI autonomy flags, verified against each CLI's own --help. The
+// pair's default keeps every CLI on its normal permission prompts; a spawn
+// that must run unattended opts in with --autonomy full.
+const autonomyArguments = {
+  claude: ["--permission-mode", "acceptEdits"],
+  grok: ["--permission-mode", "acceptEdits"],
+  codex: ["-a", "on-failure", "-s", "workspace-write"],
+  cursor: ["--force"],
+};
+
 function agentStartArguments(partnerAgent, options) {
   const model = options.model ?? null;
   const effort = options.effort ?? null;
+  const autonomy = options.autonomy ?? null;
+  if (autonomy && autonomy !== "full") {
+    fail("--autonomy accepts only: full (omit it for the CLI's normal prompts)");
+  }
+  const autonomyArgs = autonomy === "full" ? autonomyArguments[partnerAgent] : [];
   if (effort && partnerAgent === "claude") {
     fail("claude has no reasoning-effort control — drop --effort");
   }
@@ -444,16 +459,20 @@ function agentStartArguments(partnerAgent, options) {
       fail("cursor carries effort inside the model name, so --effort needs --model");
     }
     const named = effort && !/\[/u.test(model) ? `${model}[effort=${effort}]` : model;
-    return named ? ["--model", named] : [];
+    return [...autonomyArgs, ...(named ? ["--model", named] : [])];
   }
-  if (partnerAgent === "claude") return model ? ["--model", model] : [];
+  if (partnerAgent === "claude") {
+    return [...autonomyArgs, ...(model ? ["--model", model] : [])];
+  }
   if (partnerAgent === "codex") {
     return [
+      ...autonomyArgs,
       ...(model ? ["-m", model] : []),
       ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
     ];
   }
   return [
+    ...autonomyArgs,
     ...(model ? ["-m", model] : []),
     ...(effort ? ["--reasoning-effort", effort] : []),
   ];
@@ -491,27 +510,51 @@ async function spawn(args) {
     "--no-focus",
   ).pane;
   const name = pairAgentName(binding.partnerAgent, binding.self.tab_id);
-  herdr(
-    "agent",
-    "start",
-    name,
-    "--kind",
-    binding.partnerAgent,
-    "--pane",
-    split.pane_id,
-    "--timeout",
-    "60000",
-    ...(agentArguments.length > 0 ? ["--", ...agentArguments] : []),
-  );
+  let pane;
+  try {
+    // A fresh split can report agent_pane_busy while its shell is still
+    // starting up — that is a readiness race, not a real occupant, so retry
+    // it briefly instead of failing the spawn outright.
+    const busyDeadline = Date.now() + 15000;
+    for (;;) {
+      try {
+        herdr(
+          "agent",
+          "start",
+          name,
+          "--kind",
+          binding.partnerAgent,
+          "--pane",
+          split.pane_id,
+          "--timeout",
+          "60000",
+          ...(agentArguments.length > 0 ? ["--", ...agentArguments] : []),
+        );
+        break;
+      } catch (error) {
+        if (!error.message.includes("agent_pane_busy") || Date.now() >= busyDeadline) {
+          throw error;
+        }
+        await sleep(500);
+      }
+    }
 
-  const pane = paneGet(split.pane_id);
-  if (
-    pane.workspace_id !== binding.self.workspace_id ||
-    pane.tab_id !== binding.self.tab_id ||
-    pane.agent !== binding.partnerAgent
-  ) {
-    const recent = readPartner(split.pane_id, "recent-unwrapped", "40");
-    fail(`spawned pane did not come up as ${binding.partnerAgent} in the current tab:\n${recent}`);
+    pane = paneGet(split.pane_id);
+    if (
+      pane.workspace_id !== binding.self.workspace_id ||
+      pane.tab_id !== binding.self.tab_id ||
+      pane.agent !== binding.partnerAgent
+    ) {
+      const recent = readPartner(split.pane_id, "recent-unwrapped", "40");
+      fail(`spawned pane did not come up as ${binding.partnerAgent} in the current tab:\n${recent}`);
+    }
+  } catch (error) {
+    // Never leave the split pane orphaned: a failed spawn cleans up after
+    // itself so a retry starts from the same tab shape it found.
+    try {
+      herdr("pane", "close", split.pane_id);
+    } catch {}
+    throw error;
   }
   process.stdout.write(
     `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent }, null, 2)}\n`,
@@ -705,7 +748,7 @@ async function initSession(args) {
           sid = JSON.parse(readFileSync(path, "utf8")).sid ?? sid;
         } catch {}
         fail(
-          `cannot resume existing current-tab session: ${error.message}. With explicit user approval, recover it with: node ${shellQuote(scriptPath)} end ${pinnedCliText(binding.self, callerContext.repoRoot)} --sid ${shellQuote(sid)} --stale true`,
+          `cannot resume existing current-tab session: ${error.message}. That session cannot be recovered — with explicit user approval, DISCARD it with: node ${shellQuote(scriptPath)} end ${pinnedCliText(binding.self, callerContext.repoRoot)} --sid ${shellQuote(sid)} --stale true, then init a fresh pair`,
         );
       }
       await reconcileAcknowledged(resumed.path, resumed.session.sid);
@@ -768,9 +811,14 @@ function validateSessionEnvelope(session, live) {
   }
 }
 
+// An established session is resolved through its own recorded participants,
+// not through tab-wide discovery: the tab may legitimately hold other agent
+// panes (reviews, extra workers) after the pair was formed, and none of them
+// may hijack or silence the recorded pair. The exact-two invariant applies
+// only while the pair is being formed (spawn/init/discover).
 async function verifiedSession() {
-  const live = discover();
-  const path = sessionPath(live.self);
+  const self = currentPane();
+  const path = sessionPath(self);
   let session;
   try {
     session = JSON.parse(readFileSync(path, "utf8"));
@@ -778,7 +826,33 @@ async function verifiedSession() {
     fail(`cannot load current-tab session ${path}: ${error.message}`);
   }
 
-  validateSessionEnvelope(session, live);
+  validateSessionEnvelope(session, { self });
+
+  const partnerAgent = Object.keys(session.participants ?? {}).find(
+    (kind) => kind !== self.agent && agentKinds.includes(kind),
+  );
+  const selfRecord = session.participants?.[self.agent];
+  const partnerRecord = partnerAgent ? session.participants[partnerAgent] : null;
+  if (!partnerRecord?.pane_id || !participantMatches(selfRecord, self)) {
+    fail("live panes do not match the participants recorded for this tab");
+  }
+  let partnerPane;
+  try {
+    partnerPane = paneGet(partnerRecord.pane_id);
+  } catch (error) {
+    fail(`recorded partner pane ${partnerRecord.pane_id} is gone: ${error.message}`);
+  }
+  if (
+    partnerPane.workspace_id !== self.workspace_id ||
+    partnerPane.tab_id !== self.tab_id ||
+    partnerPane.agent !== partnerAgent ||
+    partnerPane.pane_id === self.pane_id ||
+    !participantMatches(partnerRecord, partnerPane)
+  ) {
+    fail("recorded partner is no longer the partner agent in the caller's current tab");
+  }
+  requireForegroundProcess(partnerPane.pane_id, partnerAgent, callerContext.repoRoot);
+  const live = { self, partner: partnerPane, partnerAgent };
 
   const normalized = normalizeSession(session, live);
   if (normalized.changed) {
@@ -804,21 +878,23 @@ async function verifiedSession() {
     fail("session does not belong to the caller's exact workspace and tab");
   }
 
-  const selfRecord = session.participants[live.self.agent];
-  const partnerRecord = session.participants[live.partner.agent];
+  // Re-check against the normalized session: normalization may have filled in
+  // terminal or session ids, and the pane may have changed under the lock.
+  const normalizedSelf = session.participants[live.self.agent];
+  const normalizedPartner = session.participants[live.partner.agent];
   if (
-    !participantMatches(selfRecord, live.self) ||
-    !participantMatches(partnerRecord, live.partner)
+    !participantMatches(normalizedSelf, live.self) ||
+    !participantMatches(normalizedPartner, live.partner)
   ) {
     fail("live panes do not match the participants recorded for this tab");
   }
 
-  const partner = paneGet(partnerRecord.pane_id);
+  const partner = paneGet(normalizedPartner.pane_id);
   if (
     partner.workspace_id !== live.self.workspace_id ||
     partner.tab_id !== live.self.tab_id ||
     partner.agent !== live.partner.agent ||
-    !participantMatches(partnerRecord, partner)
+    !participantMatches(normalizedPartner, partner)
   ) {
     fail("recorded partner is no longer the partner agent in the caller's current tab");
   }
@@ -1177,10 +1253,51 @@ async function endSession(args) {
     fail("--stale must be true when explicitly authorized");
   }
   const trash = requireTrash();
-  const binding = discover({
-    allowMissing: allowStale,
-    allowStalePartner: allowStale,
-  });
+  // Ending resolves through the session's own recorded participants, like
+  // verifiedSession, but tolerantly: a dead or replaced partner must not make
+  // the session impossible to end — it becomes a participant mismatch that
+  // --stale true can override.
+  const self = currentPane();
+  let partner = null;
+  {
+    const path = sessionPath(self);
+    let recorded = null;
+    try {
+      recorded = JSON.parse(readFileSync(path, "utf8")).participants ?? null;
+    } catch {}
+    const partnerAgent = Object.keys(recorded ?? {}).find(
+      (kind) => kind !== self.agent && agentKinds.includes(kind),
+    );
+    const record = partnerAgent ? recorded[partnerAgent] : null;
+    if (record?.pane_id) {
+      let pane = null;
+      try {
+        pane = paneGet(record.pane_id);
+      } catch {
+        pane = null;
+      }
+      if (
+        pane &&
+        pane.workspace_id === self.workspace_id &&
+        pane.tab_id === self.tab_id &&
+        pane.agent === partnerAgent &&
+        participantMatches(record, pane)
+      ) {
+        // Infra failures reading the process MUST propagate even for stale
+        // recovery — only a provably absent partner process is stale, an
+        // unreadable one is unknown.
+        const info = processInfo(pane.pane_id);
+        if (matchingForegroundProcess(info, partnerAgent, callerContext.repoRoot)) {
+          partner = pane;
+        } else if (!allowStale) {
+          fail(
+            `pane ${pane.pane_id} has no live foreground ${partnerAgent} process rooted at ${callerContext.repoRoot}`,
+          );
+        }
+      }
+    }
+  }
+  const binding = { self, partner };
   const path = sessionPath(binding.self);
   const directory = dirname(path);
   const workspaceDirectory = dirname(directory);
