@@ -179,6 +179,9 @@ else if (args[0] === "agent" && args[1] === "prompt") {
         : args[3];
   }
   if (state.working_on_prompt !== false) pane.agent_status = "working";
+  // Models a partner that settles idle right after the paste: was working at
+  // send time, provably idle by the time the receipt is chosen.
+  if (state.idle_after_prompt === true) pane.agent_status = "idle";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
   const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok) ->/)?.[1];
   if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
@@ -1536,6 +1539,21 @@ try {
     );
     assert.equal(lostBusy.enter_keys, 1, "a working delivery still gets one protective Enter");
 
+    // A partner that was working at paste time but has settled PROVABLY idle
+    // without acking did not run receive — "may be busy" would hide the loss.
+    sid = startSession({
+      panes: busyPanes,
+      drop_paste_when_working: true,
+      idle_after_prompt: true,
+      auto_ack: false,
+    });
+    const settledIdle = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--timeout-ms", "0", "--ack-timeout-ms", "200",
+    );
+    assert.match(settledIdle, /receipt=lost-partner-idle-inspect-that-pane-then-reconcile/u);
+    assert.doesNotMatch(settledIdle, /unproven-working/u);
+
     // If the composer visibly keeps the body after every Enter, the helper has
     // positive proof that it is unsubmitted. It must fail before recording a
     // submission, not downgrade that fact to an ambiguous receipt.
@@ -1608,6 +1626,54 @@ try {
       "--ack-timeout-ms", "200",
     );
     assert.match(busy, /receipt=pending-partner-may-be-busy-do-not-retry/u);
+
+    // The heartbeat. A nudge reminds an idle partner of what it still owes —
+    // an unacknowledged receive, or an open work cycle — and owes nothing else.
+    {
+      // Nothing owed: a fresh pair is left alone.
+      sid = startSession({ working_on_prompt: false });
+      const quiet = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(quiet.nudged, false);
+      assert.equal(quiet.reason, "no open obligation");
+
+      // An unacknowledged delivery: the nudge names the exact receive.
+      sid = startSession({ auto_ack: false, working_on_prompt: false });
+      deliveryRun(
+        "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+        "--ack-timeout-ms", "200",
+      );
+      const reminded = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(reminded.nudged, true);
+      assert.equal(reminded.obligation.signature, "receive:1");
+      const nudgeState = JSON.parse(readFileSync(deliveryState, "utf8"));
+      assert.match(nudgeState.last_message, /^\[herdr-pair control nudge sid=/u);
+      assert.match(nudgeState.last_message, /seq=1/u);
+
+      // An open cycle after the ack: the partner still owes its status.
+      sid = startSession({ working_on_prompt: false });
+      const cycleSent = deliveryRun(
+        "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+        "--ack-timeout-ms", "2000",
+      );
+      assert.match(cycleSent, /receipt=acknowledged/u);
+      const cycleNudge = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(cycleNudge.nudged, true);
+      assert.match(cycleNudge.obligation.signature, /^cycle:/u);
+      const cycleState = JSON.parse(readFileSync(deliveryState, "utf8"));
+      assert.match(cycleState.last_message, /work cycle is still open/u);
+
+      // A working partner is never interrupted, whatever it owes.
+      const busyNudgePanes = JSON.parse(JSON.stringify(panes));
+      busyNudgePanes["w1:p2"].agent_status = "working";
+      sid = startSession({ auto_ack: false });
+      deliveryRun(
+        "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+        "--timeout-ms", "0", "--ack-timeout-ms", "200",
+      );
+      const busyNudge = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(busyNudge.nudged, false);
+      assert.equal(busyNudge.reason, "partner working");
+    }
 
     execFileSync("trash", [deliveryRoot]);
   }

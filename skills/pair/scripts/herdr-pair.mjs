@@ -1241,6 +1241,129 @@ async function waitForReceipt(path, agent, sequence, partnerPaneId, timeoutMs) {
   return false;
 }
 
+// The obligation the partner still owes, read from the session alone — or
+// null when the pair owes nothing. Two shapes: an unacknowledged delivery
+// from self (the partner never ran receive), and an open cycle (the partner
+// never closed its half with an accepted status). The signature names the
+// exact obligation so a watcher can cap nudges per obligation instead of
+// hammering one forever.
+function partnerObligation(session, selfAgent, partnerAgent) {
+  const pending = session.delivery?.pending?.[selfAgent];
+  if (pending?.submitted_at) {
+    return {
+      signature: `receive:${pending.seq}`,
+      reminder: `message seq=${pending.seq} from ${selfAgent} awaits your receive — run the [herdr-pair control seq=${pending.seq}: ...] line from that message, then act on it`,
+    };
+  }
+  if (session.round > 0 && session.last_status?.[partnerAgent] !== "accepted") {
+    return {
+      signature: `cycle:${session.round}:${session.last_status?.[partnerAgent] ?? "none"}`,
+      reminder:
+        "your half of the work cycle is still open — continue now, and close it by sending your status (ready, then accepted) through the pair helper",
+    };
+  }
+  return null;
+}
+
+// Out-of-band delivery for a nudge: no sequence reservation — a nudge is a
+// reminder about existing obligations, never new protocol traffic — but the
+// same landing proof as an idle-partner send, because a nudge sitting unseen
+// in the composer is worse than none.
+async function deliverNudge(paneId, message) {
+  const head = (message.split("\n").find((line) => line.trim()) ?? "").trim().slice(0, 40);
+  const before = composerContent(paneId);
+  herdr("agent", "prompt", paneId, message);
+  await sleep(pasteSettleMs);
+  let arrived = await composerArrived(paneId, head, before);
+  if (!arrived) {
+    herdr("agent", "prompt", paneId, message);
+    await sleep(pasteSettleMs);
+    arrived = await composerArrived(paneId, head, before);
+  }
+  let landed = false;
+  for (let attempt = 0; attempt < 3 && !landed; attempt += 1) {
+    herdr("agent", "send-keys", paneId, "enter");
+    landed = await composerSettled(paneId, head);
+  }
+  if (!landed) fail(`nudge for ${paneId} never left the partner composer`);
+}
+
+// One heartbeat tick: nudge only a provably idle partner that still owes the
+// pair something. A working partner is left alone — mid-turn traffic is what
+// the send path already handles.
+async function nudgeOnce(binding) {
+  const { session, partner, self } = binding;
+  const obligation = partnerObligation(session, self.agent, partner.agent);
+  if (!obligation) return { nudged: false, reason: "no open obligation" };
+  const status = paneGet(partner.pane_id).agent_status;
+  if (status === "working") return { nudged: false, reason: "partner working", obligation };
+  await deliverNudge(
+    partner.pane_id,
+    `[herdr-pair control nudge sid=${session.sid}]: you are the ${partner.agent} half of an active pair; ${obligation.reminder}.`,
+  );
+  return { nudged: true, obligation };
+}
+
+async function nudgeSession() {
+  const binding = await verifiedSession();
+  await reconcileAcknowledged(binding.path, binding.session.sid);
+  binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
+  const outcome = await nudgeOnce(binding);
+  process.stdout.write(`${JSON.stringify(outcome, null, 2)}\n`);
+}
+
+// The heartbeat for transient partner stalls: run it in a BACKGROUND
+// terminal (guardrail 4 — never hold the pair pane in a foreground loop).
+// Each tick re-verifies the session, and an obligation is only nudged once
+// it has survived two consecutive ticks — a partner that just went idle gets
+// one interval to close its half on its own. Ends with the session, or after
+// --max-nudges per obligation.
+async function watchSession(args) {
+  const options = parseOptions(args);
+  const intervalMs = Number(options["interval-ms"] ?? 60000);
+  const maxNudges = Number(options["max-nudges"] ?? 3);
+  if (!Number.isInteger(intervalMs) || intervalMs < 5000) {
+    fail("--interval-ms must be an integer of at least 5000");
+  }
+  if (!Number.isInteger(maxNudges) || maxNudges < 1) {
+    fail("--max-nudges must be a positive integer");
+  }
+  let previousSignature = null;
+  const nudgesBySignature = new Map();
+  for (;;) {
+    let binding;
+    try {
+      binding = await verifiedSession();
+    } catch (error) {
+      process.stdout.write(`watch: session over or unverifiable (${error.message}); stopping\n`);
+      return;
+    }
+    await reconcileAcknowledged(binding.path, binding.session.sid);
+    binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
+    const obligation = partnerObligation(
+      binding.session,
+      binding.self.agent,
+      binding.partner.agent,
+    );
+    const signature = obligation?.signature ?? null;
+    if (
+      signature &&
+      signature === previousSignature &&
+      (nudgesBySignature.get(signature) ?? 0) < maxNudges
+    ) {
+      const outcome = await nudgeOnce(binding);
+      if (outcome.nudged) {
+        nudgesBySignature.set(signature, (nudgesBySignature.get(signature) ?? 0) + 1);
+        process.stdout.write(
+          `watch: nudged ${binding.partner.agent} (${signature}, ${nudgesBySignature.get(signature)}/${maxNudges})\n`,
+        );
+      }
+    }
+    previousSignature = signature;
+    await sleep(intervalMs);
+  }
+}
+
 async function resetSession() {
   const binding = await verifiedSession();
   await reconcileAcknowledged(binding.path, binding.session.sid);
@@ -1463,7 +1586,11 @@ async function send(args) {
       status = null;
     }
     if (deliveryProof === "working-unproven") {
-      receipt = deliveryReceipts.unproven;
+      // The paste went to a working partner, but the receipt reports the
+      // partner's status NOW: one that has since settled idle without acking
+      // provably did not run receive, so "wait, it may be busy" would hide
+      // the loss. Only a proven idle downgrades; unknown stays unproven.
+      receipt = status === "idle" ? deliveryReceipts.lost : deliveryReceipts.unproven;
     } else {
       receipt =
         status === "working"
@@ -1540,6 +1667,10 @@ async function main() {
     await verifyInbound(args);
   } else if (command === "send") {
     await send(args);
+  } else if (command === "nudge") {
+    await nudgeSession();
+  } else if (command === "watch") {
+    await watchSession(args);
   } else if (command === "reset") {
     await resetSession();
   } else if (command === "reconcile") {
