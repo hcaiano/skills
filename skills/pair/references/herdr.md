@@ -67,10 +67,12 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    One pair per tab: a pair only FORMS in a tab holding just its two agents,
    so spawn additional partners from panes in their own tabs. An
    already-initialized pair keeps working when other agent panes join later —
-   send/receive/reconcile/end follow the session's recorded panes.
+   init/verify/send/receive/reconcile/end follow the session's recorded panes.
 2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}" [--role peer|executor]`.
    It creates a new tab-scoped session or
-   idempotently resumes the exact live session. The role is recorded and
+   idempotently resumes the exact live session. Run it directly to resume —
+   an established session resumes through its recorded panes, so a `discover`
+   first is neither needed nor required to succeed. The role is recorded and
    contractual here — Herdr panes hold no per-turn permission switch, so an
    `executor` partner holds the write leases because the protocol says so
    (spawn with `--autonomy full` when the partner must also clear its own

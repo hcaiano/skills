@@ -513,6 +513,24 @@ try {
   recycledState.panes["w1:p2"].terminal_id = "term-w1-p2";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
 
+  // A replacement conversation in the SAME pane and terminal must not inherit
+  // the pair: the recorded agent_session_id pins the partner's conversation.
+  recycledState.panes["w1:p2"].agent_session.value = "claude-session-replacement";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+  assert.throws(
+    () => run("verify"),
+    /recorded partner is no longer the partner agent/u,
+  );
+  recycledState.panes["w1:p1"].agent_session.value = "codex-session-replacement";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+  assert.throws(
+    () => run("verify"),
+    /live panes do not match the participants recorded for this tab/u,
+  );
+  recycledState.panes["w1:p1"].agent_session.value = "codex-session-w1-p1";
+  recycledState.panes["w1:p2"].agent_session.value = "claude-session-w1-p2";
+  writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
+
   const nullSessionBinding = JSON.parse(readFileSync(sessionPath, "utf8"));
   nullSessionBinding.participants.codex.agent_session_id = null;
   writeFileSync(
@@ -1381,6 +1399,11 @@ try {
     );
     const verified = JSON.parse(runRaw("verify", ...crowdPin));
     assert.equal(verified.partner.pane_id, "wT:p2", "verify must follow the recorded partner pane");
+    // init resumes through the recorded panes too: it must not re-run the
+    // FORMING-only exactly-two gate on a session that already exists.
+    const resumedCrowded = JSON.parse(runRaw("init", ...crowdPin));
+    assert.equal(resumedCrowded.resumed, true, "init must resume with a third agent pane in the tab");
+    assert.equal(resumedCrowded.sid, crowded.sid);
     const crowdBody = join(root, "crowd-body.txt");
     writeFileSync(crowdBody, "still your pair\n");
     const crowdSent = runRaw(

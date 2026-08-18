@@ -167,10 +167,19 @@ function participantRecord(pane) {
   };
 }
 
+// A pane id alone does not identify a conversation: the same pane can hold a
+// replacement agent session after the first one exits. terminal_id catches a
+// recycled terminal; agent_session_id catches a fresh conversation started in
+// the SAME terminal, which would otherwise inherit the pair and receive
+// session-bound sends. A null recorded id stays tolerant — normalizeSession
+// backfills it on the next verify, so sessions written before this check keep
+// working.
 function participantMatches(record, pane) {
   return (
     record?.pane_id === pane.pane_id &&
-    (!record.terminal_id || record.terminal_id === pane.terminal_id)
+    (!record.terminal_id || record.terminal_id === pane.terminal_id) &&
+    (!record.agent_session_id ||
+      record.agent_session_id === pane.agent_session?.value)
   );
 }
 
@@ -389,7 +398,7 @@ function discover({ allowMissing = false, allowStalePartner = false, requestedPa
   }
   if (candidates.length !== 1 || tabAgents.length !== 2) {
     fail(
-      `expected exactly two agent panes in current tab ${self.tab_id} (self + one partner); found ${tabAgents.length} agents and ${candidates.length} partners. A pair FORMS only in a tab holding just its two agents — one pair per tab; spawn extra partners from panes in their own tabs. An already-initialized pair keeps working here: send/receive/reconcile/end follow the session's recorded panes`,
+      `expected exactly two agent panes in current tab ${self.tab_id} (self + one partner); found ${tabAgents.length} agents and ${candidates.length} partners. A pair FORMS only in a tab holding just its two agents — one pair per tab; spawn extra partners from panes in their own tabs. An already-initialized pair keeps working here: init/verify/send/receive/reconcile/end follow the session's recorded panes`,
     );
   }
   if (candidates[0].agent === self.agent) {
@@ -731,8 +740,13 @@ async function initSession(args) {
   const options = parseOptions(args);
   const role = options.role ?? "peer";
   if (!roles.includes(role)) fail(`unknown role ${role} — use ${roles.join(" or ")}`);
-  const binding = discover();
-  const path = sessionPath(binding.self);
+  // Resolve the caller's own pane first. discover() enforces the exactly-two
+  // gate that only a FORMING pair must pass, so calling it up front would make
+  // `init` unable to resume an established session once a third agent joins
+  // the tab — the very case verify/send/end already tolerate. Discovery
+  // happens below, on the create path alone.
+  const self = currentPane();
+  const path = sessionPath(self);
   const directory = dirname(path);
   mkdirSync(dirname(directory), { recursive: true });
   const lock = `${directory}.init.lock`;
@@ -748,7 +762,7 @@ async function initSession(args) {
           sid = JSON.parse(readFileSync(path, "utf8")).sid ?? sid;
         } catch {}
         fail(
-          `cannot resume existing current-tab session: ${error.message}. That session cannot be recovered — with explicit user approval, DISCARD it with: node ${shellQuote(scriptPath)} end ${pinnedCliText(binding.self, callerContext.repoRoot)} --sid ${shellQuote(sid)} --stale true, then init a fresh pair`,
+          `cannot resume existing current-tab session: ${error.message}. That session cannot be recovered — with explicit user approval, DISCARD it with: node ${shellQuote(scriptPath)} end ${pinnedCliText(self, callerContext.repoRoot)} --sid ${shellQuote(sid)} --stale true, then init a fresh pair`,
         );
       }
       await reconcileAcknowledged(resumed.path, resumed.session.sid);
@@ -759,6 +773,7 @@ async function initSession(args) {
       return;
     }
 
+    const binding = discover();
     const session = {
       schema_version: schemaVersion,
       sid: `${Math.floor(Date.now() / 1000)}-${execFileSync("openssl", ["rand", "-hex", "2"], { encoding: "utf8" }).trim()}`,
