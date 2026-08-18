@@ -9,7 +9,8 @@ Pair two agents on one task: you are the **lead**, and the partner is one of
 `claude`, `codex`, `cursor`, or `grok` — any of them except the CLI you are
 already running, because two panes of one CLI echo rather than review. Keep the
 pair and its `sid` alive across tasks, accepted work cycles, and context
-compaction. Keep protocol headers and identifiers literal.
+compaction, naming its `sid` in every command — one lead can run several
+pairs at once. Keep protocol headers and identifiers literal.
 
 Two backends carry the same protocol. Inside Herdr the partner is a visible
 pane the user can read and interject in; outside it the partner is a persistent
@@ -17,9 +18,9 @@ headless session of the partner CLI.
 
 ## Choose the pair
 
-Look for an existing pair before proposing one: a Herdr pane in this tab, or a
-headless `session.json` in this repository (the backend reference names the
-exact command). An existing pair is resumed as it is. When its partner, model,
+Look for an existing pair before proposing one: a session recorded for this
+Herdr tab, or a headless one in this repository (the backend reference names
+the exact command). An existing pair is resumed as it is. When its partner, model,
 or effort differs from what the user just asked for, say so and keep going —
 respawning discards the pair's whole history, and a model is changed by ending
 the pair, not by restarting its pane.

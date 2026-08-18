@@ -1,7 +1,8 @@
 # Herdr backend
 
 Pair two agents — any two of `claude`, `codex`, `cursor`, and `grok`, never
-twice the same kind — in one Herdr tab. The user can read and interject in
+twice the same kind — in one Herdr tab. A lead pane may hold several such
+pairs at once, each its own `sid`-scoped session. The user can read and interject in
 either pane. The protocol, kinds, write leases, broken-checkout announcements,
 and work cycles are in [`SKILL.md`](../SKILL.md); this file owns the transport.
 
@@ -47,10 +48,12 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
 ## Start or resume
 
 1. Run
-   `node "$PAIR_SCRIPT" discover "${CALLER_ID[@]}"`. A partner pane already in
-   the tab is the pair: resume it whatever kind it runs, and never respawn to
-   change its model. If none exists, ask the user for partner, model, and
-   effort as `SKILL.md` describes, then run once:
+   `node "$PAIR_SCRIPT" discover "${CALLER_ID[@]}"`. It reports you, the tab's
+   candidate partner panes, and every pair this tab already runs — each `sid`
+   with its partner kind and pane. Resume an existing pair as it is, whatever
+   kind it runs, and never respawn to change its model. For a partner that does
+   not exist yet, ask the user for partner, model, and effort as `SKILL.md`
+   describes, then run once:
 
    ```bash
    node "$PAIR_SCRIPT" spawn "${CALLER_ID[@]}" --partner "$PARTNER" \
@@ -62,25 +65,29 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    launches the partner past its permission prompts (each CLI through its own
    flag) — required for an unattended run, since a pane has no per-turn
    permission switch. The spawn retries a still-starting shell and closes its
-   own split pane on failure. Stop on multiple candidates or spawn failure.
+   own split pane on failure. Stop on spawn failure.
 
-   One pair per tab: a pair only FORMS in a tab holding just its two agents,
-   so spawn additional partners from panes in their own tabs. An
-   already-initialized pair keeps working when other agent panes join later —
-   init/verify/send/receive/reconcile/end follow the session's recorded panes.
-2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}" [--role peer|executor]`.
-   It creates a new tab-scoped session or
-   idempotently resumes the exact live session. Run it directly to resume —
-   an established session resumes through its recorded panes, so a `discover`
-   first is neither needed nor required to succeed. The role is recorded and
+   One lead pane may hold several pairs at once — one session per partner pane.
+   Spawn once per partner and record the pane id it prints; every later command
+   names the pair it means.
+2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}"
+   [--partner-pane <pane_id>] [--role peer|executor]`. It creates a session for
+   that partner pane, or idempotently resumes the exact live one. Name
+   `--partner-pane` for every pair after the first; with one unpaired candidate
+   in the tab it is optional. Run init directly to resume — an established
+   session resumes through its recorded panes, so a `discover` first is neither
+   needed nor required to succeed. The role is recorded and
    contractual here — Herdr panes hold no per-turn permission switch, so an
    `executor` partner holds the write leases because the protocol says so
    (spawn with `--autonomy full` when the partner must also clear its own
    CLI's permission prompts unattended).
    A session written before the four-kind schema is refused with the exact
    `end … --stale true` command that clears it; there is no migration.
-   Record its exact `sid` as `PAIR_SID`; every send is
-   bound to it so a wrong same-kind pane cannot borrow another tab's session.
+   Record its exact `sid` as `PAIR_SID`. Every command binds to it, which is
+   both what keeps a lead's concurrent pairs apart and what stops a wrong
+   same-kind pane borrowing another session. `verify`, `reconcile`, `reset`,
+   `nudge`, and `watch` take `--sid` too, and require it once the tab holds
+   more than one pair.
 3. Send the first `task` through the helper, splitting scopes and write leases
    as `SKILL.md` describes.
 
@@ -111,8 +118,8 @@ protection, and proof only from the `receive` ACK. When the partner is still wor
 the helper sends exactly one `agent prompt` with the header, control line, and
 body, then runs the harmless Enter loop. It skips the visible-arrival check and
 the full resend because that status has no reliable composer signal and a
-resend may duplicate a queued body. Only `receive` proves the exact sequence in
-`session.json`; without that ACK the receipt says the delivery is unproven.
+resend may duplicate a queued body. Only `receive` proves the exact sequence in the
+pair's own session file; without that ACK the receipt says the delivery is unproven.
 
 For an idle partner, the helper proves landing from the composer: the composer
 must first be seen to change, because a paste that never arrived and one already
@@ -124,8 +131,8 @@ submission on either path.
 - `receipt=acknowledged`: the partner ran `receive` for this message.
 - `receipt=pending-partner-may-be-busy-do-not-retry`: the message landed and the
   partner is working, so it is queued but not acknowledged yet. Do not resend.
-  Later run `node "$PAIR_SCRIPT" reconcile`; the status advances only after its
-  ACK.
+  Later run `node "$PAIR_SCRIPT" reconcile "${CALLER_ID[@]}" --sid "$PAIR_SID"`;
+  the status advances only after its ACK.
 - `receipt=unproven-working-inspect-that-pane-then-reconcile`: the partner was
   working, received one prompt plus the Enter protection, but did not ACK before
   the deadline. The helper cannot distinguish a queued prompt from a silent
@@ -165,7 +172,7 @@ and verified session.
 
 ## Reset and end
 
-Use `node "$PAIR_SCRIPT" reset "${CALLER_ID[@]}"` only to clear work-cycle
+Use `node "$PAIR_SCRIPT" reset "${CALLER_ID[@]}" --sid "$PAIR_SID"` only to clear work-cycle
 counters/statuses in a verified live pair; it preserves identity and delivery
 history.
 
@@ -182,7 +189,8 @@ the mismatch and use `end "${CALLER_ID[@]}" --sid "<sid>" --stale true` only
 with explicit user approval — a stale end may discard pending state only
 when the partner pane is gone, its recorded binding is stale, or its
 foreground agent process/repository no longer matches. Closing the Herdr tab
-ends the panes naturally; stale state is never borrowed by another tab.
+ends the panes naturally; stale state is never borrowed by another pair or
+tab. Ending one pair leaves the tab's other pairs running.
 
 ## Workbench tab
 

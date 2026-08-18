@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -179,13 +180,29 @@ else if (args[0] === "agent" && args[1] === "prompt") {
         : args[3];
   }
   if (state.working_on_prompt !== false) pane.agent_status = "working";
+  // Models a partner that settles idle right after the paste: was working at
+  // send time, provably idle by the time the receipt is chosen.
+  if (state.idle_after_prompt === true) pane.agent_status = "idle";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
   const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok) ->/)?.[1];
+  const sid = state.last_message.match(/sid=([^\\]\\s]+)\\]/)?.[1];
   if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
     const sequence = Number(control[2]);
     const slug = pane.tab_id.replaceAll(":", "_");
-    const sessionPath = path.join(process.env.HOME, ".herdr-coworkers", pane.workspace_id, slug, "session.json");
-    state.pending_ack = { sender, sequence, sessionPath };
+    // One file per pair: acknowledge the session the message names, never
+    // whichever pair happens to sort first.
+    const dir = path.join(process.env.HOME, ".herdr-coworkers", pane.workspace_id, slug);
+    let sessionPath = null;
+    for (const name of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+      if (name !== "session.json" && !(name.startsWith("pair-") && name.endsWith(".json"))) continue;
+      try {
+        if (JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")).sid === sid) {
+          sessionPath = path.join(dir, name);
+          break;
+        }
+      } catch {}
+    }
+    if (sessionPath) state.pending_ack = { sender, sequence, sessionPath };
   }
   save();
   if (state.fail_prompt === true) {
@@ -199,10 +216,12 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   const requestedCwd = args.includes("--cwd")
     ? args[args.indexOf("--cwd") + 1]
     : source.cwd;
+  let splitId = source.pane_id + "s";
+  while (state.panes[splitId]) splitId += "s";
   const pane = {
     agent: null, agent_status: "unknown", cwd: requestedCwd,
-    pane_id: source.pane_id + "s", tab_id: source.tab_id,
-    terminal_id: "term-" + source.pane_id + "s", workspace_id: source.workspace_id,
+    pane_id: splitId, tab_id: source.tab_id,
+    terminal_id: "term-" + splitId, workspace_id: source.workspace_id,
   };
   state.panes[pane.pane_id] = pane;
   save();
@@ -217,6 +236,12 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   // instead of only failing in production.
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(args[2])) {
     process.stderr.write("invalid_agent_name: " + args[2] + "\\n");
+    process.exit(1);
+  }
+  // herdr keeps a live agent's name unique, so a second spawn reusing one
+  // fails here instead of only failing in production.
+  if (Object.values(state.panes).some((p) => p.agent_name === args[2])) {
+    process.stderr.write("agent_name_taken: " + args[2] + "\\n");
     process.exit(1);
   }
   // A fresh split can answer agent_pane_busy while its shell starts up; the
@@ -237,6 +262,7 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   pane.agent = args[args.indexOf("--kind") + 1];
   pane.agent_status = "idle";
   state.last_agent_name = args[2];
+  pane.agent_name = args[2];
   state.last_agent_start_argv = args;
   save();
   output({ agent: pane });
@@ -334,7 +360,11 @@ const runRaw = (...args) =>
     encoding: "utf8",
     env: { ...env, HERDR_PANE_ID: "stale:pane" },
   });
-const sessionPath = join(home, ".herdr-coworkers", "w1", "w1_t1", "session.json");
+const tabDirectory = join(home, ".herdr-coworkers", "w1", "w1_t1");
+// One file per pair, named after the partner pane; `session.json` is the
+// single-pair name written before multi-pair and still resolved.
+const sessionPath = join(tabDirectory, "pair-w1_p2.json");
+const legacySessionPath = join(tabDirectory, "session.json");
 
 try {
   // A `role=process-pane` token is written by whoever asks, so it must not be
@@ -358,9 +388,9 @@ try {
     },
   ];
   writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
-  assert.throws(
-    () => runAs("w1:p2", "discover"),
-    /expected exactly two agent panes/u,
+  assert.deepEqual(
+    JSON.parse(runAs("w1:p2", "discover")).candidates.map((candidate) => candidate.pane_id).sort(),
+    ["w1:p1", "w1:p3"],
     "a forged process-pane token must not hide a real agent",
   );
   // Neither may a wrapper that belongs to a different pane's run.
@@ -374,9 +404,9 @@ try {
     },
   ];
   writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
-  assert.throws(
-    () => runAs("w1:p2", "discover"),
-    /expected exactly two agent panes/u,
+  assert.deepEqual(
+    JSON.parse(runAs("w1:p2", "discover")).candidates.map((candidate) => candidate.pane_id).sort(),
+    ["w1:p1", "w1:p3"],
     "another pane's wrapper must not exclude this one",
   );
   // The same pane, now genuinely running this pane's gate wrapper, is excluded.
@@ -391,7 +421,11 @@ try {
   ];
   writeFileSync(statePath, `${JSON.stringify(tokenState, null, 2)}\n`);
   const withGatePane = JSON.parse(runAs("w1:p2", "discover"));
-  assert.equal(withGatePane.partner.pane_id, "w1:p1");
+  assert.deepEqual(
+    withGatePane.candidates.map((candidate) => candidate.pane_id),
+    ["w1:p1"],
+    "a pane running this pane's own gate wrapper is not a partner candidate",
+  );
   tokenState = JSON.parse(readFileSync(statePath, "utf8"));
   delete tokenState.panes["w1:p3"];
   delete tokenState.processes["w1:p3"];
@@ -980,7 +1014,7 @@ try {
 
   mkdirSync(legacyDirectory, { recursive: true });
   writeFileSync(
-    sessionPath,
+    legacySessionPath,
     `${JSON.stringify({
       sid: "legacy-1",
       workspace_id: "w1",
@@ -1017,7 +1051,7 @@ try {
   assert.equal(existsSync(`${legacyDirectory}.init.lock`), false);
   // Ending it is the way out, and it leaves nothing behind for the next pair.
   run("end", "--sid", "legacy-1", "--stale", "true");
-  assert.equal(existsSync(sessionPath), false);
+  assert.equal(existsSync(legacySessionPath), false);
 
   let migrated = JSON.parse(run("init"));
   assert.equal(migrated.schema_version, 3);
@@ -1038,15 +1072,22 @@ try {
   mkdirSync(legacyDirectory, { recursive: true });
   migrated = { ...migrated, sid: "legacy-1" };
   const future = { ...migrated, schema_version: 99 };
-  writeFileSync(sessionPath, `${JSON.stringify(future, null, 2)}\n`);
+  writeFileSync(legacySessionPath, `${JSON.stringify(future, null, 2)}\n`);
   assert.throws(() => run("init"), /session schema 99 is newer/u);
   assert.equal(existsSync(`${legacyDirectory}.init.lock`), false);
-  writeFileSync(sessionPath, `${JSON.stringify(migrated, null, 2)}\n`);
+  // A session written under the legacy single-pair name still resumes and
+  // still ends by its own sid.
+  writeFileSync(legacySessionPath, `${JSON.stringify(migrated, null, 2)}\n`);
+  const legacyResumed = JSON.parse(run("init"));
+  assert.equal(legacyResumed.resumed, true, "a legacy session.json must still resume");
+  assert.equal(legacyResumed.sid, "legacy-1");
+  assert.equal(JSON.parse(run("verify", "--sid", "legacy-1")).session.sid, "legacy-1");
   run("end", "--sid", "legacy-1");
+  assert.equal(existsSync(legacySessionPath), false);
 
   mkdirSync(legacyDirectory, { recursive: true });
   writeFileSync(
-    sessionPath,
+    legacySessionPath,
     `${JSON.stringify({
       ...migrated,
       sid: "legacy-stale",
@@ -1139,13 +1180,18 @@ try {
   assert.equal(existsSync(sessionPath), false);
   assert.equal(existsSync(otherTabDirectory), true);
 
-  // Spawning derives the peer's agent name from the tab id, and herdr rejects
-  // anything but 1-32 lowercase characters. Workspace ids carry uppercase
-  // (wY:t1) and long ones overflow the limit — both broke the spawn outright.
+  // Spawning derives the peer's agent name from the NEW pane, and herdr rejects
+  // anything but 1-32 unique lowercase characters. Workspace ids carry
+  // uppercase (wY:p1) and long ones overflow the limit — both broke the spawn.
+  const longSpawnPane = "w655f3dd90835016:p123";
+  const longSpawnName = `pair-cursor-${createHash("sha256")
+    .update(`${longSpawnPane}s`)
+    .digest("hex")
+    .slice(0, 8)}`;
   for (const [paneId, tabId, workspaceId, expected, paneCwd, repoRoot, partner] of [
-    ["wY:p1", "wY:t1", "wY", "pair-claude-wy_t1", "/workspace", "/workspace", "claude"],
-    ["w655f3dd90835016:p1", "w655f3dd90835016:t123", "w655f3dd90835016", "pair-cursor-f0e59f4e", "/workspace", "/workspace", "cursor"],
-    ["wZ:p1", "wZ:t1", "wZ", "pair-grok-wz_t1", "/shell-home", "/workspace", "grok"],
+    ["wY:p1", "wY:t1", "wY", "pair-claude-wy_p1s", "/workspace", "/workspace", "claude"],
+    [longSpawnPane, "w655f3dd90835016:t123", "w655f3dd90835016", longSpawnName, "/workspace", "/workspace", "cursor"],
+    ["wZ:p1", "wZ:t1", "wZ", "pair-grok-wz_p1s", "/shell-home", "/workspace", "grok"],
   ]) {
     const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
     spawnState.panes = {
@@ -1251,10 +1297,6 @@ try {
       "--as", "codex", "--terminal-id", "term-wS-p1", "--repo-root", "/workspace",
     ];
     assert.throws(
-      () => runRaw("discover", ...samePin),
-      /refusing to pair codex with itself/u,
-    );
-    assert.throws(
       () => runRaw("init", ...samePin),
       /refusing to pair codex with itself/u,
     );
@@ -1299,7 +1341,7 @@ try {
     assert.match(mixedSent, /^\[agent cursor -> grok kind=task sid=/u);
     assert.match(mixedSent, /receipt=acknowledged/u);
     const mixedSession = JSON.parse(
-      readFileSync(join(home, ".herdr-coworkers", "wX", "wX_t1", "session.json"), "utf8"),
+      readFileSync(join(home, ".herdr-coworkers", "wX", "wX_t1", "pair-wX_p2.json"), "utf8"),
     );
     assert.equal(mixedSession.delivery.received.cursor, 1);
     runRaw("end", ...cursorPin, "--sid", mixed.sid);
@@ -1393,10 +1435,16 @@ try {
     withThird.processes["wT:p3"] = [{ argv: ["grok"], cwd: "/workspace", name: "grok" }];
     writeFileSync(statePath, `${JSON.stringify(withThird, null, 2)}\n`);
 
-    assert.throws(
-      () => runRaw("discover", ...crowdPin),
-      /expected exactly two agent panes/u,
+    const crowdDiscovered = JSON.parse(runRaw("discover", ...crowdPin));
+    assert.deepEqual(
+      crowdDiscovered.candidates,
+      [
+        { pane_id: "wT:p2", agent: "grok", paired: true },
+        { pane_id: "wT:p3", agent: "grok", paired: false },
+      ],
+      "discover must mark the paired pane and still offer the free one",
     );
+    assert.deepEqual(crowdDiscovered.sessions.map((entry) => entry.sid), [crowded.sid]);
     const verified = JSON.parse(runRaw("verify", ...crowdPin));
     assert.equal(verified.partner.pane_id, "wT:p2", "verify must follow the recorded partner pane");
     // init resumes through the recorded panes too: it must not re-run the
@@ -1414,10 +1462,126 @@ try {
     assert.match(crowdSent, /^\[agent claude -> grok kind=task sid=/u);
     runRaw("end", ...crowdPin, "--sid", crowded.sid);
     assert.equal(
-      existsSync(join(home, ".herdr-coworkers", "wT", "wT_t1", "session.json")),
+      existsSync(join(home, ".herdr-coworkers", "wT", "wT_t1", "pair-wT_p2.json")),
       false,
       "end must work with a third agent pane in the tab",
     );
+  }
+
+  // Multi-pair: one lead pane holds several concurrent pairs in the same tab.
+  // Each pair is its own sid-scoped session file, and every command names the
+  // pair it means.
+  {
+    const leadState = JSON.parse(readFileSync(statePath, "utf8"));
+    leadState.panes = {
+      "wP:p1": {
+        agent: "claude", agent_session: { value: "claude-p" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wP:p1",
+        tab_id: "wP:t1", terminal_id: "term-wP-p1", workspace_id: "wP",
+      },
+    };
+    leadState.processes = { "wP:p1": [{ argv: ["claude"], cwd: "/workspace", name: "claude" }] };
+    leadState.auto_ack = true;
+    leadState.mutations = [];
+    writeFileSync(statePath, `${JSON.stringify(leadState, null, 2)}\n`);
+    const leadPin = [
+      "--pane", "wP:p1", "--workspace", "wP", "--tab-id", "wP:t1",
+      "--as", "claude", "--terminal-id", "term-wP-p1", "--repo-root", "/workspace",
+    ];
+    const leadDirectory = join(home, ".herdr-coworkers", "wP", "wP_t1");
+    const pairFile = (paneId) => join(leadDirectory, `pair-${paneId.replaceAll(":", "_")}.json`);
+
+    // Two partners of the SAME kind in one tab. herdr refuses a duplicate
+    // agent name, so a name derived from the tab would fail the second spawn.
+    const first = JSON.parse(runRaw("spawn", ...leadPin, "--partner", "grok"));
+    const firstName = JSON.parse(readFileSync(statePath, "utf8")).last_agent_name;
+    const second = JSON.parse(runRaw("spawn", ...leadPin, "--partner", "grok"));
+    const secondName = JSON.parse(readFileSync(statePath, "utf8")).last_agent_name;
+    assert.notEqual(first.partner.pane_id, second.partner.pane_id);
+    assert.notEqual(firstName, secondName, "each spawned partner needs its own agent name");
+    // A named pane that already runs the requested CLI is reused, never split
+    // again: a retried spawn must not pile up partners.
+    const paneCountBeforeReuse = Object.keys(
+      JSON.parse(readFileSync(statePath, "utf8")).panes,
+    ).length;
+    const reused = JSON.parse(
+      runRaw("spawn", ...leadPin, "--partner", "grok", "--partner-pane", first.partner.pane_id),
+    );
+    assert.equal(reused.partner.pane_id, first.partner.pane_id);
+    assert.equal(
+      Object.keys(JSON.parse(readFileSync(statePath, "utf8")).panes).length,
+      paneCountBeforeReuse,
+      "a spawn that reuses a named partner pane must not split a new one",
+    );
+
+    const spawnedPanes = JSON.parse(readFileSync(statePath, "utf8")).panes;
+    assert.equal(spawnedPanes[first.partner.pane_id].agent, "grok");
+    assert.equal(spawnedPanes[second.partner.pane_id].agent, "grok");
+
+    // Two free candidates is an ambiguity to name, never one to guess.
+    assert.throws(() => runRaw("init", ...leadPin), /name one with --partner-pane/u);
+    const pairA = JSON.parse(runRaw("init", ...leadPin, "--partner-pane", first.partner.pane_id));
+    const pairB = JSON.parse(runRaw("init", ...leadPin, "--partner-pane", second.partner.pane_id));
+    assert.notEqual(pairA.sid, pairB.sid, "two pairs in one tab need two sids");
+    assert.equal(pairA.participants.grok.pane_id, first.partner.pane_id);
+    assert.equal(pairB.participants.grok.pane_id, second.partner.pane_id);
+    assert.equal(existsSync(pairFile(first.partner.pane_id)), true);
+    assert.equal(existsSync(pairFile(second.partner.pane_id)), true);
+    const resumedA = JSON.parse(
+      runRaw("init", ...leadPin, "--partner-pane", first.partner.pane_id),
+    );
+    assert.equal(resumedA.resumed, true, "init for an already-paired pane resumes it");
+    assert.equal(resumedA.sid, pairA.sid);
+
+    // Without a sid nothing is guessed: the refusal lists what to name.
+    assert.throws(
+      () => runRaw("verify", ...leadPin),
+      new RegExp(`holds 2 pair sessions[\\s\\S]*${pairA.sid}[\\s\\S]*${pairB.sid}`, "u"),
+    );
+    assert.equal(
+      JSON.parse(runRaw("verify", ...leadPin, "--sid", pairB.sid)).partner.pane_id,
+      second.partner.pane_id,
+    );
+
+    // A send reaches the partner of ITS sid, and leaves the other pair alone.
+    const multiBody = join(root, "multi-body.txt");
+    writeFileSync(multiBody, "only for partner A\n");
+    const beforeSend = JSON.parse(readFileSync(statePath, "utf8"));
+    beforeSend.mutations = [];
+    writeFileSync(statePath, `${JSON.stringify(beforeSend, null, 2)}\n`);
+    const sentA = runRaw(
+      "send", ...leadPin, "--sid", pairA.sid, "--kind", "task",
+      "--body-file", multiBody, "--ack-timeout-ms", "1000",
+    );
+    assert.match(sentA, /receipt=acknowledged/u);
+    assert.deepEqual(
+      JSON.parse(readFileSync(statePath, "utf8"))
+        .mutations.filter((mutation) => mutation.command === "agent prompt")
+        .map((mutation) => mutation.pane),
+      [first.partner.pane_id],
+      "a send names its sid and reaches only that pair's partner",
+    );
+    assert.equal(
+      JSON.parse(readFileSync(pairFile(first.partner.pane_id), "utf8")).delivery.received.claude,
+      1,
+    );
+    assert.equal(
+      JSON.parse(readFileSync(pairFile(second.partner.pane_id), "utf8")).delivery.received.claude,
+      0,
+      "the other pair's ledger stays untouched",
+    );
+
+    // Ending one pair ends only that one.
+    runRaw("end", ...leadPin, "--sid", pairA.sid);
+    assert.equal(existsSync(pairFile(first.partner.pane_id)), false);
+    assert.equal(existsSync(pairFile(second.partner.pane_id)), true);
+    assert.equal(
+      JSON.parse(runRaw("verify", ...leadPin)).session.sid,
+      pairB.sid,
+      "the surviving pair resolves again without --sid",
+    );
+    runRaw("end", ...leadPin, "--sid", pairB.sid);
+    assert.equal(existsSync(leadDirectory), false);
   }
 
   // Delivery proof. A `ready` was lost on 2026-08-07: the helper reported it
@@ -1536,6 +1700,21 @@ try {
     );
     assert.equal(lostBusy.enter_keys, 1, "a working delivery still gets one protective Enter");
 
+    // A partner that was working at paste time but has settled PROVABLY idle
+    // without acking did not run receive — "may be busy" would hide the loss.
+    sid = startSession({
+      panes: busyPanes,
+      drop_paste_when_working: true,
+      idle_after_prompt: true,
+      auto_ack: false,
+    });
+    const settledIdle = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--timeout-ms", "0", "--ack-timeout-ms", "200",
+    );
+    assert.match(settledIdle, /receipt=lost-partner-idle-inspect-that-pane-then-reconcile/u);
+    assert.doesNotMatch(settledIdle, /unproven-working/u);
+
     // If the composer visibly keeps the body after every Enter, the helper has
     // positive proof that it is unsubmitted. It must fail before recording a
     // submission, not downgrade that fact to an ambiguous receipt.
@@ -1555,7 +1734,7 @@ try {
       "a body that survives every Enter must fail as visibly unsubmitted",
     );
     const stuckBusySession = JSON.parse(
-      readFileSync(join(deliveryHome, ".herdr-coworkers", "w1", "w1_t1", "session.json"), "utf8"),
+      readFileSync(join(deliveryHome, ".herdr-coworkers", "w1", "w1_t1", "pair-w1_p2.json"), "utf8"),
     );
     assert.equal(stuckBusySession.delivery.pending.codex.seq, 1);
     assert.equal(stuckBusySession.delivery.pending.codex.submitted_at, null);
@@ -1580,7 +1759,7 @@ try {
       "a paste that never arrives must not be reported as delivered",
     );
     const lostSession = JSON.parse(
-      readFileSync(join(deliveryHome, ".herdr-coworkers", "w1", "w1_t1", "session.json"), "utf8"),
+      readFileSync(join(deliveryHome, ".herdr-coworkers", "w1", "w1_t1", "pair-w1_p2.json"), "utf8"),
     );
     assert.equal(lostSession.delivery.pending.codex.seq, 1);
     assert.equal(lostSession.delivery.pending.codex.submitted_at, null);
@@ -1608,6 +1787,54 @@ try {
       "--ack-timeout-ms", "200",
     );
     assert.match(busy, /receipt=pending-partner-may-be-busy-do-not-retry/u);
+
+    // The heartbeat. A nudge reminds an idle partner of what it still owes —
+    // an unacknowledged receive, or an open work cycle — and owes nothing else.
+    {
+      // Nothing owed: a fresh pair is left alone.
+      sid = startSession({ working_on_prompt: false });
+      const quiet = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(quiet.nudged, false);
+      assert.equal(quiet.reason, "no open obligation");
+
+      // An unacknowledged delivery: the nudge names the exact receive.
+      sid = startSession({ auto_ack: false, working_on_prompt: false });
+      deliveryRun(
+        "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+        "--ack-timeout-ms", "200",
+      );
+      const reminded = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(reminded.nudged, true);
+      assert.equal(reminded.obligation.signature, "receive:1");
+      const nudgeState = JSON.parse(readFileSync(deliveryState, "utf8"));
+      assert.match(nudgeState.last_message, /^\[herdr-pair control nudge sid=/u);
+      assert.match(nudgeState.last_message, /seq=1/u);
+
+      // An open cycle after the ack: the partner still owes its status.
+      sid = startSession({ working_on_prompt: false });
+      const cycleSent = deliveryRun(
+        "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+        "--ack-timeout-ms", "2000",
+      );
+      assert.match(cycleSent, /receipt=acknowledged/u);
+      const cycleNudge = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(cycleNudge.nudged, true);
+      assert.match(cycleNudge.obligation.signature, /^cycle:/u);
+      const cycleState = JSON.parse(readFileSync(deliveryState, "utf8"));
+      assert.match(cycleState.last_message, /work cycle is still open/u);
+
+      // A working partner is never interrupted, whatever it owes.
+      const busyNudgePanes = JSON.parse(JSON.stringify(panes));
+      busyNudgePanes["w1:p2"].agent_status = "working";
+      sid = startSession({ auto_ack: false });
+      deliveryRun(
+        "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+        "--timeout-ms", "0", "--ack-timeout-ms", "200",
+      );
+      const busyNudge = JSON.parse(deliveryRun("nudge", ...pin));
+      assert.equal(busyNudge.nudged, false);
+      assert.equal(busyNudge.reason, "partner working");
+    }
 
     execFileSync("trash", [deliveryRoot]);
   }
