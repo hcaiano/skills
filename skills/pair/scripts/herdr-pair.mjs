@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmdirSync,
   statSync,
@@ -20,7 +21,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 // Every agent kind `herdr agent start --kind` can bring up. A pair is always
 // exactly two of them, and never twice the same one: two panes of one CLI echo
-// each other instead of reviewing each other.
+// each other instead of reviewing each other. One pane may hold several
+// concurrent pairs — one sid-scoped session file each.
 const agentKinds = ["claude", "codex", "cursor", "grok"];
 const kindList = agentKinds.join("|");
 const roles = ["peer", "executor"];
@@ -210,9 +212,98 @@ function pinnedCliText(pane, repoRoot) {
     .join(" ");
 }
 
-function sessionPath(self) {
+// One file per pair, named after the partner's pane, so a lead pane can hold
+// several concurrent pairs in one tab. `session.json` is the single-pair name
+// written before this and keeps resolving and resuming.
+function tabDirectory(self) {
   const slug = self.tab_id.replaceAll(":", "_");
-  return join(homedir(), ".herdr-coworkers", self.workspace_id, slug, "session.json");
+  return join(homedir(), ".herdr-coworkers", self.workspace_id, slug);
+}
+
+function sessionPathFor(self, partnerPaneId) {
+  return join(tabDirectory(self), `pair-${partnerPaneId.replaceAll(":", "_")}.json`);
+}
+
+function isSessionFileName(name) {
+  return name === "session.json" || (name.startsWith("pair-") && name.endsWith(".json"));
+}
+
+function readSessionEntries(self) {
+  const directory = tabDirectory(self);
+  let names;
+  try {
+    names = readdirSync(directory);
+  } catch {
+    return [];
+  }
+  return names
+    .filter(isSessionFileName)
+    .sort()
+    .map((name) => {
+      const path = join(directory, name);
+      try {
+        return { path, session: JSON.parse(readFileSync(path, "utf8")) };
+      } catch {
+        return { path, session: null };
+      }
+    });
+}
+
+function partnerKindOf(session, selfAgent) {
+  return (
+    Object.keys(session?.participants ?? {}).find(
+      (kind) => kind !== selfAgent && agentKinds.includes(kind),
+    ) ?? null
+  );
+}
+
+function describeEntry(entry, self) {
+  const kind = partnerKindOf(entry.session, self.agent);
+  return `sid ${entry.session?.sid ?? "unreadable"} (partner ${kind ?? "unknown"} in pane ${
+    (kind && entry.session.participants[kind]?.pane_id) ?? "unknown"
+  })`;
+}
+
+// Which pair the caller means. With a sid it is exact; without one it is
+// unambiguous only while the tab holds a single session, and the refusal lists
+// what to name instead.
+function resolveSessionPath(self, sid = null) {
+  const entries = readSessionEntries(self);
+  if (entries.length === 0) {
+    fail(`cannot load current-tab session in ${tabDirectory(self)}: no session file exists`);
+  }
+  if (sid) {
+    const match = entries.find((entry) => entry.session?.sid === sid);
+    if (!match) {
+      fail(
+        `no session with sid ${sid} in current tab ${self.tab_id}; this tab holds: ${entries
+          .map((entry) => describeEntry(entry, self))
+          .join("; ")}`,
+      );
+    }
+    return match.path;
+  }
+  const active = entries.filter((entry) => entry.session && entry.session.active !== false);
+  const chosen = active.length > 0 ? active : entries;
+  if (chosen.length !== 1) {
+    fail(
+      `current tab ${self.tab_id} holds ${chosen.length} pair sessions; name one with --sid — ${chosen
+        .map((entry) => describeEntry(entry, self))
+        .join("; ")}`,
+    );
+  }
+  return chosen[0].path;
+}
+
+function pairedPaneIds(entries) {
+  const ids = new Set();
+  for (const entry of entries) {
+    if (!entry.session || entry.session.active === false) continue;
+    for (const record of Object.values(entry.session.participants ?? {})) {
+      if (record?.pane_id) ids.add(record.pane_id);
+    }
+  }
+  return ids;
 }
 
 function byKind(value) {
@@ -373,12 +464,9 @@ function isGateProcessPane(pane, selfPaneId) {
   });
 }
 
-// The partner is whichever other agent pane shares the tab. Its kind is read
-// off that pane rather than derived from the caller's, which is what makes any
-// of the four kinds pairable — and a second pane of the caller's own kind is
-// refused rather than accepted as a partner.
-function discover({ allowMissing = false, allowStalePartner = false, requestedPartner = null } = {}) {
-  const self = currentPane();
+// Every other agent pane in the caller's tab. Any of them can become a
+// partner: a tab holds as many pairs as the lead starts, one session each.
+function tabAgentPanes(self) {
   const tabAgents = paneList(self.workspace_id).filter(
     (pane) =>
       pane.tab_id === self.tab_id &&
@@ -386,56 +474,98 @@ function discover({ allowMissing = false, allowStalePartner = false, requestedPa
       agentKinds.includes(pane.agent) &&
       !isGateProcessPane(pane, self.pane_id),
   );
-  const selfMatches = tabAgents.filter((pane) => pane.pane_id === self.pane_id);
-  const candidates = tabAgents.filter((pane) => pane.pane_id !== self.pane_id);
-  const partnerAgent = requestedPartner ?? candidates[0]?.agent ?? null;
-
-  if (selfMatches.length !== 1) {
+  if (tabAgents.filter((pane) => pane.pane_id === self.pane_id).length !== 1) {
     fail(`current pane ${self.pane_id} is not uniquely present in current tab ${self.tab_id}`);
   }
-  if (candidates.length === 0 && allowMissing && tabAgents.length === 1) {
-    return { self, partner: null, partnerAgent };
-  }
-  if (candidates.length !== 1 || tabAgents.length !== 2) {
-    fail(
-      `expected exactly two agent panes in current tab ${self.tab_id} (self + one partner); found ${tabAgents.length} agents and ${candidates.length} partners. A pair FORMS only in a tab holding just its two agents — one pair per tab; spawn extra partners from panes in their own tabs. An already-initialized pair keeps working here: init/verify/send/receive/reconcile/end follow the session's recorded panes`,
-    );
-  }
-  if (candidates[0].agent === self.agent) {
-    fail(
-      `refusing to pair ${self.agent} with itself: pane ${candidates[0].pane_id} runs the same CLI — the partner must be one of ${agentKinds.filter((kind) => kind !== self.agent).join(", ")}`,
-    );
-  }
+  return tabAgents.filter((pane) => pane.pane_id !== self.pane_id);
+}
 
-  const partner = candidates[0];
-  const partnerProcess = processInfo(partner.pane_id);
-  if (!matchingForegroundProcess(partnerProcess, partner.agent, callerContext.repoRoot)) {
-    if (allowStalePartner) {
-      return {
-        self,
-        partner: null,
-        partnerAgent,
-        stalePartner: partner,
-      };
-    }
+// A partner's kind is read off its own pane rather than derived from the
+// caller's, which is what makes any of the four kinds pairable — and a pane of
+// the caller's own kind is refused rather than accepted: two panes of one CLI
+// echo each other instead of reviewing each other.
+function requireLivePartner(self, partner) {
+  if (partner.agent === self.agent) {
     fail(
-      `pane ${partner.pane_id} has no live foreground ${partner.agent} process rooted at ${callerContext.repoRoot}`,
+      `refusing to pair ${self.agent} with itself: pane ${partner.pane_id} runs the same CLI — the partner must be one of ${agentKinds.filter((kind) => kind !== self.agent).join(", ")}`,
     );
   }
-  return { self, partner, partnerAgent: partner.agent };
+  requireForegroundProcess(partner.pane_id, partner.agent, callerContext.repoRoot);
+  return partner;
+}
+
+function describePanes(panes) {
+  return panes.map((pane) => `${pane.pane_id} (${pane.agent})`).join(", ") || "none";
+}
+
+// The pane a NEW pair forms with: an agent pane of this tab that no active
+// session already holds. Ambiguity is never guessed away — it is named.
+function choosePartnerPane(self, entries, requestedPane) {
+  const paired = pairedPaneIds(entries);
+  const candidates = tabAgentPanes(self).filter((pane) => !paired.has(pane.pane_id));
+  if (requestedPane) {
+    const chosen = candidates.find((pane) => pane.pane_id === requestedPane);
+    if (!chosen) {
+      fail(
+        `--partner-pane ${requestedPane} is not an unpaired agent pane in current tab ${self.tab_id}; candidates: ${describePanes(candidates)}`,
+      );
+    }
+    return requireLivePartner(self, chosen);
+  }
+  if (candidates.length === 0) {
+    fail(
+      `current tab ${self.tab_id} holds no unpaired agent pane to pair with; spawn one with: node ${shellQuote(scriptPath)} spawn ${pinnedCliText(self, callerContext.repoRoot)} --partner ${kindList}`,
+    );
+  }
+  if (candidates.length > 1) {
+    fail(
+      `current tab ${self.tab_id} holds ${candidates.length} unpaired agent panes; name one with --partner-pane — ${describePanes(candidates)}`,
+    );
+  }
+  return requireLivePartner(self, candidates[0]);
+}
+
+// `discover` is informational: it reports who the caller is, which panes it
+// could still pair with, and which pairs this tab already runs. It keeps
+// failing on caller-identity problems, which is what makes it the first probe.
+function discover() {
+  const self = currentPane();
+  const entries = readSessionEntries(self);
+  const paired = pairedPaneIds(entries);
+  return {
+    self,
+    candidates: tabAgentPanes(self).map((pane) => ({
+      pane_id: pane.pane_id,
+      agent: pane.agent,
+      paired: paired.has(pane.pane_id),
+    })),
+    sessions: entries
+      .filter((entry) => entry.session)
+      .map((entry) => {
+        const kind = partnerKindOf(entry.session, self.agent);
+        return {
+          sid: entry.session.sid ?? null,
+          active: entry.session.active !== false,
+          partner_agent: kind,
+          partner_pane: (kind && entry.session.participants[kind]?.pane_id) ?? null,
+          path: entry.path,
+        };
+      }),
+  };
 }
 
 // herdr accepts an agent name of 1-32 characters, starting with a lowercase
-// letter and holding only lowercase letters, digits, '-' and '_'. Tab ids
-// break both halves of that: workspace ids carry uppercase (wY:t1), and a
+// letter and holding only lowercase letters, digits, '-' and '_'. Pane ids
+// break both halves of that: workspace ids carry uppercase (wY:p1), and a
 // 16-character workspace id leaves no room once the prefix is added. A name
 // that violates either rule fails the spawn outright, so derive it here and
-// keep it deterministic — the same tab must always produce the same name.
-function pairAgentName(partnerAgent, tabId) {
-  const slug = tabId.toLowerCase().replaceAll(/[^a-z0-9_-]/gu, "_");
+// keep it deterministic. It is derived from the NEW pane, not the tab: one tab
+// can hold several spawned partners, and herdr rejects a duplicate name.
+function pairAgentName(partnerAgent, paneId) {
+  const slug = paneId.toLowerCase().replaceAll(/[^a-z0-9_-]/gu, "_");
   const name = `pair-${partnerAgent}-${slug}`;
   if (name.length <= 32) return name;
-  const digest = createHash("sha256").update(tabId).digest("hex").slice(0, 8);
+  const digest = createHash("sha256").update(paneId).digest("hex").slice(0, 8);
   return `pair-${partnerAgent}-${digest}`.slice(0, 32);
 }
 
@@ -493,11 +623,24 @@ async function spawn(args) {
   if (requestedPartner && !agentKinds.includes(requestedPartner)) {
     fail(`unknown partner ${requestedPartner} — use one of ${kindList}`);
   }
-  const binding = discover({ allowMissing: true, requestedPartner });
-  if (binding.partner) {
-    process.stdout.write(`${JSON.stringify(binding, null, 2)}\n`);
-    return;
+  const self = currentPane();
+  // A tab may hold several pairs, so spawn never refuses on tab shape. It only
+  // reuses a pane the caller names explicitly and that already runs the
+  // requested CLI — that is what makes a retried spawn idempotent.
+  const requestedPane = options["partner-pane"] ?? null;
+  if (requestedPane) {
+    const existing = tabAgentPanes(self).find((pane) => pane.pane_id === requestedPane);
+    if (existing && (!requestedPartner || existing.agent === requestedPartner)) {
+      const live = processInfo(existing.pane_id);
+      if (matchingForegroundProcess(live, existing.agent, callerContext.repoRoot)) {
+        process.stdout.write(
+          `${JSON.stringify({ self, partner: existing, partnerAgent: existing.agent }, null, 2)}\n`,
+        );
+        return;
+      }
+    }
   }
+  const binding = { self, partnerAgent: requestedPartner };
   if (!binding.partnerAgent) {
     fail(`spawn requires --partner ${kindList} (any CLI other than ${binding.self.agent})`);
   }
@@ -518,7 +661,7 @@ async function spawn(args) {
     callerContext.repoRoot,
     "--no-focus",
   ).pane;
-  const name = pairAgentName(binding.partnerAgent, binding.self.tab_id);
+  const name = pairAgentName(binding.partnerAgent, split.pane_id);
   let pane;
   try {
     // A fresh split can report agent_pane_busy while its shell is still
@@ -740,26 +883,45 @@ async function initSession(args) {
   const options = parseOptions(args);
   const role = options.role ?? "peer";
   if (!roles.includes(role)) fail(`unknown role ${role} — use ${roles.join(" or ")}`);
-  // Resolve the caller's own pane first. discover() enforces the exactly-two
-  // gate that only a FORMING pair must pass, so calling it up front would make
-  // `init` unable to resume an established session once a third agent joins
-  // the tab — the very case verify/send/end already tolerate. Discovery
-  // happens below, on the create path alone.
+  // Resolve the caller's own pane first. Partner discovery runs on the create
+  // path alone: an established session resolves through its own recorded
+  // panes, so `init` keeps resuming after other agents join the tab — the very
+  // case verify/send/end already tolerate.
   const self = currentPane();
-  const path = sessionPath(self);
-  const directory = dirname(path);
+  const requestedPane = options["partner-pane"] ?? null;
+  const directory = tabDirectory(self);
   mkdirSync(dirname(directory), { recursive: true });
   const lock = `${directory}.init.lock`;
   const lockOwner = await acquireLock(lock, 5000, "session init");
   try {
-    if (existsSync(path)) {
+    const entries = readSessionEntries(self);
+    // Which existing pair, if any, this init means. A tab that already holds
+    // sessions resumes rather than silently forming another: adding a pair is
+    // an explicit act, named by --partner-pane.
+    let resumePath = null;
+    if (options.sid) {
+      resumePath = resolveSessionPath(self, options.sid);
+    } else if (requestedPane) {
+      resumePath =
+        entries.find(
+          (entry) =>
+            entry.session?.active !== false &&
+            Object.values(entry.session?.participants ?? {}).some(
+              (record) => record?.pane_id === requestedPane,
+            ),
+        )?.path ?? null;
+    } else if (entries.length > 0) {
+      resumePath = resolveSessionPath(self);
+    }
+
+    if (resumePath) {
       let resumed;
       try {
-        resumed = await verifiedSession();
+        resumed = await verifiedSessionAt(self, resumePath);
       } catch (error) {
         let sid = "<sid>";
         try {
-          sid = JSON.parse(readFileSync(path, "utf8")).sid ?? sid;
+          sid = JSON.parse(readFileSync(resumePath, "utf8")).sid ?? sid;
         } catch {}
         fail(
           `cannot resume existing current-tab session: ${error.message}. That session cannot be recovered — with explicit user approval, DISCARD it with: node ${shellQuote(scriptPath)} end ${pinnedCliText(self, callerContext.repoRoot)} --sid ${shellQuote(sid)} --stale true, then init a fresh pair`,
@@ -773,7 +935,8 @@ async function initSession(args) {
       return;
     }
 
-    const binding = discover();
+    const binding = { self, partner: choosePartnerPane(self, entries, requestedPane) };
+    const path = sessionPathFor(self, binding.partner.pane_id);
     const session = {
       schema_version: schemaVersion,
       sid: `${Math.floor(Date.now() / 1000)}-${execFileSync("openssl", ["rand", "-hex", "2"], { encoding: "utf8" }).trim()}`,
@@ -828,12 +991,14 @@ function validateSessionEnvelope(session, live) {
 
 // An established session is resolved through its own recorded participants,
 // not through tab-wide discovery: the tab may legitimately hold other agent
-// panes (reviews, extra workers) after the pair was formed, and none of them
-// may hijack or silence the recorded pair. The exact-two invariant applies
-// only while the pair is being formed (spawn/init/discover).
-async function verifiedSession() {
+// panes (reviews, extra workers, the caller's OTHER pairs) and none of them
+// may hijack or silence this one. Every check below is per session.
+async function verifiedSession(sid = null) {
   const self = currentPane();
-  const path = sessionPath(self);
+  return verifiedSessionAt(self, resolveSessionPath(self, sid));
+}
+
+async function verifiedSessionAt(self, path) {
   let session;
   try {
     session = JSON.parse(readFileSync(path, "utf8"));
@@ -1005,7 +1170,7 @@ async function verifyInbound(args) {
   const claimedFrom = options.from;
   if (!claimedSid || !claimedFrom) fail("receive requires --sid and --from");
 
-  const binding = await verifiedSession();
+  const binding = await verifiedSession(claimedSid);
   if (claimedSid !== binding.session.sid) {
     fail(`inbound sid ${claimedSid} does not match current-tab session ${binding.session.sid}`);
   }
@@ -1304,8 +1469,8 @@ async function nudgeOnce(binding) {
   return { nudged: true, obligation };
 }
 
-async function nudgeSession() {
-  const binding = await verifiedSession();
+async function nudgeSession(args) {
+  const binding = await verifiedSession(parseOptions(args).sid ?? null);
   await reconcileAcknowledged(binding.path, binding.session.sid);
   binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
   const outcome = await nudgeOnce(binding);
@@ -1333,7 +1498,7 @@ async function watchSession(args) {
   for (;;) {
     let binding;
     try {
-      binding = await verifiedSession();
+      binding = await verifiedSession(options.sid ?? null);
     } catch (error) {
       process.stdout.write(`watch: session over or unverifiable (${error.message}); stopping\n`);
       return;
@@ -1364,8 +1529,8 @@ async function watchSession(args) {
   }
 }
 
-async function resetSession() {
-  const binding = await verifiedSession();
+async function resetSession(args) {
+  const binding = await verifiedSession(parseOptions(args).sid ?? null);
   await reconcileAcknowledged(binding.path, binding.session.sid);
   await withSessionLock(binding.path, (session) => {
     requireLockedSession(session, binding.session.sid, "reset");
@@ -1396,9 +1561,9 @@ async function endSession(args) {
   // the session impossible to end — it becomes a participant mismatch that
   // --stale true can override.
   const self = currentPane();
+  const path = resolveSessionPath(self, options.sid);
   let partner = null;
   {
-    const path = sessionPath(self);
     let recorded = null;
     try {
       recorded = JSON.parse(readFileSync(path, "utf8")).participants ?? null;
@@ -1436,8 +1601,7 @@ async function endSession(args) {
     }
   }
   const binding = { self, partner };
-  const path = sessionPath(binding.self);
-  const directory = dirname(path);
+  const directory = tabDirectory(self);
   const workspaceDirectory = dirname(directory);
   if (!existsSync(path)) fail(`cannot load current-tab session ${path}: file does not exist`);
   const lock = `${path}.lock`;
@@ -1475,8 +1639,9 @@ async function endSession(args) {
     }
     session.active = false;
     atomicWrite(path, session);
+    // Only this pair's own file goes: the tab's other pairs keep running.
     try {
-      execFileSync(trash, [directory]);
+      execFileSync(trash, [path]);
     } catch (error) {
       if (existsSync(path)) {
         session.active = true;
@@ -1492,10 +1657,12 @@ async function endSession(args) {
     releaseLock(lock, lockOwner);
   }
 
-  try {
-    rmdirSync(workspaceDirectory);
-  } catch (error) {
-    if (!["ENOENT", "ENOTEMPTY"].includes(error.code)) throw error;
+  for (const stale of [directory, workspaceDirectory]) {
+    try {
+      rmdirSync(stale);
+    } catch (error) {
+      if (!["ENOENT", "ENOTEMPTY"].includes(error.code)) throw error;
+    }
   }
   process.stdout.write(`ended herdr-pair session ${session.sid} for tab ${binding.self.tab_id}\n`);
 }
@@ -1509,7 +1676,7 @@ async function send(args) {
     fail("send requires --sid, --kind, and --body-file");
   }
 
-  let binding = await verifiedSession();
+  let binding = await verifiedSession(claimedSid);
   if (binding.session.sid !== claimedSid) {
     fail(
       `send sid ${claimedSid} does not match current-tab session ${binding.session.sid}`,
@@ -1522,7 +1689,7 @@ async function send(args) {
   // idleness: both harnesses queue a submitted prompt while working, and
   // promptReservedDelivery proves landing from the composer itself. The wait
   // is a short grace period; on timeout the message is delivered queued.
-  binding = await verifiedSession();
+  binding = await verifiedSession(claimedSid);
   if (binding.session.sid !== claimedSid) {
     fail(
       `send sid ${claimedSid} no longer matches current-tab session ${binding.session.sid}`,
@@ -1533,7 +1700,7 @@ async function send(args) {
       binding.partner.pane_id,
       Number(options["timeout-ms"] ?? 10000),
     );
-    binding = await verifiedSession();
+    binding = await verifiedSession(claimedSid);
     if (binding.session.sid !== claimedSid) {
       fail(
         `send sid ${claimedSid} no longer matches current-tab session ${binding.session.sid}`,
@@ -1603,7 +1770,7 @@ async function send(args) {
 
 async function reconcileSession(args) {
   const options = parseOptions(args);
-  const binding = await verifiedSession();
+  const binding = await verifiedSession(options.sid ?? null);
   let reconciled;
   let cleared = null;
   if (options["clear-pending"] !== undefined) {
@@ -1629,8 +1796,6 @@ async function reconcileSession(args) {
     });
     reconciled = resolution.reconciled;
     cleared = resolution.cleared;
-  } else if (options.sid !== undefined) {
-    fail("--sid is only valid with --clear-pending true");
   } else {
     reconciled = await reconcileAcknowledged(binding.path, binding.session.sid);
   }
@@ -1657,7 +1822,7 @@ async function main() {
   } else if (command === "init") {
     await initSession(args);
   } else if (command === "verify") {
-    const binding = await verifiedSession();
+    const binding = await verifiedSession(options.sid ?? null);
     await reconcileAcknowledged(binding.path, binding.session.sid);
     binding.session = JSON.parse(readFileSync(binding.path, "utf8"));
     process.stdout.write(
@@ -1668,18 +1833,18 @@ async function main() {
   } else if (command === "send") {
     await send(args);
   } else if (command === "nudge") {
-    await nudgeSession();
+    await nudgeSession(args);
   } else if (command === "watch") {
     await watchSession(args);
   } else if (command === "reset") {
-    await resetSession();
+    await resetSession(args);
   } else if (command === "reconcile") {
     await reconcileSession(args);
   } else if (command === "end") {
     await endSession(args);
   } else {
     fail(
-      `usage: herdr-pair.mjs COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--partner ${kindList}] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
+      `usage: herdr-pair.mjs COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--sid ID] [--partner ${kindList}] [--partner-pane ID] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
     );
   }
 }
