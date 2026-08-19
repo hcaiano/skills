@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"cursor-1"}
+{"type":"thinking","subtype":"delta","text":"checking","session_id":"cursor-1"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]},"session_id":"cursor-1"}
+{"type":"result","subtype":"success","is_error":false,"result":"[agent cursor -> claude kind=ready sid=cursor-1]\n\ndone","session_id":"cursor-1"}

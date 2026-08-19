@@ -1,0 +1,5 @@
+{"type":"thought","data":"checking"}
+{"type":"text","data":"[agent grok -> claude kind=ready sid=g-1]\n\n"}
+{"type":"text","data":"done"}
+{"type":"usage","usage":{"input_tokens":10,"output_tokens":4}}
+{"type":"end","stopReason":"end_turn","sessionId":"g-1"}

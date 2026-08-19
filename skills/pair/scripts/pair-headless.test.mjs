@@ -32,6 +32,7 @@ import {
   newSessionId,
   parseClaudeResult,
   parseCursorSessionId,
+  parseGrokStream,
   parseSessionId,
   parseTextReply,
   processAlive,
@@ -44,6 +45,7 @@ import {
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const helper = join(directory, "pair-headless.mjs");
+const fixtures = join(directory, "fixtures");
 const root = mkdtempSync(join(tmpdir(), "pair-headless-test-"));
 const bin = join(root, "bin");
 mkdirSync(bin, { recursive: true });
@@ -76,7 +78,7 @@ ${markerProbe}
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "codex", argv, stdin, cwd: process.cwd() }) + "\\n");
 if (mode === "hang") { setInterval(() => {}, 1000); return; }
-if (mode !== "nosid") process.stderr.write("session id: ${CODEX_SID}\\n");
+if (mode !== "nosid") process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "${CODEX_SID}" }) + "\\n");
 const out = argv[argv.indexOf("-o") + 1];
 if (mode === "fail") { process.stderr.write("rate limit\\n"); process.exit(1); }
 if (mode === "empty") { fs.writeFileSync(out, "   \\n"); process.exit(0); }
@@ -121,7 +123,8 @@ fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "cursor-agent", ar
 if (mode === "fail") { process.stderr.write("cursor auth expired\\n"); process.exit(1); }
 process.stdout.write(JSON.stringify({
   type: "result",
-  chat_id: "${CURSOR_SID}",
+  session_id: "${CURSOR_SID}",
+  is_error: false,
   result: mode === "empty" ? "" : "[agent cursor -> claude kind=ready sid=${CURSOR_SID}]\\n\\ncursor reviewed",
 }) + "\\n");
 process.exit(0);
@@ -138,10 +141,27 @@ const promptFile = argv[argv.indexOf("--prompt-file") + 1];
 const stdin = fs.readFileSync(promptFile, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "grok", argv, stdin, cwd: process.cwd() }) + "\\n");
 if (mode === "fail") { process.stderr.write("grok rate limit\\n"); process.exit(1); }
-process.stdout.write(JSON.stringify({
-  type: "result",
-  response: mode === "empty" ? "" : "grok reviewed",
-}) + "\\n");
+if (mode === "hang-partial") {
+  process.stdout.write(JSON.stringify({ type: "text", data: "partial answer" }) + "\\n");
+  setInterval(() => {}, 1000);
+  return;
+}
+if (mode === "live") {
+  let n = 0;
+  const timer = setInterval(() => {
+    process.stdout.write(JSON.stringify({ type: "thought", data: String(n++) }) + "\\n");
+    if (n === 5) {
+      clearInterval(timer);
+      process.stdout.write(JSON.stringify({ type: "text", data: "grok reviewed" }) + "\\n");
+      process.stdout.write(JSON.stringify({ type: "end", stopReason: "end_turn", sessionId: argv.includes("--session-id") ? argv[argv.indexOf("--session-id") + 1] : argv[argv.indexOf("--resume") + 1] }) + "\\n");
+      process.exit(0);
+    }
+  }, 300);
+  return;
+}
+if (mode !== "empty") process.stdout.write(JSON.stringify({ type: "text", data: "grok reviewed" }) + "\\n");
+const sessionId = argv.includes("--session-id") ? argv[argv.indexOf("--session-id") + 1] : argv[argv.indexOf("--resume") + 1];
+process.stdout.write(JSON.stringify({ type: "end", stopReason: mode === "cancel" ? "cancelled" : "end_turn", sessionId }) + "\\n");
 process.exit(0);
 `,
 );
@@ -249,18 +269,18 @@ test("each turn's command matches the flags the installed CLIs accept", () => {
   const create = turnCommand({ partner: "codex", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false });
   assert.deepEqual(create, {
     bin: "codex",
-    args: ["exec", "-s", "read-only", "-C", "/repo", "-o", "/r", "-"],
+    args: ["exec", "-s", "read-only", "-C", "/repo", "--json", "-o", "/r", "-"],
     promptVia: "stdin",
   });
   // Model and effort are session settings: they go in when it is created.
   assert.deepEqual(
     turnCommand({ partner: "codex", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false, model: "gpt-5", effort: "high" }).args,
-    ["exec", "-s", "read-only", "-C", "/repo", "-m", "gpt-5", "-c", 'model_reasoning_effort="high"', "-o", "/r", "-"],
+    ["exec", "-s", "read-only", "-C", "/repo", "-m", "gpt-5", "-c", 'model_reasoning_effort="high"', "--json", "-o", "/r", "-"],
   );
   const resume = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true });
   // `codex exec resume` accepts neither -C nor -s, so the sandbox arrives as a
   // config override and the directory through the spawn's cwd.
-  assert.deepEqual(resume.args, ["exec", "resume", "S", "-c", 'sandbox_mode="workspace-write"', "-o", "/r", "-"]);
+  assert.deepEqual(resume.args, ["exec", "resume", "S", "-c", 'sandbox_mode="workspace-write"', "--json", "-o", "/r", "-"]);
   const claudeCreate = turnCommand({ partner: "claude", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false });
   // stream-json, not json: a `json` run stays silent until it finishes, which
   // would make the idle deadline kill a long working turn.
@@ -278,13 +298,13 @@ test("cursor and grok turns carry each CLI's own read-only and resume flags", ()
     turnCommand({ partner: "cursor", sid: null, resume: false, write: false, model: "claude-opus-4-8", effort: "high" }),
     {
       bin: "cursor-agent",
-      args: ["-p", "--trust", "--output-format", "json", "--model", "claude-opus-4-8[effort=high]", "--mode", "plan"],
+      args: ["-p", "--trust", "--output-format", "stream-json", "--model", "claude-opus-4-8[effort=high]", "--mode", "plan"],
       promptVia: "stdin",
     },
   );
   assert.deepEqual(
     turnCommand({ partner: "cursor", sid: "chat-1", resume: true, write: true }).args,
-    ["-p", "--trust", "--output-format", "json", "--resume", "chat-1"],
+    ["-p", "--trust", "--output-format", "stream-json", "--resume", "chat-1"],
   );
   // Cursor parameterizes the model itself, so effort has nowhere to go without one.
   assert.equal(cursorModel(null, "high"), null);
@@ -296,7 +316,7 @@ test("cursor and grok turns carry each CLI's own read-only and resume flags", ()
     {
       bin: "grok",
       args: [
-        "--prompt-file", "/p", "--output-format", "json", "--session-id", "u-1",
+        "--prompt-file", "/p", "--output-format", "streaming-json", "--session-id", "u-1",
         "--permission-mode", "plan", "-m", "grok-5", "--reasoning-effort", "high",
       ],
       promptVia: "file",
@@ -304,7 +324,7 @@ test("cursor and grok turns carry each CLI's own read-only and resume flags", ()
   );
   assert.deepEqual(
     turnCommand({ partner: "grok", sid: "u-1", resume: true, promptFile: "/p", write: true }).args,
-    ["--prompt-file", "/p", "--output-format", "json", "--resume", "u-1", "--permission-mode", "acceptEdits"],
+    ["--prompt-file", "/p", "--output-format", "streaming-json", "--resume", "u-1", "--permission-mode", "acceptEdits"],
   );
   assert.match(newSessionId("grok"), /^[0-9a-f-]{36}$/u);
   for (const partner of ["claude", "codex", "cursor"]) assert.equal(newSessionId(partner), null);
@@ -327,6 +347,8 @@ test("every flag the four CLIs are sent is one they accept", (t) => {
     for (const token of args.filter((part) => part.startsWith("-"))) {
       assert.ok(accepted.has(token), `${binary} does not accept ${token}`);
     }
+    const expectedFormat = binary === "grok" ? "streaming-json" : "stream-json";
+    assert.match(help.stdout, new RegExp(`\\b${expectedFormat}\\b`, "u"));
   }
 });
 
@@ -340,6 +362,7 @@ test("every flag the helper sends is one the installed CLIs accept", (t) => {
   for (const token of args.filter((part) => part.startsWith("-") && part !== "-")) {
     assert.ok(accepted.has(token), `codex exec resume does not accept ${token}`);
   }
+  assert.match(help.stdout, /--json[\s\S]*JSONL/u);
 
   const claudeHelp = spawnSync("claude", ["--help"], { encoding: "utf8" });
   if (claudeHelp.status !== 0) return t.skip("claude is not installed");
@@ -356,7 +379,7 @@ test("every flag the helper sends is one the installed CLIs accept", (t) => {
 });
 
 test("session ids come out of each CLI's own report", () => {
-  assert.equal(parseSessionId("codex", "prep\nsession id: abc-123\nrunning"), "abc-123");
+  assert.equal(parseSessionId("codex", '{"type":"thread.started","thread_id":"abc-123"}'), "abc-123");
   assert.equal(parseSessionId("codex", "no id here"), null);
   assert.equal(parseSessionId("claude", `noise\n${JSON.stringify({ type: "result", session_id: "s1", result: "hi" })}`), "s1");
   assert.equal(parseClaudeResult("not json"), null);
@@ -582,6 +605,132 @@ test("a hung turn is killed on its idle deadline", () => {
   assert.match(hung.receipt.reason, /hang: no output for/u);
 });
 
+test("stream activity keeps a turn alive past its idle window", () => {
+  const repo = newRepo("stream-liveness");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
+  const receipt = run(
+    "live",
+    "claude",
+    "send",
+    "--repo",
+    repo,
+    "--kind",
+    "question",
+    "--body-file",
+    bodyFile("keep streaming"),
+    "--idle-min",
+    "0.01",
+  ).receipt;
+  assert.equal(receipt.status, "replied");
+  assert.match(receipt.reply, /grok reviewed/u);
+});
+
+test("a killed stream keeps assistant text as a partial reply", () => {
+  const repo = newRepo("partial-hang");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
+  const receipt = run(
+    "hang-partial",
+    "claude",
+    "send",
+    "--repo",
+    repo,
+    "--kind",
+    "task",
+    "--body-file",
+    bodyFile("work"),
+    "--idle-min",
+    "0.01",
+  ).receipt;
+  assert.equal(receipt.status, "hang-killed");
+  assert.equal(receipt.partial_reply, true);
+  assert.equal(readFileSync(receipt.reply_file, "utf8").trim(), "partial answer");
+});
+
+test("background send survives its launcher and wait reads the atomic receipt", () => {
+  const repo = newRepo("background-send");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
+  const running = run(
+    "live",
+    "claude",
+    "send",
+    "--repo",
+    repo,
+    "--kind",
+    "question",
+    "--body-file",
+    bodyFile("background"),
+    "--background",
+    "--idle-min",
+    "0.01",
+  ).receipt;
+  assert.equal(running.status, "running");
+  assert.ok(running.supervisor_pid > 0);
+  assert.ok(running.partner_pid > 0);
+  const final = run("live", "claude", "wait", "--repo", repo, "--seq", String(running.seq), "--timeout-min", "0.1").receipt;
+  assert.equal(final.status, "replied");
+  assert.equal(JSON.parse(readFileSync(final.receipt_file, "utf8")).status, "replied");
+  assert.equal(existsSync(join(realpathSync(repo), ".git", "pair", "in-flight.json")), false);
+  const after = run("live", "claude", "wait", "--repo", repo, "--timeout-min", "0.1").receipt;
+  assert.equal(after.status, "replied", "wait defaults to state.seq after the marker is gone");
+});
+
+test("Grok cancellations are classified and two consecutive turns suggest a fork", () => {
+  const repo = newRepo("grok-cancelled");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
+  const send = () => run("cancel", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("continue")).receipt;
+  const first = send();
+  assert.equal(first.status, "failed");
+  assert.equal(first.reason, "grok-cancelled");
+  assert.equal(first.recovery, undefined);
+  const second = send();
+  assert.equal(second.reason, "grok-cancelled");
+  assert.match(second.recovery, /two consecutive/u);
+  const recovered = run("ok", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("health")).receipt;
+  assert.equal(recovered.status, "replied");
+  assert.equal(run("ok", "claude", "status", "--repo", repo).receipt.grok_cancelled_consecutive, 0);
+});
+
+test("a scheduled Grok fork commits only after the new session is proved", () => {
+  const repo = newRepo("grok-fork");
+  const created = run("ok", "claude", "init", "--repo", repo, "--partner", "grok").receipt;
+  const scheduled = run("ok", "claude", "fork", "--repo", repo).receipt;
+  assert.equal(scheduled.status, "fork-scheduled");
+  assert.equal(scheduled.sid, created.sid);
+  const forked = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("continue")).receipt;
+  assert.equal(forked.sid, scheduled.pending_sid);
+  const call = invocations()[0];
+  assert.deepEqual(
+    call.argv.slice(2, 9),
+    ["--output-format", "streaming-json", "--resume", created.sid, "--fork-session", "--session-id", scheduled.pending_sid],
+  );
+  assert.match(call.stdin, new RegExp(`Session fork: ${created.sid} is now ${scheduled.pending_sid}`, "u"));
+  const status = run("ok", "claude", "status", "--repo", repo).receipt;
+  assert.equal(status.sid, scheduled.pending_sid);
+  assert.equal(status.pending_fork, null);
+  assert.deepEqual(status.forked[0], {
+    sid: created.sid,
+    forked_at: status.forked[0].forked_at,
+    successor_sid: scheduled.pending_sid,
+  });
+  const resumed = run("ok", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("again")).receipt;
+  assert.equal(resumed.status, "replied");
+  assert.ok(invocations()[0].argv.includes(scheduled.pending_sid));
+});
+
+test("a failed fork keeps recovery state and retry chooses a fresh target", () => {
+  const repo = newRepo("grok-fork-failure");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
+  const first = run("ok", "claude", "fork", "--repo", repo).receipt;
+  const failed = run("fail", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("fork now")).receipt;
+  assert.equal(failed.status, "failed");
+  const status = run("ok", "claude", "status", "--repo", repo).receipt;
+  assert.notEqual(status.sid, first.pending_sid);
+  assert.equal(status.pending_fork.new_sid, first.pending_sid);
+  assert.equal(run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("unsafe retry")).receipt.ok, false);
+  const retry = run("ok", "claude", "fork", "--repo", repo, "--retry").receipt;
+  assert.notEqual(retry.pending_sid, first.pending_sid);
+});
+
 test("a Codex lead pairs with a headless Claude partner", () => {
   const repo = newRepo("claude-partner");
   const created = run("ok", "codex", "init", "--repo", repo, "--partner", "claude");
@@ -604,11 +753,11 @@ test("a cursor partner's chat id comes out of its JSON, and its reply with it", 
   assert.equal(created.partner, "cursor");
   assert.equal(created.sid, CURSOR_SID);
   const [boot] = invocations();
-  assert.deepEqual(boot.argv, ["-p", "--trust", "--output-format", "json", "--mode", "plan"]);
+  assert.deepEqual(boot.argv, ["-p", "--trust", "--output-format", "stream-json", "--mode", "plan"]);
   const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("read it"));
   assert.equal(sent.receipt.status, "replied");
   assert.match(sent.receipt.reply, /cursor reviewed/u);
-  assert.deepEqual(invocations()[0].argv, ["-p", "--trust", "--output-format", "json", "--resume", CURSOR_SID, "--mode", "plan"]);
+  assert.deepEqual(invocations()[0].argv, ["-p", "--trust", "--output-format", "stream-json", "--resume", CURSOR_SID, "--mode", "plan"]);
   assert.equal(invocations()[0].stdin, `[agent claude -> cursor kind=review sid=${CURSOR_SID}]\n\nread it\n`);
 });
 
@@ -619,7 +768,7 @@ test("a grok partner is handed the session id it will resume, and reads its prom
   assert.match(created.sid, /^[0-9a-f-]{36}$/u);
   assert.equal(created.role, "executor");
   const [boot] = invocations();
-  assert.deepEqual(boot.argv.slice(0, 6), ["--prompt-file", boot.argv[1], "--output-format", "json", "--session-id", created.sid]);
+  assert.deepEqual(boot.argv.slice(0, 6), ["--prompt-file", boot.argv[1], "--output-format", "streaming-json", "--session-id", created.sid]);
   assert.match(boot.stdin, /You are the executor/u);
 
   // An executor partner holds the write lease by default; the turn can still
@@ -628,7 +777,7 @@ test("a grok partner is handed the session id it will resume, and reads its prom
   assert.equal(sent.status, "replied");
   assert.equal(sent.write, true);
   const resumed = invocations()[0];
-  assert.deepEqual(resumed.argv.slice(2), ["--output-format", "json", "--resume", created.sid, "--permission-mode", "acceptEdits"]);
+  assert.deepEqual(resumed.argv.slice(2), ["--output-format", "streaming-json", "--resume", created.sid, "--permission-mode", "acceptEdits"]);
   assert.equal(resumed.stdin, `[agent claude -> grok kind=task sid=${created.sid}]\n\nimplement\n`);
   const reviewed = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("look"), "--read-only").receipt;
   assert.equal(reviewed.write, false);
@@ -636,15 +785,17 @@ test("a grok partner is handed the session id it will resume, and reads its prom
   assert.equal(run("ok", "claude", "status", "--repo", repo).receipt.role, "executor");
 });
 
-test("init refuses a partner the lead is already running, and an effort the CLI has no door for", () => {
+test("init refuses a partner the lead is already running and invalid settings", () => {
   const repo = newRepo("same-cli");
   const refused = run("ok", "claude", "init", "--repo", repo, "--partner", "claude").receipt;
   assert.match(refused.reason, /refusing to pair claude with itself/u);
   assert.deepEqual(invocations(), []);
   const missing = run("ok", "claude", "init", "--repo", repo).receipt;
   assert.match(missing.reason, /missing --partner/u);
-  const noEffort = run("ok", "codex", "init", "--repo", repo, "--partner", "claude", "--effort", "high").receipt;
-  assert.match(noEffort.reason, /claude has no reasoning-effort control/u);
+  const claudeEffortRepo = newRepo("claude-effort");
+  const claudeEffort = run("ok", "codex", "init", "--repo", claudeEffortRepo, "--partner", "claude", "--effort", "high").receipt;
+  assert.equal(claudeEffort.effort, "high");
+  assert.ok(invocations()[0].argv.includes("--effort"));
   const bareEffort = run("ok", "claude", "init", "--repo", repo, "--partner", "cursor", "--effort", "high").receipt;
   assert.match(bareEffort.reason, /--effort needs --model/u);
   const badRole = run("ok", "claude", "init", "--repo", repo, "--partner", "codex", "--role", "boss").receipt;
@@ -654,11 +805,34 @@ test("init refuses a partner the lead is already running, and an effort the CLI 
 test("cursor and grok replies are lifted out of the run's own output", () => {
   assert.equal(parseCursorSessionId('{"type":"result","chat_id":"c-1","result":"hi"}'), "c-1");
   assert.equal(parseCursorSessionId("no json here"), null);
-  // Pretty-printed single objects and NDJSON both have to parse.
-  assert.equal(parseCursorSessionId('{\n  "session_id": "c-2"\n}'), "c-2");
+  assert.equal(parseCursorSessionId('{"type":"result","session_id":"c-2","result":"ok"}'), "c-2");
+  assert.equal(parseCursorSessionId('{"type":"tool","id":"not-a-chat"}'), null);
   assert.equal(parseTextReply('{"response":"first"}\n{"response":"last"}'), "last");
   assert.equal(parseTextReply('{"response":""}'), null);
+  assert.deepEqual(
+    parseGrokStream('{"type":"thought","data":"hidden"}\n{"type":"text","data":"hello "}\n{"type":"text","data":"world"}\n{"type":"end","stopReason":"end_turn","sessionId":"g-1"}'),
+    { reply: "hello world", stopReason: "end_turn", sessionId: "g-1" },
+  );
   assert.equal(parseSessionId("grok", "anything at all"), null);
+});
+
+test("recorded live stream fixtures keep each parser on its partner's schema", () => {
+  const grok = parseGrokStream(readFileSync(join(fixtures, "grok-stream-complete.jsonl"), "utf8"));
+  assert.deepEqual(grok, {
+    reply: "[agent grok -> claude kind=ready sid=g-1]\n\ndone",
+    stopReason: "end_turn",
+    sessionId: "g-1",
+  });
+  const incomplete = parseGrokStream(readFileSync(join(fixtures, "grok-stream-incomplete.jsonl"), "utf8"));
+  assert.deepEqual(incomplete, { reply: "partial result", stopReason: null, sessionId: null });
+  const cancelled = parseGrokStream(readFileSync(join(fixtures, "grok-stream-cancelled.jsonl"), "utf8"));
+  assert.deepEqual(cancelled, { reply: null, stopReason: "cancelled", sessionId: "g-2" });
+
+  const cursor = readFileSync(join(fixtures, "cursor-stream.jsonl"), "utf8");
+  assert.equal(parseCursorSessionId(cursor), "cursor-1");
+  assert.match(parseTextReply(cursor), /done$/u);
+  const codex = readFileSync(join(fixtures, "codex-stream.jsonl"), "utf8");
+  assert.equal(parseSessionId("codex", codex), "codex-1");
 });
 
 test("the cursor and grok session stores answer the same positive-absence rule", () => {
@@ -906,9 +1080,9 @@ test("the marker carries the partner process once it exists", () => {
   assert.equal(receipt.status, "replied");
   const seen = JSON.parse(readFileSync(join(root, "marker-seen.json"), "utf8"));
   assert.equal(seen.seq, 1);
-  assert.equal(seen.pid > 0, true);
-  assert.equal(Number.isInteger(seen.child_pid), true, "the CLI's own pid must reach the marker while it runs");
-  assert.notEqual(seen.child_pid, seen.pid);
+  assert.equal(seen.supervisor_pid > 0, true);
+  assert.equal(Number.isInteger(seen.partner_pid), true, "the CLI's own pid must reach the marker while it runs");
+  assert.notEqual(seen.partner_pid, seen.supervisor_pid);
 });
 
 test("a turn whose marker was replaced reports it instead of clearing someone else's", () => {

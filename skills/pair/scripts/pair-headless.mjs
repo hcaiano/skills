@@ -8,6 +8,9 @@
 //   node pair-headless.mjs init   --repo <root> --partner claude|codex|cursor|grok
 //                                 [--model <name>] [--effort <level>] [--role peer|executor]
 //   node pair-headless.mjs send   --repo <root> --kind <kind> --body-file <path> [--write|--read-only]
+//                                 [--background]
+//   node pair-headless.mjs wait   --repo <root> [--seq N] [--timeout-min 65]
+//   node pair-headless.mjs fork   --repo <root> [--retry]
 //   node pair-headless.mjs status --repo <root>
 //   node pair-headless.mjs clear  --repo <root>
 //   node pair-headless.mjs end    --repo <root>
@@ -45,6 +48,8 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 const POLL_MS = 2000;
+const WAIT_POLL_MS = 100;
+const START_TIMEOUT_MS = 10000;
 const SCHEMA = 1;
 const KINDS = new Set([
   "task",
@@ -210,9 +215,11 @@ const readMarker = (lockPath) => {
 // into that session is the corruption the lock exists to prevent.
 export const markerAlive = (marker, alive = processAlive) => {
   if (!marker) return false;
-  if (Number.isInteger(marker.child_pid) && alive(marker.child_pid)) return true;
-  if (Number.isInteger(marker.child_pid)) return alive(marker.pid);
-  return alive(marker.pid);
+  const partnerPid = marker.partner_pid ?? marker.child_pid;
+  const supervisorPid = marker.supervisor_pid ?? marker.pid;
+  if (Number.isInteger(partnerPid) && alive(partnerPid)) return true;
+  if (Number.isInteger(supervisorPid) && alive(supervisorPid)) return true;
+  return alive(marker.launcher_pid);
 };
 
 // Acquisition has exactly two outcomes: the link wins, or the send refuses with
@@ -260,10 +267,13 @@ export const acquireMarker = (lockPath, marker) => {
 export const releaseMarker = (lockPath, marker) => {
   const holder = readMarker(lockPath);
   if (!holder) return { released: false };
-  if (holder.seq !== marker.seq || holder.pid !== marker.pid) {
+  const sameOwner = marker.owner_token
+    ? holder.owner_token === marker.owner_token
+    : holder.pid === marker.pid;
+  if (holder.seq !== marker.seq || !sameOwner) {
     return {
       released: false,
-      note: `left an in-flight marker owned by seq ${holder.seq} pid ${holder.pid} — this turn was seq ${marker.seq} pid ${marker.pid}`,
+      note: `left an in-flight marker owned by seq ${holder.seq} pid ${holder.supervisor_pid ?? holder.pid ?? "unknown"} — this turn was seq ${marker.seq} pid ${marker.supervisor_pid ?? marker.pid ?? "unknown"}`,
     };
   }
   try {
@@ -347,10 +357,10 @@ export const sessionKnown = (partner, sid, root, env = process.env, home = homed
 
 // --- partner turns ----------------------------------------------------------
 
-// Reasoning effort reaches each CLI through a different door, and one of them
-// has no door at all: Grok takes a flag, Codex a config override, Cursor a
-// bracket suffix inside the model name, and Claude Code exposes none.
-export const EFFORT_SUPPORT = { claude: false, codex: true, cursor: true, grok: true };
+// Reasoning effort reaches each CLI through a different door: Grok and Claude
+// take flags, Codex a config override, and Cursor a bracket suffix inside the
+// model name.
+export const EFFORT_SUPPORT = { claude: true, codex: true, cursor: true, grok: true };
 
 // Cursor parameterizes the model itself, so an effort with no model has nowhere
 // to go and the caller has to name one.
@@ -368,7 +378,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
   if (partner === "codex") {
     const sandbox = write ? "workspace-write" : "read-only";
     if (resume) {
-      return { bin: "codex", args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, "-o", replyFile, "-"], promptVia: "stdin" };
+      return { bin: "codex", args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, "--json", "-o", replyFile, "-"], promptVia: "stdin" };
     }
     return {
       bin: "codex",
@@ -380,6 +390,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
         root,
         ...(model ? ["-m", model] : []),
         ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+        "--json",
         "-o",
         replyFile,
         "-",
@@ -399,6 +410,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
       "--strict-mcp-config",
       "--no-chrome",
       ...(model && !resume ? ["--model", model] : []),
+      ...(effort ? ["--effort", effort] : []),
       "--permission-mode",
       write ? "acceptEdits" : "plan",
     ];
@@ -415,7 +427,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
         "-p",
         "--trust", // headless runs refuse an untrusted directory outright; the repo is the user's own task repo
         "--output-format",
-        "json",
+        "stream-json",
         ...(resume ? ["--resume", sid] : []),
         ...(named && !resume ? ["--model", named] : []),
         ...(write ? [] : ["--mode", "plan"]),
@@ -432,8 +444,12 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
       "--prompt-file",
       promptFile,
       "--output-format",
-      "json",
-      ...(resume ? ["--resume", sid] : ["--session-id", sid]),
+      "streaming-json",
+      ...(resume?.fork
+        ? ["--resume", resume.oldSid, "--fork-session", "--session-id", resume.newSid]
+        : resume
+          ? ["--resume", sid]
+          : ["--session-id", sid]),
       "--permission-mode",
       write ? "acceptEdits" : "plan",
       ...(model && !resume ? ["-m", model] : []),
@@ -448,8 +464,8 @@ export const newSessionId = (partner) => (partner === "grok" ? randomUUID() : nu
 
 export const parseSessionId = (partner, transcript) => {
   if (partner === "codex") {
-    const match = transcript.match(/session id:\s*(\S+)/iu);
-    return match ? match[1] : null;
+    const started = parseJsonObjects(transcript).find((event) => event.type === "thread.started");
+    return typeof started?.thread_id === "string" ? started.thread_id : null;
   }
   if (partner === "cursor") return parseCursorSessionId(transcript);
   if (partner === "grok") return null; // pre-generated, never parsed
@@ -476,12 +492,15 @@ export const parseJsonObjects = (transcript) => {
   return objects;
 };
 
-const SESSION_ID_KEYS = ["chat_id", "chatId", "session_id", "sessionId", "id"];
+const SESSION_ID_KEYS = ["chat_id", "chatId", "session_id", "sessionId"];
 
 // Cursor names the chat differently across output shapes, so take the first
 // key that carries one and keep the parser tolerant rather than guess a shape.
 export const parseCursorSessionId = (transcript) => {
-  for (const object of parseJsonObjects(transcript)) {
+  const objects = parseJsonObjects(transcript);
+  for (let index = objects.length - 1; index >= 0; index--) {
+    const object = objects[index];
+    if (object.type !== "result" || object.is_error === true) continue;
     for (const key of SESSION_ID_KEYS) {
       if (typeof object[key] === "string" && object[key].trim()) return object[key];
     }
@@ -502,6 +521,29 @@ export const parseTextReply = (transcript) => {
     }
   }
   return null;
+};
+
+export const parseCursorResult = (transcript) => {
+  const objects = parseJsonObjects(transcript);
+  for (let index = objects.length - 1; index >= 0; index--) {
+    const event = objects[index];
+    if (event.type === "result") return event;
+  }
+  return null;
+};
+
+export const parseGrokStream = (transcript) => {
+  const events = parseJsonObjects(transcript);
+  const reply = events
+    .filter((event) => event.type === "text" && typeof event.data === "string")
+    .map((event) => event.data)
+    .join("");
+  const end = [...events].reverse().find((event) => event.type === "end") ?? null;
+  return {
+    reply: reply.trim() || null,
+    stopReason: typeof end?.stopReason === "string" ? end.stopReason : null,
+    sessionId: typeof end?.sessionId === "string" ? end.sessionId : null,
+  };
 };
 
 // The stream carries many objects and several of them hold a session_id — the
@@ -533,11 +575,25 @@ export const parseClaudeResult = (transcript) => {
 // Codex is the only partner that writes the reply itself (`-o`); for the other
 // three the reply has to be lifted out of the run's own output and put where
 // the caller was told to read it.
+export const extractReply = (partner, replyFile, transcript) => {
+  if (partner === "codex") {
+    if (!existsSync(replyFile)) return null;
+    return readFileSync(replyFile, "utf8").trim() || null;
+  }
+  if (partner === "claude") return parseClaudeResult(transcript)?.result?.trim() || null;
+  if (partner === "cursor") {
+    const result = parseCursorResult(transcript);
+    return result?.is_error === false || result?.is_error == null
+      ? (typeof result?.result === "string" && result.result.trim() ? result.result.trim() : null)
+      : null;
+  }
+  return parseGrokStream(transcript).reply;
+};
+
 const writeReply = (partner, replyFile, transcript) => {
-  if (partner === "codex") return;
-  const reply =
-    partner === "claude" ? parseClaudeResult(transcript)?.result : parseTextReply(transcript);
-  writeFileSync(replyFile, `${(reply ?? "").trim()}\n`);
+  const reply = extractReply(partner, replyFile, transcript);
+  if (reply && partner !== "codex") writeFileSync(replyFile, `${reply}\n`);
+  return reply;
 };
 
 // Detached so a signal aimed at this helper's process group cannot decapitate a
@@ -791,6 +847,267 @@ const runInit = () => {
   });
 };
 
+const sleepSync = (ms) =>
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+const atomicJson = (path, value) => {
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`);
+  renameSync(temporary, path);
+};
+
+const turnPaths = (place, seq, kind) => {
+  const stamp = String(seq).padStart(4, "0");
+  return {
+    transcriptPath: join(place.transcripts, `${stamp}-${kind}.log`),
+    replyFile: join(place.transcripts, `${stamp}-${kind}-reply.md`),
+    promptFile: join(place.transcripts, `${stamp}-${kind}-prompt.md`),
+    receiptFile: join(place.transcripts, `${stamp}-${kind}-receipt.json`),
+    startedFile: join(place.transcripts, `${stamp}-${kind}-started.json`),
+  };
+};
+
+const findReceipt = (place, seq) => {
+  const prefix = `${String(seq).padStart(4, "0")}-`;
+  let name;
+  try {
+    name = readdirSync(place.transcripts).find(
+      (entry) => entry.startsWith(prefix) && entry.endsWith("-receipt.json"),
+    );
+  } catch {
+    return null;
+  }
+  return name ? join(place.transcripts, name) : null;
+};
+
+const replaceOwnedMarker = (lockPath, marker, values) => {
+  const holder = readMarker(lockPath);
+  if (
+    holder?.seq !== marker.seq ||
+    holder?.owner_token !== marker.owner_token
+  ) {
+    return null;
+  }
+  const updated = { ...holder, ...values };
+  atomicJson(lockPath, updated);
+  Object.assign(marker, updated);
+  return updated;
+};
+
+const waitForReceipt = (place, seq, timeoutMs) => {
+  const started = Date.now();
+  while (Date.now() - started <= timeoutMs) {
+    const receiptFile = findReceipt(place, seq);
+    if (receiptFile) {
+      try {
+        return JSON.parse(readFileSync(receiptFile, "utf8"));
+      } catch {
+        /* atomic rename means this can only be a foreign/manual file */
+      }
+    }
+    const marker = readMarker(place.lockPath);
+    if (marker?.seq === seq) {
+      const supervisorPid = marker.supervisor_pid ?? marker.pid;
+      if (Number.isInteger(supervisorPid) && !processAlive(supervisorPid)) {
+        return {
+          ok: false,
+          status: "worker-lost",
+          seq,
+          reason: `the supervisor pid ${supervisorPid} exited before it wrote a receipt`,
+          partner_pid: marker.partner_pid ?? marker.child_pid ?? null,
+        };
+      }
+    } else if (marker == null && Date.now() - started > START_TIMEOUT_MS) {
+      return {
+        ok: false,
+        status: "worker-lost",
+        seq,
+        reason: "the turn has no receipt and no in-flight marker",
+      };
+    }
+    sleepSync(WAIT_POLL_MS);
+  }
+  return {
+    ok: false,
+    status: "wait-timeout",
+    seq,
+    reason: `no receipt appeared within ${Math.round(timeoutMs / 60000)}m`,
+  };
+};
+
+const updateTerminalState = (place, stateAtStart, { cancelled, forkSessionId }) => {
+  const current = readState(place.statePath) ?? stateAtStart;
+  const next = { ...current };
+  next.grok_cancelled_consecutive = cancelled
+    ? (current.grok_cancelled_consecutive ?? 0) + 1
+    : 0;
+
+  const pending = current.pending_fork;
+  if (pending && forkSessionId === pending.new_sid) {
+    next.sid = pending.new_sid;
+    next.forked = [
+      ...(Array.isArray(current.forked) ? current.forked : []),
+      {
+        sid: pending.old_sid,
+        forked_at: new Date().toISOString(),
+        successor_sid: pending.new_sid,
+      },
+    ];
+    next.pending_fork = null;
+  } else if (pending && pending.attempted_seq === stateAtStart.seq) {
+    next.pending_fork = {
+      ...pending,
+      failed_at: new Date().toISOString(),
+    };
+  }
+  writeState(place.statePath, next);
+  return next;
+};
+
+const runWorker = () => {
+  const place = requirePlace();
+  const seq = Number(opt("seq"));
+  const kind = opt("kind");
+  const token = opt("worker-token");
+  const idleMs = Number(opt("idle-ms"));
+  const totalMs = Number(opt("total-ms"));
+  const write = opt("write-value") === "true";
+  const state = readState(place.statePath);
+  if (!state?.sid || !Number.isInteger(seq) || !kind || !token) process.exit(2);
+  const marker = readMarker(place.lockPath);
+  if (
+    marker?.seq !== seq ||
+    marker?.owner_token !== token ||
+    marker?.supervisor_pid !== process.pid
+  ) {
+    process.exit(2);
+  }
+
+  const paths = turnPaths(place, seq, kind);
+  const pendingFork = state.pending_fork?.attempted_seq === seq
+    ? state.pending_fork
+    : null;
+  const messageSid = pendingFork?.new_sid ?? state.sid;
+  const { bin, args, promptVia } = turnCommand({
+    partner: state.partner,
+    sid: state.sid,
+    resume: pendingFork
+      ? { fork: true, oldSid: pendingFork.old_sid, newSid: pendingFork.new_sid }
+      : true,
+    replyFile: paths.replyFile,
+    promptFile: paths.promptFile,
+    root: place.root,
+    write,
+    effort: state.partner === "claude" ? state.effort : null,
+  });
+
+  const base = {
+    seq,
+    transcript: paths.transcriptPath,
+    reply_file: paths.replyFile,
+    receipt_file: paths.receiptFile,
+    sid: messageSid,
+    partner: state.partner,
+    kind,
+    write,
+    supervisor_pid: process.pid,
+    command: [bin, ...args],
+  };
+
+  const finish = (extra, code, { cancelled = false, forkSessionId = null } = {}) => {
+    const terminalState = updateTerminalState(place, state, { cancelled, forkSessionId });
+    const advice =
+      cancelled && terminalState.grok_cancelled_consecutive >= 2
+        ? "two consecutive Grok cancellations: schedule a fresh session fork with the fork command"
+        : null;
+    let record = {
+      ...base,
+      ...extra,
+      ...(advice ? { recovery: advice } : {}),
+    };
+    atomicJson(paths.receiptFile, record);
+    const released = releaseMarker(place.lockPath, marker);
+    if (released.note) {
+      record = { ...record, in_flight_note: released.note };
+      atomicJson(paths.receiptFile, record);
+    }
+    process.exitCode = code;
+  };
+
+  supervise({
+    bin,
+    args,
+    cwd: place.root,
+    prompt: promptVia === "file" ? "" : readFileSync(paths.promptFile, "utf8"),
+    transcriptPath: paths.transcriptPath,
+    idleMs,
+    totalMs,
+    onSpawn: (partnerPid) => {
+      const updated = replaceOwnedMarker(place.lockPath, marker, {
+        launcher_pid: null,
+        supervisor_pid: process.pid,
+        partner_pid: Number.isInteger(partnerPid) ? partnerPid : null,
+      });
+      if (!updated) process.exit(2);
+      atomicJson(paths.startedFile, {
+        ok: true,
+        status: "running",
+        seq,
+        sid: messageSid,
+        supervisor_pid: process.pid,
+        partner_pid: updated.partner_pid,
+        transcript: paths.transcriptPath,
+        reply_file: paths.replyFile,
+        receipt_file: paths.receiptFile,
+      });
+    },
+    onExit: ({ exit, transcript, seconds, spawnError }) => {
+      const grok = state.partner === "grok" ? parseGrokStream(transcript) : null;
+      const forkSessionId = pendingFork ? grok?.sessionId ?? null : null;
+      const cancelled = grok?.stopReason === "cancelled";
+      if (spawnError) {
+        finish({ ok: false, status: "failed", reason: `cannot run ${bin}: ${spawnError.message}`, seconds }, 1, { forkSessionId });
+        return;
+      }
+      if (exit !== 0) {
+        finish({ ok: false, status: "failed", reason: `${bin} exited ${exit} — read the transcript`, exit_code: exit, seconds }, 1, { forkSessionId });
+        return;
+      }
+      if (cancelled) {
+        finish({ ok: false, status: "failed", reason: "grok-cancelled", exit_code: exit, seconds }, 1, { cancelled: true, forkSessionId });
+        return;
+      }
+      if (state.partner === "claude" && parseClaudeResult(transcript)?.is_error) {
+        finish({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1, { forkSessionId });
+        return;
+      }
+      if (state.partner === "cursor" && parseCursorResult(transcript)?.is_error) {
+        finish({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1, { forkSessionId });
+        return;
+      }
+      const reply = writeReply(state.partner, paths.replyFile, transcript);
+      if (!reply) {
+        finish({ ok: false, status: "empty-reply", reason: "the partner exited 0 with no reply — read the transcript before resending, the prompt may already be consumed", exit_code: exit, seconds }, 1, { forkSessionId });
+        return;
+      }
+      finish({ ok: true, status: "replied", exit_code: exit, seconds, reply }, 0, { forkSessionId });
+    },
+    onHang: ({ why, transcript, seconds }) => {
+      const partial = writeReply(state.partner, paths.replyFile, transcript);
+      finish(
+        {
+          ok: false,
+          status: "hang-killed",
+          reason: `hang: ${why}`,
+          seconds,
+          ...(partial ? { partial_reply: true } : {}),
+        },
+        1,
+      );
+    },
+  });
+};
+
 const runSend = () => {
   const place = requirePlace();
   const kind = opt("kind");
@@ -806,12 +1123,14 @@ const runSend = () => {
   if (lease.error) fail(lease.error, 2);
   const write = lease.write;
 
+  if (state.pending_fork?.attempted_seq) {
+    fail(
+      `fork to ${state.pending_fork.new_sid} did not complete — inspect seq ${state.pending_fork.attempted_seq}, then run fork --retry to schedule a new target`,
+    );
+  }
   const seq = (state.seq ?? 0) + 1;
-  const stamp = String(seq).padStart(4, "0");
   mkdirSync(place.transcripts, { recursive: true });
-  const transcriptPath = join(place.transcripts, `${stamp}-${kind}.log`);
-  const replyFile = join(place.transcripts, `${stamp}-${kind}-reply.md`);
-  const promptFile = join(place.transcripts, `${stamp}-${kind}-prompt.md`);
+  const paths = turnPaths(place, seq, kind);
   const body = readFileSync(bodyFile, "utf8");
   if (!body.trim()) fail("the body file is empty — a partner turn needs a message", 2);
   // Read before the marker is written, so a usage error never leaves one behind.
@@ -820,12 +1139,20 @@ const runSend = () => {
   // Half-duplex means one turn at a time: a second send would resume one CLI
   // session twice at once. The lock is taken before anything is spawned or the
   // counter moves, so a refused send costs nothing.
-  const marker = { seq, pid: process.pid, child_pid: null, kind, started_at: new Date().toISOString() };
+  const marker = {
+    seq,
+    owner_token: randomUUID(),
+    launcher_pid: process.pid,
+    supervisor_pid: null,
+    partner_pid: null,
+    kind,
+    started_at: new Date().toISOString(),
+  };
   const lock = acquireMarker(place.lockPath, marker);
   if (lock.error) fail(lock.error);
   if (lock.holder) {
     fail(
-      `seq ${lock.holder.seq} is in flight as pid ${lock.holder.child_pid ?? lock.holder.pid} since ${lock.holder.started_at} — a headless pair runs one turn at a time; wait for it or kill that process`,
+      `seq ${lock.holder.seq} is in flight as pid ${lock.holder.partner_pid ?? lock.holder.child_pid ?? lock.holder.supervisor_pid ?? lock.holder.pid} since ${lock.holder.started_at} — a headless pair runs one turn at a time; wait for it or kill that process`,
     );
   }
   if (lock.unreadable) {
@@ -835,90 +1162,124 @@ const runSend = () => {
   }
   if (lock.dead) {
     fail(
-      `seq ${lock.dead.seq} was left in flight by pid ${lock.dead.child_pid ?? lock.dead.pid} since ${lock.dead.started_at} and none of its processes are alive — clear it with: node ${helperPath} clear --repo ${place.root}`,
+      `seq ${lock.dead.seq} was left in flight by pid ${lock.dead.partner_pid ?? lock.dead.child_pid ?? lock.dead.supervisor_pid ?? lock.dead.pid} since ${lock.dead.started_at} and none of its processes are alive — clear it with: node ${helperPath} clear --repo ${place.root}`,
     );
   }
 
   // The counter advances before the turn: a crashed or killed run must never
   // let the next send reuse a sequence number the partner has already seen.
-  writeState(place.statePath, { ...state, seq, in_flight: null });
-
-  const { bin, args, promptVia } = turnCommand({
-    partner: state.partner,
-    sid: state.sid,
-    resume: true,
-    replyFile,
-    promptFile,
-    root: place.root,
-    write,
+  const pendingFork = state.pending_fork
+    ? { ...state.pending_fork, attempted_seq: seq }
+    : null;
+  const messageSid = pendingFork?.new_sid ?? state.sid;
+  writeState(place.statePath, {
+    ...state,
+    seq,
+    in_flight: null,
+    ...(pendingFork ? { pending_fork: pendingFork } : {}),
   });
   const prompt = messagePrompt({
     self: state.self ?? "lead",
     partner: state.partner,
     kind,
-    sid: state.sid,
-    body,
+    sid: messageSid,
+    body: pendingFork
+      ? `Session fork: ${pendingFork.old_sid} is now ${pendingFork.new_sid}. Use the new sid in every reply.\n\n${body}`
+      : body,
   });
-  if (promptVia === "file") writeFileSync(promptFile, prompt);
-  // Every terminal path goes through here, which is what keeps the in-flight
-  // marker from outliving the turn it guards.
-  const receipt = (extra, code) => {
-    const released = releaseMarker(place.lockPath, marker);
-    emit(
-      {
-        seq,
-        transcript: transcriptPath,
-        reply_file: replyFile,
-        sid: state.sid,
-        partner: state.partner,
-        kind,
-        write,
-        command: [bin, ...args],
-        ...(released.note ? { in_flight_note: released.note } : {}),
-        ...extra,
-      },
-      code,
-    );
-  };
+  writeFileSync(paths.promptFile, prompt);
 
-  supervise({
-    bin,
-    args,
-    cwd: place.root,
-    prompt: promptVia === "file" ? "" : prompt,
-    transcriptPath,
-    idleMs,
-    totalMs,
-    // The CLI's own pid lands in the marker the moment it exists: from here on
-    // the lock tracks the process doing the work, not the one supervising it.
-    // Rename rather than link here — it overwrites, which is exactly right once
-    // ownership is re-checked: the only writer allowed to touch an owned lock is
-    // its owner, and every other contender must go through acquireMarker.
-    onSpawn: (childPid) => {
-      marker.child_pid = Number.isInteger(childPid) ? childPid : null;
-      const holder = readMarker(place.lockPath);
-      if (holder?.seq !== marker.seq || holder?.pid !== marker.pid) return;
-      const temporary = `${place.lockPath}.${process.pid}.own.tmp`;
-      writeFileSync(temporary, `${JSON.stringify(marker, null, 2)}\n`);
-      renameSync(temporary, place.lockPath);
+  const worker = spawn(
+    process.execPath,
+    [
+      helperPath,
+      "_worker",
+      "--repo",
+      place.root,
+      "--seq",
+      String(seq),
+      "--kind",
+      kind,
+      "--worker-token",
+      marker.owner_token,
+      "--write-value",
+      String(write),
+      "--idle-ms",
+      String(idleMs),
+      "--total-ms",
+      String(totalMs),
+    ],
+    { cwd: place.root, detached: true, stdio: "ignore", env: process.env },
+  );
+  worker.unref();
+  if (!Number.isInteger(worker.pid)) {
+    releaseMarker(place.lockPath, marker);
+    fail("could not start the detached turn supervisor");
+  }
+  if (!replaceOwnedMarker(place.lockPath, marker, {
+    launcher_pid: null,
+    supervisor_pid: worker.pid,
+  })) {
+    fail("the in-flight marker changed before the supervisor took ownership");
+  }
+
+  const handshakeStarted = Date.now();
+  while (!existsSync(paths.startedFile)) {
+    if (!processAlive(worker.pid)) {
+      fail(`the detached supervisor pid ${worker.pid} exited before startup`);
+    }
+    if (Date.now() - handshakeStarted > START_TIMEOUT_MS) {
+      fail(`the detached supervisor pid ${worker.pid} did not start within ${START_TIMEOUT_MS / 1000}s`);
+    }
+    sleepSync(WAIT_POLL_MS);
+  }
+  const running = JSON.parse(readFileSync(paths.startedFile, "utf8"));
+  unlinkSync(paths.startedFile);
+  if (flag("background")) emit(running, 0);
+  const final = waitForReceipt(place, seq, totalMs + 60000);
+  emit(final, final.ok ? 0 : 1);
+};
+
+const runWait = () => {
+  const place = requirePlace();
+  const state = readState(place.statePath);
+  if (!state?.sid) fail(`no pair session in ${place.statePath} — run init first`);
+  const rawSeq = opt("seq", String(state.seq ?? 0));
+  const seq = Number(rawSeq);
+  if (!Number.isInteger(seq) || seq < 1) fail(`--seq must be a positive integer, got ${rawSeq}`, 2);
+  const timeout = minutesToMs(opt("timeout-min", "65"), "timeout-min");
+  if (timeout.error) fail(timeout.error, 2);
+  const receipt = waitForReceipt(place, seq, timeout.ms);
+  emit(receipt, receipt.ok ? 0 : 1);
+};
+
+const runFork = () => {
+  const place = requirePlace();
+  const state = readState(place.statePath);
+  if (!state?.sid) fail(`no pair session in ${place.statePath} — run init first`);
+  if (state.partner !== "grok") fail("fork is available only for a Grok partner");
+  if (existsSync(place.lockPath)) fail("a turn is in flight — wait for its receipt before scheduling a fork");
+  if (state.pending_fork && !flag("retry")) {
+    fail(`a fork from ${state.pending_fork.old_sid} to ${state.pending_fork.new_sid} is already pending`);
+  }
+  const pending = {
+    old_sid: state.sid,
+    new_sid: randomUUID(),
+    scheduled_at: new Date().toISOString(),
+  };
+  writeState(place.statePath, { ...state, pending_fork: pending });
+  emit(
+    {
+      ok: true,
+      status: "fork-scheduled",
+      sid: state.sid,
+      pending_sid: pending.new_sid,
+      partner: state.partner,
+      state_file: place.statePath,
+      next: "the fork runs on the next send",
     },
-    onExit: ({ exit, transcript, seconds, spawnError }) => {
-      if (spawnError) receipt({ ok: false, status: "failed", reason: `cannot run ${bin}: ${spawnError.message}`, seconds }, 1);
-      if (exit !== 0) {
-        receipt({ ok: false, status: "failed", reason: `${bin} exited ${exit} — read the transcript`, exit_code: exit, seconds }, 1);
-      }
-      if (state.partner === "claude" && parseClaudeResult(transcript)?.is_error) {
-        receipt({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1);
-      }
-      writeReply(state.partner, replyFile, transcript);
-      const reply = existsSync(replyFile) ? readFileSync(replyFile, "utf8").trim() : "";
-      if (!reply) {
-        receipt({ ok: false, status: "empty-reply", reason: "the partner exited 0 with no reply — read the transcript before resending, the prompt may already be consumed", exit_code: exit, seconds }, 1);
-      }
-      receipt({ ok: true, status: "replied", exit_code: exit, seconds, reply }, 0);
-    },
-    onHang: ({ why, seconds }) => receipt({ ok: false, status: "hang-killed", reason: `hang: ${why}`, seconds }, 1),
-  });
+    0,
+  );
 };
 
 const runStatus = () => {
@@ -939,6 +1300,9 @@ const runStatus = () => {
       transcripts: state.transcripts ?? place.transcripts,
       session_known: sessionKnown(state.partner, state.sid, place.root),
       in_flight: readMarker(place.lockPath),
+      grok_cancelled_consecutive: state.grok_cancelled_consecutive ?? 0,
+      pending_fork: state.pending_fork ?? null,
+      forked: state.forked ?? [],
     },
     0,
   );
@@ -975,7 +1339,7 @@ export const clearMarker = (lockPath, { beforeRename = () => {} } = {}) => {
   }
   if (markerAlive(marker)) {
     return {
-      error: `seq ${marker.seq} is still in flight as pid ${marker.child_pid ?? marker.pid} — clear it only after that process is gone`,
+      error: `seq ${marker.seq} is still in flight as pid ${marker.partner_pid ?? marker.child_pid ?? marker.supervisor_pid ?? marker.pid ?? marker.launcher_pid} — clear it only after that process is gone`,
     };
   }
 
@@ -1032,13 +1396,22 @@ const runEnd = () => {
   emit({ ok: true, status: "ended", trashed: place.stateDir }, 0);
 };
 
-const COMMANDS = { init: runInit, send: runSend, status: runStatus, clear: runClear, end: runEnd };
+const COMMANDS = {
+  init: runInit,
+  send: runSend,
+  wait: runWait,
+  fork: runFork,
+  status: runStatus,
+  clear: runClear,
+  end: runEnd,
+  _worker: runWorker,
+};
 
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   const run = COMMANDS[command];
   if (!run) {
     fail(
-      `usage: pair-headless.mjs <init|send|status|clear|end> --repo <root> [--partner ${kindList}] [--model <name>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--idle-min N] [--total-min N]`,
+      `usage: pair-headless.mjs <init|send|wait|fork|status|clear|end> --repo <root> [--partner ${kindList}] [--model <name>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--background] [--seq N] [--timeout-min N] [--idle-min N] [--total-min N]`,
       2,
     );
   }
