@@ -14,9 +14,9 @@ Each agent directory holds symlinks into `~/.agents/skills`, written by the
 Skills CLI when the agent is named in `--agent`. Registering a new agent means
 adding it to that flag, never hand-linking the directory.
 
-Active skills should have names that include the runtime they bind to when a skill is tied to one (`herdr-orchestrate`). A skill that detects its own runtime takes the bare verb (`pair`), as does a runtime-independent one (`ship-it`, `debug-mode`).
+Active skills should have names that include the runtime they bind to when a skill is tied to one. A skill that detects its own runtime takes the bare verb (`pair`), as does a runtime-independent one (`orchestrate`, `ship-it`, `debug-mode`).
 
-The caller pane proof — which pane the calling agent runs in — belongs to `herdr-orchestrate` (`scripts/caller-proof.mjs`, `references/caller-pane-resolution.md`). It is agent-kind agnostic and is the single caller-identity contract every Herdr-hosted skill uses; `pair`'s Herdr backend and `review-it`'s visible transport both require that skill installed beside them.
+The caller pane proof — which pane the calling agent runs in — belongs to `pair` (`scripts/caller-proof.mjs`, `references/caller-pane-resolution.md`). It is agent-kind agnostic and is the single caller-identity contract used by `pair`'s Herdr backend and `review-it`'s visible transport.
 
 `pair`'s Herdr backend has an external runtime dependency on the `herdr` CLI and the separate `herdr` skill; its headless backend depends only on the chosen partner CLI (`claude`, `codex`,
 `cursor-agent`, or `grok`). Do not copy herdr primitives into this skill unless the upstream skill becomes unavailable; document the dependency instead.

@@ -58,7 +58,7 @@ When the sibling helper exists, usage evidence covers only the Claude and Codex
 pools:
 
 ```bash
-node "$SKILL_DIR/../herdr-orchestrate/scripts/usage-state.mjs"
+node "$SKILL_DIR/../orchestrate/scripts/usage-state.mjs"
 ```
 
 Use its output as a tie-breaker. If the helper or either pool's source is

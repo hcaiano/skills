@@ -7,11 +7,11 @@ const here = new URL(".", import.meta.url).pathname;
 const shipIt = readFileSync(join(here, "../SKILL.md"), "utf8");
 const reviewGate = readFileSync(join(here, "../../review-it/SKILL.md"), "utf8");
 const orchestrate = readFileSync(
-  join(here, "../../herdr-orchestrate/SKILL.md"),
+  join(here, "../../orchestrate/SKILL.md"),
   "utf8",
 );
-const models = readFileSync(
-  join(here, "../../herdr-orchestrate/references/models.md"),
+const delivery = readFileSync(
+  join(here, "../../orchestrate/references/delivery.md"),
   "utf8",
 );
 const openai = readFileSync(join(here, "../agents/openai.yaml"), "utf8");
@@ -21,15 +21,13 @@ test("ship-it stays manual-only across model runtimes", () => {
   assert.match(shipIt, /^disable-model-invocation: true$/mu);
   assert.match(openai, /^  allow_implicit_invocation: false$/mu);
   assert.match(
-    orchestrate,
-    /Because ship-it is manual-only, submit the runtime-native\s+explicit invocation through `send\.mjs @<temporary-file>`/u,
+    delivery,
+    /explicitly tells\s+the executor to use the installed `ship-it` skill/u,
   );
   assert.match(
     orchestrate,
-    /The `@<file>` form is mandatory for runtime-native skill invocations/u,
+    /delegated `ship-it` gate reviews quality/u,
   );
-  assert.match(orchestrate, /Claude lead → `\/ship-it Run the gate/u);
-  assert.match(orchestrate, /Codex lead → `\$ship-it Run the gate/u);
 });
 
 test("ship-it delegates the graded gate instead of reimplementing it", () => {
@@ -80,8 +78,8 @@ test("ship-it keeps final validation after the gate", () => {
     /On the clean final HEAD, rerun\s+step 2's proportional validation map/u,
   );
   assert.match(
-    orchestrate,
-    /reserve ship-it's\s+proportional final-HEAD validation gate for its final push/u,
+    delivery,
+    /run the proportional proof and graded review gate on the complete diff/u,
   );
   assert.match(
     shipIt,
@@ -181,58 +179,32 @@ test("the receipt embeds the gate's block and adds only delivery's own fields", 
   assert.doesNotMatch(shipIt, /`Simplify:`\s*\n?\s*\(`applied in/u);
   assert.match(reviewGate, /Leave a `## Review gate` receipt/u);
   assert.match(
-    orchestrate,
-    /verify `Final validated HEAD` in the final-CI receipt matches the\s+exact PR head\. `Reviewed HEAD` and `Gate HEAD` must be ancestors of that head/u,
+    delivery,
+    /`Final validated HEAD` equals the exact PR head\. `Reviewed HEAD` and `Gate\s+HEAD` are ancestors of it/u,
   );
-  assert.match(orchestrate, /corrections make equality neither required nor expected/u);
+  assert.match(delivery, /bounded ship-it correction/u);
   assert.doesNotMatch(shipIt, /review:verify/u);
-  assert.doesNotMatch(orchestrate, /review:verify/u);
+  assert.doesNotMatch(delivery, /review:verify/u);
 });
 
-test("herdr-orchestrate points grading at the gate and delivery at ship-it", () => {
+test("orchestrate keeps scope authority and delegates quality to ship-it", () => {
   assert.match(
     orchestrate,
-    /The unit's agents implement; the delegated review gate reviews quality; the\s+orchestrator aims and holds \*\*scope authority\*\*/u,
+    /The executor implements and the delegated `ship-it` gate reviews quality/u,
   );
-  assert.doesNotMatch(orchestrate, /ship-it's gate reviews quality/u);
-  assert.match(orchestrate, /no `\/code-review`, `codex review`,\s+`\/simplify`, no standards passes/u);
-  assert.match(orchestrate, /shell pane labeled `review-it · \.\.\.`/u);
-  assert.match(orchestrate, /question waiting in an agent or `review-it · \.\.\.` pane/u);
+  assert.match(orchestrate, /orchestrator never edits or reviews unit code/u);
+  assert.match(orchestrate, /It holds scope authority/u);
   assert.match(
-    orchestrate,
-    /Any branch change\s+re-enters `ready` for the orchestrator's scope scan\. After scope approval,\s+restart ship-it at step 1/u,
+    delivery,
+    /A branch change after scope approval returns to `ready`/u,
   );
   assert.match(
-    orchestrate,
-    /Run a new gate unless ship-it proves that this\s+delivery intentionally produced a bounded post-gate mutation; only that case\s+resumes at its step 4 mutation loop/u,
+    delivery,
+    /unless the delivery\s+receipt proves it is a bounded ship-it correction/u,
   );
-  assert.match(
-    orchestrate,
-    /Every delivery\s+receipt must carry `Gate:`, `Risk:`, `Focused proof:`,\s+and `Regrade:`[\s\S]*embedded\s+review gate block supplies `Gate:`, `Risk:`, and `Regrade:`/u,
-  );
-  assert.match(models, /\[review gate\]\(\.\.\/\.\.\/review-it\/SKILL\.md\)/u);
-  assert.match(
-    models,
-    /Name the\s+final grade\s+in the `shipped` milestone/u,
-  );
-  assert.match(
-    models,
-    /Name the\s+provisional grade\s+in the kickoff and the\s+phase 4 summary/u,
-  );
-  assert.doesNotMatch(models, /final grade in the phase 4 summary/u);
-  assert.doesNotMatch(models, /`dual` \(default\)/u);
-  assert.match(
-    models,
-    /Staffing, implementing model, pair use, and pool\s+selection never determine `skip`, `single`, `dual`, or the number of reviews/u,
-  );
-  assert.match(models, /the\s+semantic grade remains `dual`/u);
-  assert.match(
-    models,
-    /Simplify is independent of staffing, model, pair use, and reviewer count/u,
-  );
-  assert.match(
-    models,
-    /An explicit user request overrides every eligibility skip at any grade,\s+including `skip`/u,
-  );
-  assert.doesNotMatch(models, /`skip` spends neither review pool and runs no simplify/u);
+  for (const field of ["Gate:", "Risk:", "Regrade:", "Focused proof:"]) {
+    assert.match(delivery, new RegExp(field, "u"));
+  }
+  assert.match(delivery, /embedded review-gate block/u);
+  assert.match(delivery, /Required checks and every check delegated by the receipt are green/u);
 });

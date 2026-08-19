@@ -40,16 +40,14 @@ Two traps here, both measured while removing `review-gate`:
 leaves the globally installed copy in place.
 
 `review-gate` was renamed to `review-it`. An install made before that rename
-carries both, and the stale one still emits the old `review-gate · ...` pane
-label that `herdr-orchestrate` no longer recognises as a gate pane.
+carries both, and the stale one still answers under the retired workflow.
 
 ## Skills
 
 ### Orchestration and collaboration
 
-- `herdr-orchestrate` — manually orchestrate GitHub issues through dedicated
-  Herdr work units, from triage and delegation through shipping, merging, and
-  teardown.
+- `orchestrate` — run an explicit task list through isolated worktrees,
+  headless pairs, pull requests, verified merges, and cleanup in any harness.
 - `pair` — keep two agents collaborating persistently, any pair of `claude`,
   `codex`, `cursor`, and `grok`: a visible Herdr tab inside Herdr, persistent
   headless CLI sessions anywhere else.
@@ -94,18 +92,24 @@ again.
 npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-pair --yes
 ```
 
+- `herdr-orchestrate` — replaced by `orchestrate`. Existing users keep it with:
+
+```bash
+npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-orchestrate --yes
+```
+
 `skills update` re-appends that subpath, so updates keep working.
 
-Keeping `herdr-pair` covers only the pair protocol itself. `review-it`'s
-visible Herdr gate and `herdr-orchestrate` now read their caller-pane proof
-from `pair`, so install `pair` as well — the two coexist without conflict.
+Keeping either deprecated skill does not install its active dependencies.
+`review-it`'s visible Herdr gate reads its caller-pane proof from `pair`, so
+install `pair` as well.
 
 ## Dependencies
 
-- `herdr-orchestrate`, and `pair`'s Herdr backend, require the `herdr` CLI and
-  the separate upstream `herdr` skill. This repository does not vendor either
-  one. `pair`'s headless backend needs only the chosen partner CLI (`claude`,
-  `codex`, `cursor-agent`, or `grok`).
+- `orchestrate` requires `pair`, `git`, `gh`, and `trash`. Its units always use
+  pair's headless backend. `pair`'s Herdr backend requires the `herdr` CLI and
+  separate upstream `herdr` skill; its headless backend needs only the chosen
+  partner CLI (`claude`, `codex`, `cursor-agent`, or `grok`).
 - `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
   through Claude; Claude Code consults Codex.
 - `art-director` composes the external `imagegen` skill. It uses `brandkit`
@@ -113,7 +117,7 @@ from `pair`, so install `pair` as well — the two coexist without conflict.
   only when the current runtime cannot generate images directly.
 - `ship-it` requires `review-it` installed alongside it: it delegates its
   graded gate and never reimplements one.
-- `review-it` reads the usage-state helper bundled with `herdr-orchestrate`
+- `review-it` reads the usage-state helper bundled with `orchestrate`
   to size its review pools, and reads `pair`'s caller-pane proof to run a
   gate command in a visible Herdr pane. A missing usage-state helper records an
   unread pool state and changes nothing else. A missing `pair` runs the

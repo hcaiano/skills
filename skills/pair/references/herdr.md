@@ -16,12 +16,8 @@ Require `herdr` with the agent automation commands (`herdr agent start`,
 `herdr agent prompt`), `jq`, and `trash` on `PATH`, plus `HERDR_ENV=1`. If
 any is missing, stop and tell the user to install or start (or update) Herdr.
 
-This backend also requires the `herdr-orchestrate` skill installed beside this
-one: it owns the caller pane proof. When it is absent, stop and tell the user
-to install it.
-
-Before any Herdr mutation, read and execute that skill's
-`references/caller-pane-resolution.md`, running its
+Before any Herdr mutation, read and execute the
+[`caller pane proof`](caller-pane-resolution.md), running this skill's
 `scripts/caller-proof.mjs` helper. It resolves the explicit task repository,
 proves the unique caller from its own process ancestry — falling back to
 conversation markers when that ancestry matches anything other than exactly one

@@ -168,9 +168,7 @@ test("code and prose expose the same delivery receipts", () => {
 
 test("the Herdr backend keeps its pane mechanics and its own pointers", () => {
   for (const mechanic of [
-    // The proof lives in herdr-orchestrate now; this backend only requires it.
-    /`herdr-orchestrate` skill installed beside this\s+one: it owns the caller pane proof/u,
-    /`references\/caller-pane-resolution\.md`/u,
+    /\[`caller pane proof`\]\(caller-pane-resolution\.md\)/u,
     /`scripts\/caller-proof\.mjs`/u,
     /\[`workbench-tab\.md`\]\(workbench-tab\.md\)/u,
     /scripts\/herdr-pair\.mjs/u,
