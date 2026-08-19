@@ -71,7 +71,7 @@ Create every unit before waiting on any of them:
 node "$UNIT" create --repo "$REPO" --unit <id> \
   --worktree <absolute-path> --branch <branch> --base <base> \
   --lead <current-cli> --partner <other-cli> --model <name-or-CLI-default> \
-  --effort <level> --reason <one-line-reason> --task-file <file> \
+  [--effort <level>] --reason <one-line-reason> --task-file <file> \
   --scope <scope-summary> --validation <validation-summary> \
   --merge-policy <auto|hold> [--setup <project-worktree-setup-command>]
 ```
@@ -89,6 +89,11 @@ but omit `--task-file`; the manifest-owned task file is authoritative. Setup
 hooks must be safe to repeat because a death can occur after the hook runs but
 before its next journal write. A resumed receipt names `resumed_from`. Any
 different immutable option refuses and names the field.
+
+For a recoverable Cursor record that stores a separate effort but has no live
+pair, select the current effort-specific catalog model and omit `--effort`.
+`create` records that staffing migration in history. A live recorded Cursor
+pair resumes with its recorded inputs.
 
 Done when every admitted unit reports `status: created` or `status: resumed`
 and its first pair turn reports `status: running`, or its failure record names
@@ -120,12 +125,14 @@ capability miss restaffs to a stronger legal arena:
 ```bash
 node "$UNIT" restaff --repo "$REPO" --unit <id> \
   --lead <current-cli> --partner <other-cli> --model <name-or-CLI-default> \
-  --effort <level> --reason <one-line-reason>
+  [--effort <level>] --reason <one-line-reason>
 ```
 
-`restaff` refuses an in-flight turn, checkpoints the HEAD, diff, and newest
-receipt, ends only that unit's pair, records staffing history, and starts the
-same task with the new executor. Surface any failed checkpoint to the user.
+`restaff` refuses an in-flight turn, checkpoints the HEAD, worktree status and
+diff, and newest receipt, ends only that unit's pair, records staffing history,
+and starts the same task with the new executor. A matching retry resumes
+`restaffing` or `restaff-failed`; any different target field refuses. Surface
+any failed checkpoint to the user.
 
 Done when each active unit has a terminal receipt that the orchestrator has
 handled, or one exact user decision is reported as blocked.

@@ -47,6 +47,8 @@ changes the required intelligence or proof.
 
 Cursor and Grok have no usage-state source here. Their successful live catalog
 and CLI start are availability evidence; a refusal restaffs the unit.
+For Cursor, choose an effort-specific name exactly as the live catalog prints
+it and omit `--effort`; the name is the recorded effort control.
 
 ## Record and restaff
 

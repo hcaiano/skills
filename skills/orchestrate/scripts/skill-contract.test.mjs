@@ -24,6 +24,7 @@ test("one durable record owns the complete unit atom", () => {
   assert.match(unit, /partner arena must differ from the orchestrator harness/u);
   assert.match(skill, /manifest-owned task file is authoritative/u);
   assert.match(skill, /resumes `creating`, `setting-up`,\s+`initializing-pair`, or `starting`/u);
+  assert.match(skill, /recoverable Cursor record that stores a separate effort/u);
   assert.match(unit, /resumed_from/u);
 });
 
@@ -52,13 +53,17 @@ test("staffing matches difficulty and records its evidence", () => {
   assert.match(staffing, /Haiku; Fable is advisor-only/u);
   assert.match(staffing, /Luna/u);
   assert.match(staffing, /one-line reason/u);
+  assert.match(staffing, /effort-specific name exactly as the live catalog prints/u);
+  assert.match(staffing, /omit `--effort`/u);
   assert.doesNotMatch(staffing, /frontier by default|least expensive/u);
 });
 
 test("restaff preserves evidence and normal feedback stays bounded", () => {
-  assert.match(skill, /checkpoints the HEAD, diff, and newest\s+receipt/u);
+  assert.match(skill, /checkpoints the HEAD, worktree status and\s+diff, and newest receipt/u);
   assert.match(skill, /Normal scope\s+feedback and one bounded correction stay on the current pair/u);
+  assert.match(skill, /matching retry resumes\s+`restaffing` or `restaff-failed`/u);
   assert.match(unit, /staffing\.history\.push/u);
+  assert.match(unit, /pending_staffing/u);
 });
 
 test("delivery keeps the exact-head chain of custody", () => {

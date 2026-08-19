@@ -48,6 +48,7 @@ const git = spawnSync("git", ["-C", repo, "rev-parse", "--absolute-git-dir"], { 
 if (git.status !== 0) { console.log(JSON.stringify({ok:false,reason:"missing repo"})); process.exit(1); }
 const gitDir = git.stdout.trim();
 const statePath = join(gitDir, "fake-pair.json");
+const counterPath = join(gitDir, "fake-pair-counter");
 const inFlight = join(gitDir, "fake-in-flight");
 const read = () => existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : null;
 const emit = (value, code = 0) => { console.log(JSON.stringify(value)); process.exit(code); };
@@ -55,13 +56,19 @@ if (command === "init") {
   const current = read();
   if (current) emit(current);
   const partner = option("partner");
-  const state = {ok:true,sid:"sid-" + partner + "-" + gitDir.split("/").at(-1),partner,role:"executor",model:option("model"),effort:option("effort"),seq:0};
+  if (process.env.FAKE_PAIR_FAIL_INIT_PARTNER === partner) emit({ok:false,reason:"forced init failure for " + partner}, 1);
+  const count = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) + 1 : 1;
+  writeFileSync(counterPath, String(count));
+  const baseSid = "sid-" + partner + "-" + gitDir.split("/").at(-1);
+  const state = {ok:true,sid:baseSid + (count === 1 ? "" : "-" + count),partner,role:"executor",model:option("model"),effort:option("effort"),seq:0};
   writeFileSync(statePath, JSON.stringify(state));
+  if (process.env.FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER === partner) emit({...state,model:"forced-wrong-model"});
   emit(state);
 }
 if (command === "send") {
   const state = read();
   if (!state) emit({ok:false,reason:"no pair"}, 1);
+  if (process.env.FAKE_PAIR_FAIL_SEND_PARTNER === state.partner) emit({ok:false,reason:"forced send failure for " + state.partner}, 1);
   state.seq += 1;
   writeFileSync(statePath, JSON.stringify(state));
   const transcripts = join(gitDir, "pair", "transcripts");
@@ -69,6 +76,7 @@ if (command === "send") {
   const stem = String(state.seq).padStart(4, "0") + "-task";
   const receipt = join(transcripts, stem + "-receipt.json");
   writeFileSync(receipt, JSON.stringify({ok:true,status:"replied",seq:state.seq,reply:"ready"}));
+  if (process.env.FAKE_PAIR_BAD_SEND_AFTER_START === state.partner) emit({ok:true,status:"unexpected",seq:state.seq,sid:state.sid,receipt_file:receipt});
   emit({ok:true,status:"running",seq:state.seq,sid:state.sid,receipt_file:receipt,supervisor_pid:123,partner_pid:456});
 }
 if (command === "status") {
@@ -79,6 +87,7 @@ if (command === "status") {
 if (command === "end") {
   if (existsSync(inFlight)) emit({ok:false,reason:"in flight"}, 1);
   if (existsSync(statePath)) unlinkSync(statePath);
+  if (process.env.FAKE_PAIR_FAIL_AFTER_END === "1") emit({ok:false,reason:"forced failure after end"}, 1);
   emit({ok:true,status:"ended"});
 }
 emit({ok:false,reason:"unsupported " + command}, 2);
@@ -247,6 +256,23 @@ test("create refuses duplicate unit, branch, worktree, and same-harness partner"
   assert.match(refused.output.reason, /differ from the orchestrator/u);
 });
 
+test("cursor staffing uses the effort-specific live-catalog model without a separate effort", () => {
+  const args = createArgs("cursor-catalog", "cursor");
+  args.splice(args.indexOf("--effort"), 2);
+  args[args.indexOf("--model") + 1] = "gpt-5.3-codex-low-fast";
+  const created = invoke(args);
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.staffing.current.model, "gpt-5.3-codex-low-fast");
+  assert.equal(created.output.unit.staffing.current.effort, null);
+  assert.equal(created.output.unit.observed.pair.effort, null);
+
+  const incompatible = createArgs("cursor-old-syntax", "cursor");
+  incompatible[incompatible.indexOf("--model") + 1] = "gpt-5.3-codex-low-fast";
+  const refused = invoke(incompatible);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.output.reason, /omit --effort/u);
+});
+
 test("create resumes every journaled phase from the manifest-owned task", () => {
   const cases = [
     ["recover-creating", "creating", {}],
@@ -268,6 +294,35 @@ test("create resumes every journaled phase from the manifest-owned task", () => 
     assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
     assert.equal(existsSync(record.task_file), false);
   }
+});
+
+test("create migrates a pairless legacy Cursor recovery record", () => {
+  const id = "recover-cursor-legacy";
+  const record = writeRecoveryRecord(id, "setting-up", { withWorktree: true });
+  const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const path = join(common, "orchestrate", "units", `${id}.json`);
+  record.staffing.current = {
+    partner: "cursor",
+    model: null,
+    effort: "high",
+    reason: "cursor matches the task difficulty and available pool",
+    selected_at: "2026-08-19T00:00:00.000Z",
+  };
+  writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+
+  const args = resumeArgs(id, "cursor");
+  args.splice(args.indexOf("--effort"), 2);
+  args[args.indexOf("--model") + 1] = "gpt-5.3-codex-low-fast";
+  const resumed = invoke(args);
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.resumed_from, "setting-up");
+  assert.equal(resumed.output.unit.staffing.current.model, "gpt-5.3-codex-low-fast");
+  assert.equal(resumed.output.unit.staffing.current.effort, null);
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+  assert.equal(
+    resumed.output.unit.staffing.history[0].migration,
+    "cursor-live-catalog-effort-model",
+  );
 });
 
 test("create names the immutable field that prevents resume", () => {
@@ -328,14 +383,187 @@ test("two linked worktrees hold distinct pair state", () => {
 test("restaff checkpoints the receipt and keeps the worktree", () => {
   const result = invoke([
     "restaff", "--repo", repository, "--unit", "one",
-    "--lead", "claude", "--partner", "cursor", "--model", "CLI-default",
-    "--effort", "high", "--reason", "the previous pool refused a new turn",
+    "--lead", "claude", "--partner", "cursor", "--model", "gpt-5.3-codex-low-fast",
+    "--reason", "the previous pool refused; the live Cursor low-fast model fits the mechanical task",
   ]);
   assert.equal(result.status, 0, result.stderr || JSON.stringify(result.output));
   assert.equal(result.output.unit.staffing.current.partner, "cursor");
+  assert.equal(result.output.unit.staffing.current.model, "gpt-5.3-codex-low-fast");
+  assert.equal(result.output.unit.staffing.current.effort, null);
   assert.equal(result.output.unit.staffing.history.length, 1);
   assert.equal(result.output.unit.staffing.history[0].checkpoint.receipt.status, "replied");
   assert.equal(existsSync(join(root, "worktree-one")), true);
+});
+
+const restaffArgs = (id, partner = "grok") => [
+  "restaff", "--repo", repository, "--unit", id,
+  "--lead", "claude", "--partner", partner, "--model", "CLI-default",
+  "--effort", "high", "--reason", `${partner} is the proved replacement arena`,
+];
+
+test("restaff resumes when old pair end succeeds before its journal update", () => {
+  const created = invoke(createArgs("restaff-after-end"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const failed = invoke(restaffArgs("restaff-after-end"), { FAKE_PAIR_FAIL_AFTER_END: "1" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /forced failure after end/u);
+  const stranded = invoke(["status", "--repo", repository, "--unit", "restaff-after-end"]);
+  assert.equal(stranded.output.unit.lifecycle, "restaff-failed");
+  assert.equal(stranded.output.unit.restaff_phase, "ending-old");
+  assert.equal(stranded.output.unit.observed.pair.ok, false);
+
+  const resumed = invoke(restaffArgs("restaff-after-end"));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.resumed_from, "restaff-failed");
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+  assert.equal(resumed.output.unit.pair.latest_seq, 1);
+});
+
+test("restaff resumes after replacement init fails", () => {
+  const created = invoke(createArgs("restaff-init-failed"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const failed = invoke(restaffArgs("restaff-init-failed"), { FAKE_PAIR_FAIL_INIT_PARTNER: "grok" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /forced init failure/u);
+  const stranded = invoke(["status", "--repo", repository, "--unit", "restaff-init-failed"]);
+  assert.equal(stranded.output.unit.lifecycle, "restaff-failed");
+  assert.equal(stranded.output.unit.restaff_phase, "initializing-target");
+  assert.equal(stranded.output.unit.pending_staffing.partner, "grok");
+  assert.equal(stranded.output.unit.staffing.history.length, 1);
+  assert.equal(stranded.output.unit.observed.pair.ok, false);
+
+  const resumed = invoke(restaffArgs("restaff-init-failed"));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.status, "restaffed");
+  assert.equal(resumed.output.resumed_from, "restaff-failed");
+  assert.equal(resumed.output.unit.staffing.current.partner, "grok");
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+  assert.equal(resumed.output.unit.pair.latest_seq, 1);
+});
+
+test("restaff adopts a replacement initialized before its journal update", () => {
+  const id = "restaff-init-live";
+  const created = invoke(createArgs(id));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const failed = invoke(restaffArgs(id), { FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER: "grok" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /does not match pending staffing/u);
+  const stranded = invoke(["status", "--repo", repository, "--unit", id]);
+  assert.equal(stranded.output.unit.restaff_phase, "initializing-target");
+  assert.equal(stranded.output.unit.observed.pair.partner, "grok");
+  assert.equal(stranded.output.unit.observed.pair.seq, 0);
+
+  const resumed = invoke(restaffArgs(id));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.resumed_from, "restaff-failed");
+  assert.equal(resumed.output.unit.pair.latest_seq, 1);
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+});
+
+test("restaff resumes a replacement pair initialized before send", () => {
+  const created = invoke(createArgs("restaff-after-init"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const failed = invoke(restaffArgs("restaff-after-init"), { FAKE_PAIR_FAIL_SEND_PARTNER: "grok" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /forced send failure/u);
+  const stranded = invoke(["status", "--repo", repository, "--unit", "restaff-after-init"]);
+  assert.equal(stranded.output.unit.observed.pair.partner, "grok");
+  assert.equal(stranded.output.unit.observed.pair.seq, 0);
+
+  const resumed = invoke(restaffArgs("restaff-after-init"));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.resumed_from, "restaff-failed");
+  assert.equal(resumed.output.unit.pair.latest_seq, 1);
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+});
+
+test("restaff resumes after the first replacement send started", () => {
+  const created = invoke(createArgs("restaff-after-send"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const failed = invoke(restaffArgs("restaff-after-send"), { FAKE_PAIR_BAD_SEND_AFTER_START: "grok" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /pair send did not start/u);
+  const stranded = invoke(["status", "--repo", repository, "--unit", "restaff-after-send"]);
+  assert.equal(stranded.output.unit.observed.pair.seq, 1);
+
+  const resumed = invoke(restaffArgs("restaff-after-send"));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.resumed_from, "restaff-failed");
+  assert.equal(resumed.output.unit.pair.latest_seq, 1);
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+});
+
+test("restaff recovery refuses a different pending target field", () => {
+  const created = invoke(createArgs("restaff-mismatch"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const failed = invoke(restaffArgs("restaff-mismatch"), { FAKE_PAIR_FAIL_INIT_PARTNER: "grok" });
+  assert.notEqual(failed.status, 0);
+  const changed = restaffArgs("restaff-mismatch");
+  changed[changed.indexOf("--reason") + 1] = "a different retry reason";
+  const refused = invoke(changed);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.output.reason, /reason differs/u);
+  const resumed = invoke(restaffArgs("restaff-mismatch"));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+});
+
+test("restaff recovery claims the first target for a legacy failed record", () => {
+  const id = "restaff-legacy";
+  const created = invoke(createArgs(id));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  writeFileSync(join(root, `worktree-${id}`, "preserved.txt"), "preserved\n");
+  const failed = invoke(restaffArgs(id), { FAKE_PAIR_FAIL_INIT_PARTNER: "grok" });
+  assert.notEqual(failed.status, 0);
+
+  const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const path = join(common, "orchestrate", "units", `${id}.json`);
+  const record = JSON.parse(readFileSync(path, "utf8"));
+  delete record.pending_staffing;
+  delete record.staffing.history[0].checkpoint.worktree_status;
+  writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+
+  const resumed = invoke(restaffArgs(id));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.resumed_from, "restaff-failed");
+  assert.equal(resumed.output.unit.staffing.history.length, 1);
+  assert.equal(resumed.output.unit.staffing.current.partner, "grok");
+  assert.match(resumed.output.unit.staffing.history[0].checkpoint.worktree_status, /preserved\.txt/u);
+});
+
+test("legacy restaff recovery adopts a live target with a stale recorded sid", () => {
+  const cases = [
+    ["restaff-legacy-live-zero", { FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER: "grok" }, 0],
+    ["restaff-legacy-live-one", { FAKE_PAIR_BAD_SEND_AFTER_START: "grok" }, 1],
+  ];
+  for (const [id, environment, expectedSeq] of cases) {
+    const created = invoke(createArgs(id));
+    assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+    const oldSid = created.output.unit.pair.sid;
+    const failed = invoke(restaffArgs(id), environment);
+    assert.notEqual(failed.status, 0);
+
+    const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    const path = join(common, "orchestrate", "units", `${id}.json`);
+    const record = JSON.parse(readFileSync(path, "utf8"));
+    delete record.pending_staffing;
+    delete record.restaff_phase;
+    record.resources.pair = true;
+    record.pair = { sid: oldSid, latest_seq: 1 };
+    writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+
+    const before = invoke(["status", "--repo", repository, "--unit", id]);
+    assert.equal(before.output.unit.observed.pair.partner, "grok");
+    assert.equal(before.output.unit.observed.pair.seq, expectedSeq);
+    assert.notEqual(before.output.unit.observed.pair.sid, oldSid);
+
+    const resumed = invoke(restaffArgs(id));
+    assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+    assert.equal(resumed.output.resumed_from, "restaff-failed");
+    assert.equal(resumed.output.unit.staffing.current.partner, "grok");
+    assert.equal(resumed.output.unit.pair.latest_seq, 1);
+    assert.equal(resumed.output.unit.staffing.history.length, 1);
+  }
 });
 
 test("dismantle refuses an in-flight pair and an unmerged PR", () => {

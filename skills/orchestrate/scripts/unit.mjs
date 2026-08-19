@@ -291,6 +291,33 @@ const recoverableCreatePhases = new Set([
   "starting",
 ]);
 const normalizedModel = (value) => value === "CLI-default" || !value ? null : value;
+const requestedStaffing = (options) => ({
+  lead: options.lead,
+  partner: options.partner,
+  model: normalizedModel(options.model),
+  effort: options.effort ?? null,
+  reason: options.reason,
+});
+const validateStaffing = (options, command, { allowLegacyCursor = false } = {}) => {
+  for (const key of ["lead", "partner", "reason"]) {
+    if (!options[key]) fail(`${command} requires --${key}`, null, 2);
+  }
+  if (!partnerKinds.has(options.lead) || !partnerKinds.has(options.partner)) {
+    fail("--lead and --partner must be claude, codex, cursor, or grok", null, 2);
+  }
+  if (options.lead === options.partner) fail("the partner arena must differ from the orchestrator harness");
+  if (options.partner === "cursor") {
+    const legacy = allowLegacyCursor && Boolean(options.effort);
+    if (!legacy && (!options.model || options.model === "CLI-default")) {
+      fail("cursor staffing requires an effort-specific --model from the live catalog", null, 2);
+    }
+    if (options.effort && !legacy) {
+      fail("cursor staffing carries effort in the live-catalog model name; omit --effort", null, 2);
+    }
+  } else if (!options.effort) {
+    fail(`${command} requires --effort for ${options.partner}`, null, 2);
+  }
+};
 const nestedValue = (value, path) => path.split(".").reduce((current, key) => current?.[key], value);
 const ensureMatchingCreate = (record, options, task) => {
   const requestedWorktree = existsSync(options.worktree)
@@ -305,7 +332,7 @@ const ensureMatchingCreate = (record, options, task) => {
     ["lead", options.lead],
     ["staffing.current.partner", options.partner],
     ["staffing.current.model", normalizedModel(options.model)],
-    ["staffing.current.effort", options.effort],
+    ["staffing.current.effort", options.effort ?? null],
     ["staffing.current.reason", options.reason],
     ["scope", options.scope],
     ["validation", options.validation],
@@ -340,6 +367,39 @@ const ensureManifestTask = (place, record) => {
   record.resources.task_file = true;
   return path;
 };
+const migrateLegacyCursorCreate = (record, options, task) => {
+  if (
+    record.staffing.current.partner !== "cursor" ||
+    !record.staffing.current.effort ||
+    options.partner !== "cursor" ||
+    options.effort ||
+    !normalizedModel(options.model)
+  ) return false;
+  const status = pairStatus(record.worktree);
+  if (status.ok) {
+    fail(`unit ${record.unit_id} cannot migrate Cursor staffing while its recorded pair is live`);
+  }
+  if (existsSync(record.worktree) && !pairIsAbsent(status)) {
+    fail(`cannot prove pair absence for Cursor staffing migration: ${status.reason}`);
+  }
+  const candidate = structuredClone(record);
+  candidate.staffing.current.model = normalizedModel(options.model);
+  candidate.staffing.current.effort = null;
+  ensureMatchingCreate(candidate, options, task);
+  const migratedAt = new Date().toISOString();
+  record.staffing.history.push({
+    ...record.staffing.current,
+    ended_at: migratedAt,
+    migration: "cursor-live-catalog-effort-model",
+  });
+  record.staffing.current = {
+    ...record.staffing.current,
+    model: normalizedModel(options.model),
+    effort: null,
+    selected_at: migratedAt,
+  };
+  return true;
+};
 const pairIsAbsent = (status) =>
   !status.ok && /no (?:active )?pair(?: session)?\b/u.test(status.reason ?? "");
 const proveUnitWorktree = (place, record) => {
@@ -360,13 +420,9 @@ const create = (options) => {
   const place = repository(options.repo);
   const id = unitId(options.unit);
   const path = recordPath(place, id);
-  const required = ["worktree", "branch", "base", "lead", "partner", "effort", "reason", "scope", "validation", "merge-policy"];
+  const required = ["worktree", "branch", "base", "scope", "validation", "merge-policy"];
   for (const key of required) if (!options[key]) fail(`create requires --${key}`, null, 2);
   if (!isAbsolute(options.worktree)) fail("--worktree must be an absolute path", null, 2);
-  if (!partnerKinds.has(options.lead) || !partnerKinds.has(options.partner)) {
-    fail("--lead and --partner must be claude, codex, cursor, or grok", null, 2);
-  }
-  if (options.lead === options.partner) fail("the partner arena must differ from the orchestrator harness");
   if (!mergePolicies.has(options["merge-policy"])) fail("--merge-policy must be auto or hold", null, 2);
   if (options["task-file"] && !existsSync(options["task-file"])) {
     fail(`task file does not exist: ${options["task-file"]}`);
@@ -377,6 +433,7 @@ const create = (options) => {
   return withRegistryLock(place, () => {
     mkdirSync(place.units, { recursive: true });
     const resumed = existsSync(path);
+    validateStaffing(options, "create", { allowLegacyCursor: resumed });
     let resumedFrom = null;
     let record;
     if (resumed) {
@@ -385,6 +442,7 @@ const create = (options) => {
       if (!recoverableCreatePhases.has(resumedFrom)) {
         fail(`unit ${id} already exists in non-resumable phase ${resumedFrom}`);
       }
+      migrateLegacyCursorCreate(record, options, requestedTask);
       ensureMatchingCreate(record, options, requestedTask);
       record.resources ??= {};
     } else {
@@ -418,7 +476,7 @@ const create = (options) => {
           current: {
             partner: options.partner,
             model: normalizedModel(options.model),
-            effort: options.effort,
+            effort: options.effort ?? null,
             reason: options.reason,
             selected_at: new Date().toISOString(),
           },
@@ -497,11 +555,8 @@ const create = (options) => {
         if (resumedFrom === "starting") {
           throw new Error(`unit ${id} recorded pair ${record.pair?.sid ?? "without a sid"} is absent in phase starting`);
         }
-        const initArgs = [
-          "--partner", record.staffing.current.partner,
-          "--effort", record.staffing.current.effort,
-          "--role", "executor",
-        ];
+        const initArgs = ["--partner", record.staffing.current.partner, "--role", "executor"];
+        if (record.staffing.current.effort) initArgs.push("--effort", record.staffing.current.effort);
         if (record.staffing.current.model) initArgs.push("--model", record.staffing.current.model);
         currentPair = pair("init", record.worktree, initArgs);
         pairInitialized = true;
@@ -611,39 +666,172 @@ const status = (options) => {
   return { ok: true, unit: describe(place, record) };
 };
 
+const recoverableRestaffPhases = new Set(["restaffing", "restaff-failed"]);
+const ensureMatchingRestaff = (record, requested) => {
+  for (const field of ["lead", "partner", "model", "effort", "reason"]) {
+    const recorded = record.pending_staffing?.[field] ?? null;
+    const wanted = requested[field] ?? null;
+    if (recorded !== wanted) {
+      fail(`unit ${record.unit_id} cannot resume restaff: ${field} differs`, {
+        recorded,
+        requested: wanted,
+      });
+    }
+  }
+};
+const pairMatchesStaffing = (status, staffing) => [
+  ["partner", staffing.partner],
+  ["role", "executor"],
+  ["model", staffing.model],
+  ["effort", staffing.effort],
+].every(([field, wanted]) => (status[field] ?? null) === (wanted ?? null));
+const restaffCheckpoint = (record) => record.staffing.history.at(-1)?.checkpoint ?? null;
+
 const restaff = (options) => {
   const place = repository(options.repo);
   const id = unitId(options.unit);
-  for (const key of ["lead", "partner", "effort", "reason"]) {
-    if (!options[key]) fail(`restaff requires --${key}`, null, 2);
-  }
-  if (!partnerKinds.has(options.lead) || !partnerKinds.has(options.partner)) {
-    fail("--lead and --partner must be claude, codex, cursor, or grok", null, 2);
-  }
-  if (options.lead === options.partner) fail("the partner arena must differ from the orchestrator harness");
+  validateStaffing(options, "restaff");
+  const requested = requestedStaffing(options);
   return withRegistryLock(place, () => {
     const { path, record } = readRecord(place, id);
     if (!existsSync(record.worktree)) fail(`unit ${id} worktree is missing`);
-    const currentStatus = pairStatus(record.worktree);
-    if (!currentStatus.ok) fail(`cannot prove pair state for unit ${id}`, currentStatus);
-    if (currentStatus.in_flight) fail(`unit ${id} has an in-flight turn`, currentStatus.in_flight);
-    const checkpoint = {
-      head: gitChecked(record.worktree, ["rev-parse", "HEAD"], "read unit HEAD").stdout.trim(),
-      diff_stat: gitChecked(record.worktree, ["diff", "--stat"], "read unit diff").stdout.trim(),
-      receipt: latestReceipt(record.worktree),
-      at: new Date().toISOString(),
-    };
-    const previous = { ...record.staffing.current, ended_at: checkpoint.at, checkpoint };
-    record.lifecycle = "restaffing";
-    record.staffing.history.push(previous);
-    writeRecord(path, record);
+    const resumed = recoverableRestaffPhases.has(record.lifecycle);
+    const resumedFrom = resumed ? record.lifecycle : null;
+    let checkpoint;
+    if (resumed) {
+      if (record.pending_staffing) {
+        ensureMatchingRestaff(record, requested);
+      } else {
+        // Records written before resumable restaffing did not preserve the
+        // requested target. The first retry claims it; later retries are strict.
+        record.pending_staffing = { ...requested, requested_at: new Date().toISOString() };
+        const legacyCheckpoint = restaffCheckpoint(record);
+        if (legacyCheckpoint && legacyCheckpoint.worktree_status === undefined) {
+          legacyCheckpoint.worktree_status = gitChecked(
+            record.worktree,
+            ["status", "--short"],
+            "read unit worktree status",
+          ).stdout.trim();
+        }
+        writeRecord(path, record);
+      }
+      checkpoint = restaffCheckpoint(record);
+      if (!checkpoint) fail(`unit ${id} restaff recovery has no checkpoint`);
+    } else {
+      if (record.lifecycle !== "working") {
+        fail(`unit ${id} cannot restaff from phase ${record.lifecycle}`);
+      }
+      const currentStatus = pairStatus(record.worktree);
+      if (!currentStatus.ok) fail(`cannot prove pair state for unit ${id}`, currentStatus);
+      if (currentStatus.in_flight) fail(`unit ${id} has an in-flight turn`, currentStatus.in_flight);
+      if (record.pair?.sid && currentStatus.sid !== record.pair.sid) {
+        fail(`unit ${id} pair sid differs before restaff`, {
+          recorded: record.pair.sid,
+          observed: currentStatus.sid,
+        });
+      }
+      checkpoint = {
+        head: gitChecked(record.worktree, ["rev-parse", "HEAD"], "read unit HEAD").stdout.trim(),
+        diff_stat: gitChecked(record.worktree, ["diff", "--stat"], "read unit diff").stdout.trim(),
+        worktree_status: gitChecked(record.worktree, ["status", "--short"], "read unit worktree status").stdout.trim(),
+        receipt: latestReceipt(record.worktree),
+        at: new Date().toISOString(),
+      };
+      const previous = { ...record.staffing.current, ended_at: checkpoint.at, checkpoint };
+      record.pending_staffing = { ...requested, requested_at: checkpoint.at };
+      record.restaff_phase = "ending-old";
+      record.lifecycle = "restaffing";
+      record.staffing.history.push(previous);
+      writeRecord(path, record);
+    }
 
     try {
-      pair("end", record.worktree);
-      const model = options.model === "CLI-default" || !options.model ? null : options.model;
-      const initArgs = ["--partner", options.partner, "--effort", options.effort, "--role", "executor"];
-      if (model) initArgs.push("--model", model);
-      const initialized = pair("init", record.worktree, initArgs);
+      let currentStatus = pairStatus(record.worktree);
+      if (!record.restaff_phase) {
+        if (!currentStatus.ok) {
+          if (!pairIsAbsent(currentStatus)) {
+            throw new Error(`cannot prove pair state while restaffing unit ${id}: ${currentStatus.reason}`);
+          }
+          record.restaff_phase = "initializing-target";
+        } else if (
+          record.resources.pair &&
+          record.pair?.sid === currentStatus.sid &&
+          pairMatchesStaffing(currentStatus, record.staffing.current)
+        ) {
+          record.restaff_phase = "ending-old";
+        } else if (pairMatchesStaffing(currentStatus, record.pending_staffing)) {
+          record.restaff_phase = "starting-target";
+          record.resources.pair = true;
+          record.pair = { sid: currentStatus.sid, latest_seq: currentStatus.seq ?? 0 };
+        } else {
+          throw new Error(`unit ${id} has an unexpected live pair during restaff recovery`);
+        }
+        writeRecord(path, record);
+      }
+
+      if (record.restaff_phase === "ending-old") {
+        if (currentStatus.ok) {
+          if (!pairMatchesStaffing(currentStatus, record.staffing.current)) {
+            throw new Error(`unit ${id} old pair staffing differs during restaff recovery`);
+          }
+          if (currentStatus.in_flight) throw new Error(`unit ${id} has an in-flight old pair turn`);
+          if (record.pair?.sid && currentStatus.sid !== record.pair.sid) {
+            throw new Error(`unit ${id} old pair sid differs during restaff recovery`);
+          }
+          pair("end", record.worktree);
+        } else if (!pairIsAbsent(currentStatus)) {
+          throw new Error(`cannot prove old pair state while restaffing unit ${id}: ${currentStatus.reason}`);
+        }
+        record.resources.pair = false;
+        record.restaff_phase = "initializing-target";
+        writeRecord(path, record);
+        currentStatus = pairStatus(record.worktree);
+      }
+
+      let initialized;
+      if (record.restaff_phase === "initializing-target") {
+        currentStatus = pairStatus(record.worktree);
+        if (currentStatus.ok) {
+          if (!pairMatchesStaffing(currentStatus, record.pending_staffing)) {
+            throw new Error(`unit ${id} has an unexpected live pair during target initialization`);
+          }
+          if ((currentStatus.seq ?? 0) !== 0 || currentStatus.in_flight) {
+            throw new Error(`unit ${id} target pair started before its restaff journal`);
+          }
+          initialized = currentStatus;
+        } else {
+          if (!pairIsAbsent(currentStatus)) {
+            throw new Error(`cannot prove target pair state while restaffing unit ${id}: ${currentStatus.reason}`);
+          }
+          const initArgs = ["--partner", record.pending_staffing.partner, "--role", "executor"];
+          if (record.pending_staffing.effort) initArgs.push("--effort", record.pending_staffing.effort);
+          if (record.pending_staffing.model) initArgs.push("--model", record.pending_staffing.model);
+          initialized = pair("init", record.worktree, initArgs);
+        }
+        if (!pairMatchesStaffing(initialized, record.pending_staffing)) {
+          throw new Error(`initialized pair does not match pending staffing for unit ${id}`);
+        }
+        record.resources.pair = true;
+        record.pair = { sid: initialized.sid, latest_seq: initialized.seq ?? 0 };
+        record.restaff_phase = "starting-target";
+        writeRecord(path, record);
+      }
+
+      if (record.restaff_phase !== "starting-target") {
+        throw new Error(`unit ${id} has unknown restaff phase ${record.restaff_phase}`);
+      }
+      currentStatus = pairStatus(record.worktree);
+      if (!currentStatus.ok || !pairMatchesStaffing(currentStatus, record.pending_staffing)) {
+        throw new Error(`cannot prove pending target pair for unit ${id}`);
+      }
+      if (!record.pair?.sid) record.pair = { sid: currentStatus.sid, latest_seq: currentStatus.seq ?? 0 };
+      if (currentStatus.sid !== record.pair.sid) {
+        throw new Error(`unit ${id} pending target pair sid differs during restaff recovery`);
+      }
+      if ((currentStatus.seq ?? 0) > 1) {
+        throw new Error(`unit ${id} pending pair has unexpected seq ${currentStatus.seq}`);
+      }
+
       const checkpointPath = join(place.registry, `restaff-${id}-${process.pid}.md`);
       writeFileSync(checkpointPath, [
         record.task,
@@ -651,33 +839,57 @@ const restaff = (options) => {
         "Restaff checkpoint:",
         `- Previous HEAD: ${checkpoint.head}`,
         `- Working diff: ${checkpoint.diff_stat || "clean"}`,
+        `- Working status: ${checkpoint.worktree_status || "clean"}`,
         `- Previous receipt: ${JSON.stringify(checkpoint.receipt)}`,
         "Continue the same unit from this worktree. Preserve valid existing work and return a protocol status.",
         "",
       ].join("\n"), { flag: "wx" });
-      let running;
+      let running = initialized;
       try {
-        running = pair("send", record.worktree, ["--kind", "task", "--body-file", checkpointPath, "--background"]);
+        currentStatus = pairStatus(record.worktree);
+        if (!currentStatus.ok || currentStatus.sid !== record.pair.sid) {
+          throw new Error(`cannot prove pending pair before restaff send for unit ${id}`);
+        }
+        if ((currentStatus.seq ?? 0) === 0 && !currentStatus.in_flight) {
+          running = pair("send", record.worktree, ["--kind", "task", "--body-file", checkpointPath, "--background"]);
+          if (running.status !== "running") {
+            throw new Error(`pair send did not start: ${JSON.stringify(running)}`);
+          }
+        } else if ((currentStatus.seq ?? 0) > 1) {
+          throw new Error(`unit ${id} pending pair has unexpected seq ${currentStatus.seq}`);
+        } else {
+          running = currentStatus;
+        }
       } finally {
         trashPath(checkpointPath);
       }
       record.staffing.current = {
-        partner: options.partner,
-        model,
-        effort: options.effort,
-        reason: options.reason,
+        partner: record.pending_staffing.partner,
+        model: record.pending_staffing.model,
+        effort: record.pending_staffing.effort,
+        reason: record.pending_staffing.reason,
         selected_at: new Date().toISOString(),
       };
-      record.pair = { sid: initialized.sid, latest_seq: running.seq, latest_receipt_file: running.receipt_file };
+      record.pair.latest_seq = running.in_flight?.seq ?? running.seq ?? record.pair.latest_seq;
+      const receipt = latestReceipt(record.worktree);
+      const receiptFile = running.receipt_file ?? receipt?.receipt_file;
+      if (receiptFile) record.pair.latest_receipt_file = receiptFile;
       record.lifecycle = "working";
+      delete record.pending_staffing;
+      delete record.restaff_phase;
       delete record.error;
       writeRecord(path, record);
-      return { ok: true, status: "restaffed", unit: describe(place, record) };
+      return {
+        ok: true,
+        status: "restaffed",
+        ...(resumed ? { resumed_from: resumedFrom } : {}),
+        unit: describe(place, record),
+      };
     } catch (error) {
       record.lifecycle = "restaff-failed";
       record.error = error.message;
       writeRecord(path, record);
-      fail(error.message, { recovery_record: path, checkpoint });
+      fail(error.message, { recovery_record: path, checkpoint, ...(resumed ? { resumed_from: resumedFrom } : {}) });
     }
   });
 };
