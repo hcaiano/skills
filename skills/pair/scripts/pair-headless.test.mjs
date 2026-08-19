@@ -25,6 +25,7 @@ import {
   clearMarker,
   cursorModel,
   detectSelf,
+  extractReply,
   locate,
   markerAlive,
   messagePrompt,
@@ -850,6 +851,15 @@ test("recorded live stream fixtures keep each parser on its partner's schema", (
   assert.match(parseTextReply(cursor), /done$/u);
   const codex = readFileSync(join(fixtures, "codex-stream.jsonl"), "utf8");
   assert.equal(parseSessionId("codex", codex), "codex-1");
+  assert.equal(extractReply("codex", join(root, "no-codex-reply"), codex), "done");
+  assert.equal(
+    extractReply("cursor", join(root, "unused"), '{"type":"assistant","message":{"content":[{"type":"text","text":"cursor partial"}]}}'),
+    "cursor partial",
+  );
+  assert.equal(
+    extractReply("claude", join(root, "unused"), '{"type":"assistant","message":{"content":[{"type":"text","text":"claude partial"}]}}'),
+    "claude partial",
+  );
 });
 
 test("the cursor and grok session stores answer the same positive-absence rule", () => {

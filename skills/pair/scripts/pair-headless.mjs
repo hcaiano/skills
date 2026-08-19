@@ -577,15 +577,47 @@ export const parseClaudeResult = (transcript) => {
 // the caller was told to read it.
 export const extractReply = (partner, replyFile, transcript) => {
   if (partner === "codex") {
-    if (!existsSync(replyFile)) return null;
-    return readFileSync(replyFile, "utf8").trim() || null;
+    if (existsSync(replyFile)) {
+      const reply = readFileSync(replyFile, "utf8").trim();
+      if (reply) return reply;
+    }
+    const message = [...parseJsonObjects(transcript)].reverse().find(
+      (event) =>
+        event.type === "item.completed" &&
+        event.item?.type === "agent_message" &&
+        typeof event.item.text === "string",
+    );
+    return message?.item.text?.trim() || null;
   }
-  if (partner === "claude") return parseClaudeResult(transcript)?.result?.trim() || null;
+  if (partner === "claude") {
+    const result = parseClaudeResult(transcript);
+    if (typeof result?.result === "string" && result.result.trim()) return result.result.trim();
+    const assistant = [...parseJsonObjects(transcript)].reverse().find(
+      (event) => event.type === "assistant" && Array.isArray(event.message?.content),
+    );
+    const text = assistant?.message.content
+      .filter((block) => block?.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+    return text?.trim() || null;
+  }
   if (partner === "cursor") {
     const result = parseCursorResult(transcript);
-    return result?.is_error === false || result?.is_error == null
-      ? (typeof result?.result === "string" && result.result.trim() ? result.result.trim() : null)
-      : null;
+    if (
+      (result?.is_error === false || result?.is_error == null) &&
+      typeof result?.result === "string" &&
+      result.result.trim()
+    ) {
+      return result.result.trim();
+    }
+    const assistant = [...parseJsonObjects(transcript)].reverse().find(
+      (event) => event.type === "assistant" && Array.isArray(event.message?.content),
+    );
+    const text = assistant?.message.content
+      .filter((block) => block?.type === "text" && typeof block.text === "string")
+      .map((block) => block.text)
+      .join("");
+    return text?.trim() || null;
   }
   return parseGrokStream(transcript).reply;
 };
