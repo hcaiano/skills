@@ -8,6 +8,7 @@ const read = (path) => readFileSync(join(here, path), "utf8");
 const skill = read("../SKILL.md");
 const herdrBackend = read("../references/herdr.md");
 const headlessBackend = read("../references/headless.md");
+const models = read("../references/models.md");
 const helper = read("herdr-pair.mjs");
 const headlessHelper = read("pair-headless.mjs");
 
@@ -82,9 +83,21 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   );
   // No hardcoded catalog: cursor's own list is the catalog.
   assert.match(skill, /cursor-agent --list-models/u);
+  assert.match(skill, /grok models/u);
   assert.match(skill, /`CLI default`/u);
-  // Effort exists only where the CLI has a door for it.
-  assert.match(skill, /Claude Code has none; do not ask/u);
+  assert.match(skill, /references\/models\.md/u);
+  assert.match(models, /Risk/u);
+  assert.match(models, /Context/u);
+  assert.match(models, /Speed/u);
+  assert.match(models, /Pool/u);
+  assert.match(models, /`CLI default`/u);
+  assert.match(models, /Codex pair spawns set `low`, `high`, or `xhigh` explicitly/u);
+  assert.match(models, /SKILL_DIR[\s\S]*usage-state\.mjs/u);
+  // Claude Code has an effort door; the backend and prose must carry it.
+  assert.match(skill, /Claude Code\s+\(`--effort low\|medium\|high\|xhigh\|max`\)/u);
+  assert.match(models, /Claude Code accepts\s+`--effort low\|medium\|high\|xhigh\|max`/u);
+  assert.match(headlessBackend, /Claude receives\s+`--effort low\|medium\|high\|xhigh\|max`/u);
+  assert.match(headlessHelper, /EFFORT_SUPPORT = \{ claude: true/u);
   assert.match(headlessBackend, /`\[effort=…\]` suffix inside `--model`/u);
 });
 
@@ -172,21 +185,55 @@ test("the Herdr backend keeps its pane mechanics and its own pointers", () => {
 
 test("the headless backend documents every send status the helper emits", () => {
   const documented = [...new Set([...headlessBackend.matchAll(/`status=([a-z-]+)`/gu)].map((m) => m[1]))].sort();
-  assert.deepEqual(documented, ["empty-reply", "failed", "hang-killed", "replied"]);
-  for (const status of documented) {
+  for (const status of ["empty-reply", "failed", "hang-killed", "replied", "running", "worker-lost", "wait-timeout"]) {
+    assert.ok(documented.includes(status), `headless.md must document ${status}`);
     assert.match(headlessHelper, new RegExp(`status: "${status}"`, "u"));
   }
+  assert.match(headlessBackend, /reason=worker-lost/u);
+  assert.match(headlessHelper, /worker-lost/u);
+  assert.match(headlessBackend, /reason=grok-cancelled/u);
+  assert.match(headlessHelper, /grok-cancelled/u);
 });
 
 test("the headless backend documents the helper's whole command surface", () => {
-  for (const command of ["init", "send", "status", "clear", "end"]) {
+  for (const command of ["init", "send", "wait", "fork", "status", "clear", "end"]) {
     assert.match(headlessBackend, new RegExp(`\\$PAIR_SCRIPT" ${command} --repo`, "u"));
     assert.match(headlessHelper, new RegExp(`${command}: run`, "u"));
   }
+  assert.match(headlessBackend, /send --repo[\s\S]*\[--background\]/u);
+  assert.match(headlessBackend, /wait --repo[\s\S]*\[--seq/u);
+  assert.match(headlessBackend, /default wait timeout is 65 minutes/u);
+  assert.match(headlessHelper, /opt\("timeout-min", "65"\)/u);
+  assert.match(headlessBackend, /fork --repo[\s\S]*\[--retry\]/u);
+  assert.match(headlessBackend, /fork-scheduled[\s\S]*fork runs on the next normal `send`/u);
   assert.match(headlessBackend, /scripts\/pair-headless\.mjs/u);
   assert.match(headlessBackend, /half-duplex/u);
   assert.match(headlessBackend, /`<git-dir>\/pair\/session\.json`/u);
   assert.match(headlessBackend, /the helper refuses\s+to pair a model with itself/u);
+});
+
+test("the headless backend discloses supervisor, fork, and stream contracts", () => {
+  for (const pointer of [
+    /detached supervisor path/u,
+    /supervisor_pid/u,
+    /partner_pid/u,
+    /receipt_file/u,
+    /running record is not the\s+final receipt/u,
+    /temporary file before renaming it into place/u,
+    /state\.seq/u,
+    /partial_reply=true/u,
+    /pending_fork/u,
+    /--fork-session --session-id/u,
+    /successor_sid/u,
+    /stream proves the new session ID/u,
+    /first post-fork message states the sid\s+change/iu,
+  ]) {
+    assert.match(headlessBackend, pointer);
+  }
+  for (const flag of ["--json", "streaming-json", "stream-json", "--fork-session"]) {
+    assert.match(headlessHelper, new RegExp(flag.replaceAll("-", "[-]"), "u"));
+  }
+  assert.match(headlessHelper, /--effort/u);
 });
 
 test("the headless backend states what each guarantee is actually worth", () => {
