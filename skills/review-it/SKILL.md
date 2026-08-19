@@ -38,7 +38,7 @@ consumers pass on this range. Standalone, run them before grading. A gate over
 an unproven range reviews a moving target.
 
 Read pool capacity before committing either review pool: run
-`node scripts/usage-state.mjs` from the herdr-orchestrate skill installed
+`node scripts/usage-state.mjs` from the orchestrate skill installed
 alongside this one. A pool is out of headroom at `used_percent` ≥ 90 or when its
 CLI is observed refusing — a null reading never degrades on its own. A pool
 inside its headroom but reading `pace` above 2 spends at twice what the rest of
@@ -57,12 +57,12 @@ Before starting any simplify or review command, read and follow
 command in the current agent pane is already visible; every external Claude or
 Codex command runs through the transport, which records whether it ran in a
 visible Herdr pane or as a local background process. The visible backend needs
-`herdr-orchestrate` installed beside this skill for its caller-pane proof, and
+`pair` installed beside this skill for its caller-pane proof, and
 the two environments resolve its absence differently. Outside `HERDR_ENV=1` the
 transport selects `local`, and the gate records that its runs had no live
 surface for the user to watch or interject in. Inside `HERDR_ENV=1` a missing
 proof stops the gate: a gate Herdr is hosting runs where the user can see it,
-so tell the user to install `herdr-orchestrate` rather than demoting the run to
+so tell the user to install `pair` rather than demoting the run to
 an invisible process.
 
 Done when the range, the pool state, and any required transport pin are

@@ -12,7 +12,7 @@ tail that file when needed.
 ## Select and launch
 
 Set `RUN_TRANSPORT` to this skill's `scripts/run-transport.mjs`. When
-`HERDR_ENV=1`, locate the `herdr-orchestrate` skill installed beside this one,
+`HERDR_ENV=1`, locate the `pair` skill installed beside this one,
 then read and execute its `references/caller-pane-resolution.md` proof for the
 task repository. Build the `CALLER_ID` argument array exactly as that reference
 derives it from the proof JSON. The proof's pane, workspace, tab, terminal,

@@ -1348,7 +1348,7 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
     // `agent prompt` returns before its Enter takes effect and does not always
     // deliver one, so the message can sit unsubmitted in the partner's
     // composer — and the ACK wait then reads that as a busy partner rather
-    // than a stuck message. Land it the way herdr-orchestrate's send.mjs does:
+    // than a stuck message. Land it through the same proved composer path:
     // paste, Enter until the composer no longer holds the text, one full
     // resend, then a loud failure instead of a silent stall. Prose rewrites of
     // the skill have shaved this off four times; it lives in code on purpose.

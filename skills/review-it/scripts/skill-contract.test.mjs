@@ -39,7 +39,7 @@ test("every script path the docs name exists after the move", () => {
   const named = new Set(
     [...`${reviewIt}\n${processTransport}`.matchAll(/(?:<skill dir>\/|this skill's `)?scripts\/([a-z-]+\.mjs)/gu)]
       .map((m) => m[1])
-      // usage-state.mjs is herdr-orchestrate's, read from a sibling install.
+      // usage-state.mjs is orchestrate's, read from a sibling install.
       // Excluding it here is the boundary: this gate ships no capacity helper,
       // which is why a missing one has its own recorded behaviour.
       .filter((script) => script !== "usage-state.mjs"),
@@ -54,7 +54,7 @@ test("every script path the docs name exists after the move", () => {
   assert.equal(
     existsSync(join(here, "usage-state.mjs")),
     false,
-    "the capacity helper belongs to herdr-orchestrate and must not be vendored here",
+    "the capacity helper belongs to orchestrate and must not be vendored here",
   );
 });
 
@@ -249,9 +249,7 @@ test("the extracted gate stands on its own", () => {
   assert.doesNotMatch(processTransport, /beside ship-it/u);
   assert.doesNotMatch(processTransport, /ship-it's content rules/u);
   assert.doesNotMatch(processTransport, /every ship-it simplify/u);
-  // herdr-orchestrate finds this gate's panes by this exact label. A pane
-  // labelled for ship-it is read there as a delivery in progress, which a
-  // standalone or orchestrator-invoked gate run is not.
+  // Keep one visible label across standalone and orchestrator-invoked runs.
   assert.match(processTransport, /--label "review-it · /u);
   assert.doesNotMatch(processTransport, /--label "ship-it · /u);
 
@@ -261,22 +259,19 @@ test("the extracted gate stands on its own", () => {
     reviewIt,
     /pool state unread \(usage-state\.mjs not installed\)[\s\S]*leaves\s+the semantic grade, the reviewer count, and simplify exactly as graded/u,
   );
-  // The caller-pane proof is herdr-orchestrate's, not pair's: a gate run must
-  // never appear to need a pairing session, and any agent kind Herdr hosts
-  // must be able to run it.
+  // Pair owns the shared caller proof; using it does not create a pair session.
   assert.match(
     reviewIt,
-    /visible backend needs\s+`herdr-orchestrate` installed beside this skill for its caller-pane proof/u,
+    /visible backend needs\s+`pair` installed beside this skill for its caller-pane proof/u,
   );
   assert.match(
     reviewIt,
-    /tell the user to install `herdr-orchestrate`/u,
+    /tell the user to install `pair`/u,
   );
   assert.match(
     processTransport,
-    /locate the `herdr-orchestrate` skill installed beside this one,\s+then read and execute its `references\/caller-pane-resolution\.md` proof/u,
+    /locate the `pair` skill installed beside this one,\s+then read and execute its `references\/caller-pane-resolution\.md` proof/u,
   );
-  assert.doesNotMatch(processTransport, /`pair`/u);
   // The two environments resolve a missing proof differently, because
   // run-transport.mjs hard-stops an incomplete pin under HERDR_ENV=1 rather
   // than demoting a hosted run to an invisible one. A single "falls back to
