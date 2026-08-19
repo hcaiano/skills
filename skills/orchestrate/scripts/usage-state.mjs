@@ -88,7 +88,7 @@ const tail = (file, bytes) => {
     const len = Math.min(size, bytes);
     const buf = Buffer.alloc(len);
     fs.readSync(fd, buf, 0, len, size - len);
-    return buf.toString('utf8');
+    return { text: buf.toString('utf8'), truncated: size > len };
   } finally { fs.closeSync(fd); }
 };
 
@@ -127,7 +127,9 @@ try {
   // keep fresh.
   let best = null;
   for (const { f, m } of files.slice(0, 10)) {
-    const lines = tail(f, 5 * 1024 * 1024).split('\n').slice(1);
+    const { text, truncated } = tail(f, 5 * 1024 * 1024);
+    const lines = text.split('\n');
+    if (truncated) lines.shift();
     for (let i = lines.length - 1; i >= 0; i--) {
       if (!lines[i].includes('"rate_limits"')) continue;
       let j; try { j = JSON.parse(lines[i]); } catch { continue; }

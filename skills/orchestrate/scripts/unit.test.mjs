@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -7,6 +7,7 @@ import {
   readFileSync,
   readdirSync,
   rmdirSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -103,7 +104,10 @@ console.log(JSON.stringify(merged ? [{number:1,url:"https://example.test/pr/1",s
 `);
 writeFileSync(join(bin, "trash"), `#!/usr/bin/env node
 import { existsSync, renameSync } from "node:fs";
-for (const path of process.argv.slice(2)) if (existsSync(path)) renameSync(path, path + ".trashed." + process.pid);
+for (const path of process.argv.slice(2)) {
+  if (process.env.FAKE_TRASH_FAIL_MATCH && path.includes(process.env.FAKE_TRASH_FAIL_MATCH)) process.exit(9);
+  if (existsSync(path)) renameSync(path, path + ".trashed." + process.pid);
+}
 `);
 execFileSync("chmod", ["+x", join(bin, "gh"), join(bin, "trash")]);
 
@@ -121,6 +125,22 @@ const invoke = (args, env = {}) => {
   try { output = JSON.parse(result.stdout); } catch { output = { stdout: result.stdout, stderr: result.stderr }; }
   return { ...result, output };
 };
+const invokeAsync = (args, env = {}) => new Promise((resolve) => {
+  const child = spawn(process.execPath, [unitScript, ...args], {
+    env: { ...baseEnv, ...env },
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.setEncoding("utf8");
+  child.stderr.setEncoding("utf8");
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.on("close", (status) => {
+    let output;
+    try { output = JSON.parse(stdout); } catch { output = { stdout, stderr }; }
+    resolve({ status, stdout, stderr, output });
+  });
+});
 const taskFile = (name) => {
   const path = join(root, `${name}.md`);
   writeFileSync(path, `Implement ${name} and reply ready.\n`);
@@ -252,7 +272,7 @@ test("create refuses duplicate unit, branch, worktree, and same-harness partner"
   assert.match(duplicate.output.reason, /already exists|conflicts/u);
   const sameHarness = createArgs("same", "claude");
   const refused = invoke(sameHarness);
-  assert.notEqual(refused.status, 0);
+  assert.equal(refused.status, 2);
   assert.match(refused.output.reason, /differ from the orchestrator/u);
 });
 
@@ -335,6 +355,22 @@ test("create names the immutable field that prevents resume", () => {
   const cleaned = invoke([
     "dismantle", "--repo", repository, "--unit", "recover-mismatch",
     "--force", "recover-mismatch",
+  ]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("create recovery keeps a manifest mismatch as one JSON document", () => {
+  const record = writeRecoveryRecord("recover-task-mismatch", "creating");
+  mkdirSync(dirname(record.task_file), { recursive: true });
+  writeFileSync(record.task_file, "different task\n");
+  const refused = invoke(resumeArgs("recover-task-mismatch"));
+  assert.notEqual(refused.status, 0);
+  const document = JSON.parse(refused.stdout);
+  assert.match(document.reason, /manifest task differs/u);
+  assert.equal(document.reason, refused.output.reason);
+  const cleaned = invoke([
+    "dismantle", "--repo", repository, "--unit", "recover-task-mismatch",
+    "--force", "recover-task-mismatch",
   ]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
 });
@@ -636,6 +672,100 @@ test("a setup failure rolls back only resources created by that command", () => 
   assert.equal(listed.output.units.some((unit) => unit.unit_id === "setup-fails"), false);
 });
 
+test("setup rollback uses the recorded resolved worktree path", () => {
+  const aliasRoot = join(root, "symlink-parent");
+  symlinkSync(root, aliasRoot);
+  const args = createArgs("symlink-rollback", "codex", "exit 7");
+  args[args.indexOf("--worktree") + 1] = join(aliasRoot, "worktree-symlink-rollback");
+  const failed = invoke(args);
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /unit setup/u);
+  assert.equal(existsSync(join(root, "worktree-symlink-rollback")), false);
+  assert.equal(git(repository, "branch", "--list", "feat/symlink-rollback"), "");
+});
+
+test("a timed-out setup kills its complete process group", async () => {
+  const pidFile = join(root, "timed-out-setup-child.pid");
+  const args = createArgs(
+    "setup-timeout-tree",
+    "codex",
+    `sleep 999 & echo $! > ${JSON.stringify(pidFile)}; wait`,
+  );
+  const failed = invoke(args, { ORCHESTRATE_LONG_COMMAND_TIMEOUT_MS: "100" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /timed out|ETIMEDOUT/u);
+  const childPid = Number(readFileSync(pidFile, "utf8").trim());
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  let alive = true;
+  try { process.kill(childPid, 0); } catch (error) { alive = error?.code === "EPERM"; }
+  if (alive) {
+    try { process.kill(childPid, "SIGKILL"); } catch {}
+  }
+  assert.equal(alive, false, `setup grandchild ${childPid} survived its timeout`);
+});
+
+test("an overflowing setup kills its complete process group", async () => {
+  const pidFile = join(root, "overflowing-setup-child.pid");
+  const args = createArgs(
+    "setup-buffer-tree",
+    "codex",
+    `sleep 999 & echo $! > ${JSON.stringify(pidFile)}; yes x`,
+  );
+  const failed = invoke(args, { ORCHESTRATE_MAX_BUFFER_BYTES: "1024" });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /ENOBUFS|maxBuffer/u);
+  const childPid = Number(readFileSync(pidFile, "utf8").trim());
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  let alive = true;
+  try { process.kill(childPid, 0); } catch (error) { alive = error?.code === "EPERM"; }
+  if (alive) {
+    try { process.kill(childPid, "SIGKILL"); } catch {}
+  }
+  assert.equal(alive, false, `setup grandchild ${childPid} survived its buffer overflow`);
+});
+
+test("a missing command reports ENOENT without signaling the caller group", () => {
+  const limitedBin = join(root, "missing-command-bin");
+  mkdirSync(limitedBin);
+  symlinkSync(process.execPath, join(limitedBin, "node"));
+  symlinkSync("/usr/bin/git", join(limitedBin, "git"));
+  symlinkSync(join(bin, "trash"), join(limitedBin, "trash"));
+  const failed = invoke(
+    createArgs("missing-setup-command", "codex", "exit 7"),
+    { PATH: limitedBin },
+  );
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /spawnSync sh ENOENT/u);
+  assert.equal(existsSync(join(root, "worktree-missing-setup-command")), false);
+  assert.equal(git(repository, "branch", "--list", "feat/missing-setup-command"), "");
+});
+
+test("restaff keeps the send error when checkpoint cleanup also fails", () => {
+  const created = invoke(createArgs("restaff-cleanup-error"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const args = [
+    "restaff", "--repo", repository, "--unit", "restaff-cleanup-error",
+    "--lead", "claude", "--partner", "grok", "--model", "CLI-default",
+    "--effort", "low", "--reason", "grok matches the bounded task and available pool",
+  ];
+  const failed = invoke(args, {
+    FAKE_PAIR_FAIL_SEND_PARTNER: "grok",
+    FAKE_TRASH_FAIL_MATCH: "restaff-restaff-cleanup-error",
+  });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /pair send failed: forced send failure for grok/u);
+  assert.doesNotMatch(failed.output.reason, /trash/u);
+  const registry = join(git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir"), "orchestrate");
+  for (const name of readdirSync(registry)) {
+    if (name.startsWith("restaff-restaff-cleanup-error-")) unlinkSync(join(registry, name));
+  }
+  const cleaned = invoke([
+    "dismantle", "--repo", repository, "--unit", "restaff-cleanup-error",
+    "--force", "restaff-cleanup-error",
+  ]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
 test("registry locking refuses a live owner and recovers a dead owner", () => {
   const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
   const registry = join(common, "orchestrate");
@@ -652,9 +782,49 @@ test("registry locking refuses a live owner and recovers a dead owner", () => {
   writeFileSync(join(lock, "owner.json"), `${JSON.stringify({ pid: 2147483647 })}\n`);
   const recovered = invoke(createArgs("dead-lock"));
   assert.equal(recovered.status, 0, recovered.stderr || JSON.stringify(recovered.output));
-  assert.equal(readdirSync(registry).some((name) => name.startsWith("registry.lock.trashed.")), true);
+  assert.equal(
+    readdirSync(registry).some((name) => name.startsWith("registry.lock.stale-") && name.includes(".trashed.")),
+    true,
+  );
   const cleaned = invoke(["dismantle", "--repo", repository, "--unit", "dead-lock", "--force", "dead-lock"]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("stale registry recovery gives one concurrent process the lock", async () => {
+  const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const lock = join(common, "orchestrate", "registry.lock");
+  mkdirSync(lock);
+  writeFileSync(join(lock, "owner.json"), `${JSON.stringify({ pid: 2147483647 })}\n`);
+  const [first, second] = await Promise.all([
+    invokeAsync(createArgs("lock-race-a", "codex", "sleep 0.4")),
+    invokeAsync(createArgs("lock-race-b", "codex", "sleep 0.4")),
+  ]);
+  const succeeded = [first, second].filter((result) => result.status === 0);
+  const refused = [first, second].filter((result) => result.status !== 0);
+  assert.equal(succeeded.length, 1, JSON.stringify([first.output, second.output]));
+  assert.equal(refused.length, 1, JSON.stringify([first.output, second.output]));
+  assert.match(refused[0].output.reason, /registry (?:is busy|lock)/u);
+  const id = succeeded[0].output.unit.unit_id;
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("dismantle normalizes a legacy record without resources or cleanup", () => {
+  const record = writeRecoveryRecord("legacy-dismantle", "working", {
+    withWorktree: true,
+    withPair: true,
+  });
+  const path = join(record.common_git_dir, "orchestrate", "units", "legacy-dismantle.json");
+  delete record.resources;
+  delete record.cleanup;
+  writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
+  const cleaned = invoke([
+    "dismantle", "--repo", repository, "--unit", "legacy-dismantle",
+    "--force", "legacy-dismantle",
+  ]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+  assert.equal(existsSync(record.worktree), false);
+  assert.equal(existsSync(path), false);
 });
 
 test("list exposes every journaled recovery phase", () => {

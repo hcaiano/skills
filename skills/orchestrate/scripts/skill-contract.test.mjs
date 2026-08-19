@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
-const here = new URL(".", import.meta.url).pathname;
+const here = fileURLToPath(new URL(".", import.meta.url));
 const skill = readFileSync(join(here, "../SKILL.md"), "utf8");
 const staffing = readFileSync(join(here, "../references/staffing.md"), "utf8");
 const delivery = readFileSync(join(here, "../references/delivery.md"), "utf8");

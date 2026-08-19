@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -19,6 +20,26 @@ const pairScript = process.env.ORCHESTRATE_PAIR_SCRIPT ??
   join(scriptDir, "../../pair/scripts/pair-headless.mjs");
 const partnerKinds = new Set(["claude", "codex", "cursor", "grok"]);
 const mergePolicies = new Set(["auto", "hold"]);
+const timeoutFromEnvironment = (name, fallback) => {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+};
+const defaultCommandTimeoutMs = timeoutFromEnvironment(
+  "ORCHESTRATE_COMMAND_TIMEOUT_MS",
+  2 * 60 * 1000,
+);
+const longCommandTimeoutMs = timeoutFromEnvironment(
+  "ORCHESTRATE_LONG_COMMAND_TIMEOUT_MS",
+  30 * 60 * 1000,
+);
+const pairSendTimeoutMs = timeoutFromEnvironment(
+  "ORCHESTRATE_PAIR_SEND_TIMEOUT_MS",
+  5 * 60 * 1000,
+);
+const commandMaxBufferBytes = timeoutFromEnvironment(
+  "ORCHESTRATE_MAX_BUFFER_BYTES",
+  64 * 1024 * 1024,
+);
 
 class CliExit extends Error {
   constructor(code) {
@@ -47,14 +68,36 @@ const parseOptions = (args) => {
   return options;
 };
 
-const run = (command, args, options = {}) =>
-  spawnSync(command, args, {
+const run = (command, args, options = {}) => {
+  const { detached = process.platform !== "win32", ...spawnOptions } = options;
+  const result = spawnSync(command, args, {
     encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-    ...options,
+    maxBuffer: commandMaxBufferBytes,
+    timeout: defaultCommandTimeoutMs,
+    killSignal: "SIGKILL",
+    detached,
+    ...spawnOptions,
   });
+  const leaderWasKilled = result.status === null && (result.error || result.signal);
+  if (leaderWasKilled && Number.isInteger(result.pid) && result.pid > 0) {
+    if (detached && process.platform !== "win32") {
+      try { process.kill(-result.pid, "SIGKILL"); } catch {}
+    } else if (process.platform === "win32") {
+      spawnSync("taskkill", ["/pid", String(result.pid), "/t", "/f"], {
+        encoding: "utf8",
+        timeout: defaultCommandTimeoutMs,
+      });
+    }
+  }
+  return result;
+};
 const commandError = (result, label) =>
-  `${label}: ${(result.stderr || result.stdout || `exit ${result.status}`).trim()}`;
+  `${label}: ${(
+    result.error?.message ||
+    result.stderr ||
+    result.stdout ||
+    (result.signal ? `signal ${result.signal}` : `exit ${result.status}`)
+  ).trim()}`;
 const runChecked = (command, args, options, label) => {
   const result = run(command, args, options);
   if (result.status !== 0) throw new Error(commandError(result, label));
@@ -124,6 +167,7 @@ const readRecord = (place, id) => {
 
 const withRegistryLock = (place, operation) => {
   mkdirSync(place.registry, { recursive: true });
+  let staleClaim = null;
   try {
     mkdirSync(place.lock);
   } catch (error) {
@@ -136,30 +180,59 @@ const withRegistryLock = (place, operation) => {
     let alive = true;
     try { process.kill(ownerRecord.pid, 0); } catch (killError) { alive = killError?.code === "EPERM"; }
     if (alive) fail(`orchestrate registry is busy at ${place.lock} (pid ${ownerRecord.pid})`);
-    trashPath(place.lock);
+    staleClaim = `${place.lock}.stale-${process.pid}-${randomUUID()}`;
     try {
+      renameSync(place.lock, staleClaim);
       mkdirSync(place.lock);
     } catch (retryError) {
+      if (staleClaim) {
+        try { trashPath(staleClaim); } catch {}
+      }
       fail(`cannot recover stale orchestrate registry lock: ${retryError.message}`);
     }
   }
   const ownerPath = join(place.lock, "owner.json");
+  const ownerToken = randomUUID();
   try {
-    writeFileSync(ownerPath, `${JSON.stringify({ pid: process.pid, at: new Date().toISOString() })}\n`, { flag: "wx" });
+    writeFileSync(ownerPath, `${JSON.stringify({ pid: process.pid, token: ownerToken, at: new Date().toISOString() })}\n`, { flag: "wx" });
+    const published = JSON.parse(readFileSync(ownerPath, "utf8"));
+    if (published.pid !== process.pid || published.token !== ownerToken) {
+      throw new Error("published owner does not match this process");
+    }
   } catch (error) {
+    try {
+      const published = JSON.parse(readFileSync(ownerPath, "utf8"));
+      if (published.pid === process.pid && published.token === ownerToken) unlinkSync(ownerPath);
+    } catch {}
     try { rmdirSync(place.lock); } catch {}
     fail(`cannot publish orchestrate registry lock owner: ${error.message}`);
+  }
+  if (staleClaim) {
+    try { trashPath(staleClaim); } catch {}
   }
   try {
     return operation();
   } finally {
-    try { unlinkSync(ownerPath); } catch {}
-    try { rmdirSync(place.lock); } catch {}
+    try {
+      const published = JSON.parse(readFileSync(ownerPath, "utf8"));
+      if (published.pid === process.pid && published.token === ownerToken) {
+        unlinkSync(ownerPath);
+        rmdirSync(place.lock);
+      }
+    } catch {}
   }
 };
 
 const pair = (command, repo, extra = []) => {
-  const result = run(process.execPath, [pairScript, command, "--repo", repo, ...extra]);
+  // A real model bootstrap can exceed the general process limit. Headless send
+  // only launches its background supervisor, but gets a smaller explicit
+  // allowance so slow process startup does not hold the registry forever.
+  const timeout = command === "init"
+    ? longCommandTimeoutMs
+    : command === "send"
+      ? pairSendTimeoutMs
+      : defaultCommandTimeoutMs;
+  const result = run(process.execPath, [pairScript, command, "--repo", repo, ...extra], { timeout });
   if (result.status !== 0) {
     let detail = (result.stderr || result.stdout || "").trim();
     try { detail = JSON.parse(result.stdout).reason ?? detail; } catch {}
@@ -305,7 +378,9 @@ const validateStaffing = (options, command, { allowLegacyCursor = false } = {}) 
   if (!partnerKinds.has(options.lead) || !partnerKinds.has(options.partner)) {
     fail("--lead and --partner must be claude, codex, cursor, or grok", null, 2);
   }
-  if (options.lead === options.partner) fail("the partner arena must differ from the orchestrator harness");
+  if (options.lead === options.partner) {
+    fail("the partner arena must differ from the orchestrator harness", null, 2);
+  }
   if (options.partner === "cursor") {
     const legacy = allowLegacyCursor && Boolean(options.effort);
     if (!legacy && (!options.model || options.model === "CLI-default")) {
@@ -522,7 +597,12 @@ const create = (options) => {
         record.lifecycle = "setting-up";
         writeRecord(path, record);
         if (record.setup) {
-          runChecked("sh", ["-c", record.setup], { cwd: record.worktree }, "unit setup");
+          runChecked(
+            "sh",
+            ["-c", record.setup],
+            { cwd: record.worktree, timeout: longCommandTimeoutMs },
+            "unit setup",
+          );
         }
         record.lifecycle = "initializing-pair";
         writeRecord(path, record);
@@ -603,6 +683,7 @@ const create = (options) => {
         unit: describe(place, record),
       };
     } catch (error) {
+      if (error instanceof CliExit) throw error;
       if (resumed) {
         record.error = error.message;
         writeRecord(path, record);
@@ -613,7 +694,7 @@ const create = (options) => {
       writeRecord(path, record);
       if (pairInitialized) {
         try {
-          pair("end", options.worktree);
+          pair("end", record.worktree);
           rollback.push({ resource: "pair", ok: true });
           record.resources.pair = false;
         } catch (pairError) {
@@ -621,13 +702,13 @@ const create = (options) => {
         }
       }
       if (record.resources.worktree) {
-        const removed = git(place.root, "worktree", "remove", "--force", options.worktree);
+        const removed = git(place.root, "worktree", "remove", "--force", record.worktree);
         rollback.push({ resource: "worktree", ok: removed.status === 0, error: removed.status === 0 ? null : commandError(removed, "remove worktree") });
         if (removed.status === 0) record.resources.worktree = false;
       }
       if (record.resources.local_branch) {
         try {
-          removeLocalBranch(place.root, options.branch);
+          removeLocalBranch(place.root, record.branch);
           rollback.push({ resource: "local-branch", ok: true });
           record.resources.local_branch = false;
         } catch (branchError) {
@@ -845,6 +926,7 @@ const restaff = (options) => {
         "",
       ].join("\n"), { flag: "wx" });
       let running = initialized;
+      let sendError = null;
       try {
         currentStatus = pairStatus(record.worktree);
         if (!currentStatus.ok || currentStatus.sid !== record.pair.sid) {
@@ -860,8 +942,15 @@ const restaff = (options) => {
         } else {
           running = currentStatus;
         }
+      } catch (error) {
+        sendError = error;
+        throw error;
       } finally {
-        trashPath(checkpointPath);
+        try {
+          trashPath(checkpointPath);
+        } catch (cleanupError) {
+          if (!sendError) throw cleanupError;
+        }
       }
       record.staffing.current = {
         partner: record.pending_staffing.partner,
@@ -899,14 +988,13 @@ const dismantle = (options) => {
   const id = unitId(options.unit);
   return withRegistryLock(place, () => {
     const { path, record } = readRecord(place, id);
+    record.resources ??= {};
+    record.cleanup ??= [];
     const forced = options.force === id;
     if (options.force && !forced) fail(`--force must equal the exact unit id ${id}`, null, 2);
     const currentStatus = pairStatus(record.worktree);
-    const pairAlreadyEnded = record.resources?.pair === false || (
-      record.lifecycle === "dismantling" &&
-      !currentStatus.ok &&
-      /no (?:active )?pair(?: session)?\b/u.test(currentStatus.reason ?? "")
-    );
+    const pairAlreadyEnded = record.resources.pair === false ||
+      (record.lifecycle === "dismantling" && pairIsAbsent(currentStatus));
     if (existsSync(record.worktree) && !currentStatus.ok && !pairAlreadyEnded) {
       fail(`cannot prove pair state for unit ${id}`, currentStatus);
     }

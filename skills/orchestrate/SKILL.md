@@ -83,6 +83,14 @@ record, branch, worktree, or same-CLI partner. Use the repository's own
 worktree setup pipeline when one exists. Read every returned record and report
 its staffing reason to the user.
 
+The helper gives ordinary child commands two minutes, pair `send` five minutes,
+and setup or pair `init` 30 minutes. A timeout kills the complete child process
+group before rollback. Increase a limit only after evidence shows that the
+default is too short. Use the positive millisecond environment variables
+`ORCHESTRATE_COMMAND_TIMEOUT_MS`,
+`ORCHESTRATE_PAIR_SEND_TIMEOUT_MS`, or
+`ORCHESTRATE_LONG_COMMAND_TIMEOUT_MS`; never remove the timeout.
+
 A matching `create` command resumes `creating`, `setting-up`,
 `initializing-pair`, or `starting`. On recovery, repeat every recorded option
 but omit `--task-file`; the manifest-owned task file is authoritative. Setup
