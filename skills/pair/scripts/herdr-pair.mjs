@@ -177,11 +177,18 @@ function participantRecord(pane) {
 // backfills it on the next verify, so sessions written before this check keep
 // working.
 function participantMatches(record, pane) {
+  // Herdr can briefly report a live pane without its agent_session metadata
+  // while the agent is restarting or before its binding has been re-reported.
+  // The pane and terminal still prove which terminal we are talking to; a
+  // missing live session id is unreported, not evidence of a replacement
+  // conversation. Keep rejecting a live id that disagrees with the record.
+  const liveAgentSessionId = pane.agent_session?.value ?? null;
   return (
     record?.pane_id === pane.pane_id &&
     (!record.terminal_id || record.terminal_id === pane.terminal_id) &&
     (!record.agent_session_id ||
-      record.agent_session_id === pane.agent_session?.value)
+      liveAgentSessionId === null ||
+      record.agent_session_id === liveAgentSessionId)
   );
 }
 
@@ -576,9 +583,16 @@ function pairAgentName(partnerAgent, paneId) {
 // pair's default keeps every CLI on its normal permission prompts; a spawn
 // that must run unattended opts in with --autonomy full.
 const autonomyArguments = {
-  claude: ["--permission-mode", "acceptEdits"],
-  grok: ["--permission-mode", "acceptEdits"],
-  codex: ["-a", "on-failure", "-s", "workspace-write"],
+  // `acceptEdits` still prompts for shell actions. A pane partner must be
+  // unattended for the transport to keep working, so full means Claude's
+  // explicit bypass mode and Grok's explicit auto-approval switch.
+  claude: ["--permission-mode", "bypassPermissions"],
+  grok: ["--always-approve"],
+  // The Herdr pane itself must be able to call the Herdr socket without a
+  // human approval path. `workspace-write` denies that socket and `-a never`
+  // otherwise has nowhere to ask, so the visible pane is the mitigation for
+  // this deliberately broad pane-only permission.
+  codex: ["-a", "never", "-s", "danger-full-access"],
   cursor: ["--force"],
 };
 
@@ -590,9 +604,6 @@ function agentStartArguments(partnerAgent, options) {
     fail("--autonomy accepts only: full (omit it for the CLI's normal prompts)");
   }
   const autonomyArgs = autonomy === "full" ? autonomyArguments[partnerAgent] : [];
-  if (effort && partnerAgent === "claude") {
-    fail("claude has no reasoning-effort control — drop --effort");
-  }
   if (partnerAgent === "cursor") {
     if (effort && !model) {
       fail("cursor carries effort inside the model name, so --effort needs --model");
@@ -601,7 +612,11 @@ function agentStartArguments(partnerAgent, options) {
     return [...autonomyArgs, ...(named ? ["--model", named] : [])];
   }
   if (partnerAgent === "claude") {
-    return [...autonomyArgs, ...(model ? ["--model", model] : [])];
+    return [
+      ...autonomyArgs,
+      ...(effort ? ["--effort", effort] : []),
+      ...(model ? ["--model", model] : []),
+    ];
   }
   if (partnerAgent === "codex") {
     return [
@@ -615,6 +630,19 @@ function agentStartArguments(partnerAgent, options) {
     ...(model ? ["-m", model] : []),
     ...(effort ? ["--reasoning-effort", effort] : []),
   ];
+}
+
+function agentStartFailure(error, paneId) {
+  let tail = "";
+  try {
+    tail = readPartner(paneId, "recent-unwrapped", "40").trimEnd();
+  } catch {
+    // Keep the original Herdr error when the pane itself cannot be read.
+  }
+  if (!tail) return error;
+  return new CliError(
+    `${error.message}\nagent start pane ${paneId} tail:\n${tail}`,
+  );
 }
 
 async function spawn(args) {
@@ -685,7 +713,7 @@ async function spawn(args) {
         break;
       } catch (error) {
         if (!error.message.includes("agent_pane_busy") || Date.now() >= busyDeadline) {
-          throw error;
+          throw agentStartFailure(error, split.pane_id);
         }
         await sleep(500);
       }
