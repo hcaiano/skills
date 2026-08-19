@@ -932,7 +932,12 @@ const waitForReceipt = (place, seq, timeoutMs) => {
     const receiptFile = findReceipt(place, seq);
     if (receiptFile) {
       try {
-        return JSON.parse(readFileSync(receiptFile, "utf8"));
+        const receipt = JSON.parse(readFileSync(receiptFile, "utf8"));
+        const marker = readMarker(place.lockPath);
+        const sameSupervisor =
+          marker?.seq === seq &&
+          marker?.supervisor_pid === receipt.supervisor_pid;
+        if (!sameSupervisor || !processAlive(marker.supervisor_pid)) return receipt;
       } catch {
         /* atomic rename means this can only be a foreign/manual file */
       }
@@ -1078,6 +1083,7 @@ const runWorker = () => {
     idleMs,
     totalMs,
     onSpawn: (partnerPid) => {
+      if (!Number.isInteger(partnerPid)) return;
       const updated = replaceOwnedMarker(place.lockPath, marker, {
         launcher_pid: null,
         supervisor_pid: process.pid,
@@ -1264,6 +1270,11 @@ const runSend = () => {
 
   const handshakeStarted = Date.now();
   while (!existsSync(paths.startedFile)) {
+    const earlyReceipt = findReceipt(place, seq);
+    if (earlyReceipt) {
+      const final = JSON.parse(readFileSync(earlyReceipt, "utf8"));
+      emit(final, final.ok ? 0 : 1);
+    }
     if (!processAlive(worker.pid)) {
       fail(`the detached supervisor pid ${worker.pid} exited before startup`);
     }

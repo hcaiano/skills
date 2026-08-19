@@ -10,6 +10,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -588,6 +589,32 @@ test("a nonzero exit fails the turn and keeps the transcript", () => {
   const failed = run("fail", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("q"));
   assert.equal(failed.receipt.status, "failed");
   assert.match(readFileSync(failed.receipt.transcript, "utf8"), /rate limit/u);
+});
+
+test("a partner that cannot spawn returns a failed receipt before running", (t) => {
+  const repo = newRepo("spawn-failure");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
+  const binary = join(bin, "codex");
+  const hidden = join(bin, "codex.hidden");
+  renameSync(binary, hidden);
+  t.after(() => renameSync(hidden, binary));
+  let receipt;
+  try {
+    execFileSync(
+      process.execPath,
+      [helper, "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("q")],
+      {
+        encoding: "utf8",
+        env: { ...env("ok", "claude"), PATH: `${bin}:/usr/bin:/bin` },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+  } catch (error) {
+    receipt = JSON.parse(error.stdout);
+  }
+  assert.equal(receipt.status, "failed");
+  assert.match(receipt.reason, /cannot run codex/u);
+  assert.equal(existsSync(join(realpathSync(repo), ".git", "pair", "in-flight.json")), false);
 });
 
 test("init fails loudly when the CLI reports no resumable session", () => {
