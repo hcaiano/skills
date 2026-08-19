@@ -975,6 +975,9 @@ const updateTerminalState = (place, stateAtStart, { cancelled, forkSessionId }) 
     : 0;
 
   const pending = current.pending_fork;
+  // Grok creates the fork before it runs the turn. A final end event naming
+  // the new sid proves that session exists even when the turn itself was
+  // cancelled; keeping the old sid after that would split later history.
   if (pending && forkSessionId === pending.new_sid) {
     next.sid = pending.new_sid;
     next.forked = [
@@ -1254,6 +1257,10 @@ const runSend = () => {
   })) {
     fail("the in-flight marker changed before the supervisor took ownership");
   }
+
+  // The read/rename update has no filesystem compare-and-replace primitive.
+  // The one-lead/one-operation contract makes it safe: clear refuses while
+  // this supervisor is alive, and every conforming contender uses acquire.
 
   const handshakeStarted = Date.now();
   while (!existsSync(paths.startedFile)) {

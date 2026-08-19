@@ -735,6 +735,22 @@ test("a scheduled Grok fork commits only after the new session is proved", () =>
   assert.ok(invocations()[0].argv.includes(scheduled.pending_sid));
 });
 
+test("a cancelled fork commits the proved new sid and counts the cancellation", () => {
+  const repo = newRepo("grok-fork-cancelled");
+  const created = run("ok", "claude", "init", "--repo", repo, "--partner", "grok").receipt;
+  const scheduled = run("ok", "claude", "fork", "--repo", repo).receipt;
+  const cancelled = run("cancel", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("continue")).receipt;
+  assert.equal(cancelled.status, "failed");
+  assert.equal(cancelled.reason, "grok-cancelled");
+  const status = run("ok", "claude", "status", "--repo", repo).receipt;
+  assert.equal(status.sid, scheduled.pending_sid);
+  assert.equal(status.pending_fork, null);
+  assert.equal(status.grok_cancelled_consecutive, 1);
+  assert.deepEqual(status.forked.map(({ sid, successor_sid: successorSid }) => ({ sid, successorSid })), [
+    { sid: created.sid, successorSid: scheduled.pending_sid },
+  ]);
+});
+
 test("a failed fork keeps recovery state and retry chooses a fresh target", () => {
   const repo = newRepo("grok-fork-failure");
   run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
