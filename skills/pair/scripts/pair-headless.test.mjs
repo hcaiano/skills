@@ -674,6 +674,23 @@ test("background send survives its launcher and wait reads the atomic receipt", 
   assert.equal(after.status, "replied", "wait defaults to state.seq after the marker is gone");
 });
 
+test("wait reports a lost supervisor without spending its timeout", () => {
+  const repo = newRepo("worker-lost");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
+  const pairDir = join(realpathSync(repo), ".git", "pair");
+  const statePath = join(pairDir, "session.json");
+  const state = JSON.parse(readFileSync(statePath, "utf8"));
+  writeFileSync(statePath, `${JSON.stringify({ ...state, seq: 1 }, null, 2)}\n`);
+  writeFileSync(
+    join(pairDir, "in-flight.json"),
+    `${JSON.stringify({ seq: 1, supervisor_pid: 999999, partner_pid: null }, null, 2)}\n`,
+  );
+  const started = Date.now();
+  const receipt = run("ok", "claude", "wait", "--repo", repo, "--timeout-min", "0.1").receipt;
+  assert.equal(receipt.status, "worker-lost");
+  assert.ok(Date.now() - started < 2000, "a dead worker returns before the wait timeout");
+});
+
 test("Grok cancellations are classified and two consecutive turns suggest a fork", () => {
   const repo = newRepo("grok-cancelled");
   run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
