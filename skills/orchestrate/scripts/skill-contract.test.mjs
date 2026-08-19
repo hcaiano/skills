@@ -22,6 +22,9 @@ test("one durable record owns the complete unit atom", () => {
   assert.match(unit, /git-common-dir/u);
   assert.match(unit, /lifecycle: "creating"/u);
   assert.match(unit, /partner arena must differ from the orchestrator harness/u);
+  assert.match(skill, /manifest-owned task file is authoritative/u);
+  assert.match(skill, /resumes `creating`, `setting-up`,\s+`initializing-pair`, or `starting`/u);
+  assert.match(unit, /resumed_from/u);
 });
 
 test("the unit helper exposes one tested lifecycle surface", () => {

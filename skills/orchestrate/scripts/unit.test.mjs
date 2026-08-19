@@ -134,6 +134,87 @@ const createArgs = (id, partner = "codex", setup = "true") => [
   "--merge-policy", "auto",
   "--setup", setup,
 ];
+const resumeArgs = (id, partner = "codex", setup = "true") => {
+  const args = createArgs(id, partner, setup);
+  const index = args.indexOf("--task-file");
+  const originalTaskFile = args[index + 1];
+  args.splice(index, 2);
+  unlinkSync(originalTaskFile);
+  return args;
+};
+const writeRecoveryRecord = (
+  id,
+  lifecycle,
+  { withWorktree = false, withPair = false, pairStarted = false, recordSid = null } = {},
+) => {
+  const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  const units = join(common, "orchestrate", "units");
+  let worktree = join(root, `worktree-${id}`);
+  const branch = `feat/${id}`;
+  const task = `Implement ${id} and reply ready.`;
+  mkdirSync(units, { recursive: true });
+  if (withWorktree) {
+    git(repository, "worktree", "add", "-b", branch, worktree, "main");
+    worktree = git(worktree, "rev-parse", "--show-toplevel");
+  }
+  if (withPair) {
+    const initialized = spawnSync(process.execPath, [
+      pairScript, "init", "--repo", worktree,
+      "--partner", "codex", "--effort", "high", "--role", "executor",
+    ], { encoding: "utf8", env: baseEnv });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    if (pairStarted) {
+      const bodyFile = taskFile(`${id}-started`);
+      const sent = spawnSync(process.execPath, [
+        pairScript, "send", "--repo", worktree,
+        "--kind", "task", "--body-file", bodyFile, "--background",
+      ], { encoding: "utf8", env: baseEnv });
+      assert.equal(sent.status, 0, sent.stderr);
+    }
+  }
+  const record = {
+    schema_version: 1,
+    unit_id: id,
+    repository,
+    common_git_dir: common,
+    worktree,
+    branch,
+    base: "main",
+    lifecycle,
+    lead: "claude",
+    task,
+    task_file: join(common, "orchestrate", "tasks", `${id}.md`),
+    scope: `file-${id}.txt`,
+    validation: "test -f README.md",
+    merge_policy: "auto",
+    setup: "true",
+    resources: {
+      task_file: false,
+      worktree: withWorktree,
+      local_branch: withWorktree,
+      pair: withPair,
+    },
+    staffing: {
+      current: {
+        partner: "codex",
+        model: null,
+        effort: "high",
+        reason: "codex matches the task difficulty and available pool",
+        selected_at: "2026-08-19T00:00:00.000Z",
+      },
+      history: [],
+    },
+    pair: withPair ? {
+      sid: recordSid ?? `sid-codex-${worktree.split("/").at(-1)}`,
+      latest_seq: 0,
+    } : null,
+    cleanup: [],
+    created_at: "2026-08-19T00:00:00.000Z",
+    updated_at: "2026-08-19T00:00:00.000Z",
+  };
+  writeFileSync(join(units, `${id}.json`), `${JSON.stringify(record, null, 2)}\n`);
+  return record;
+};
 
 test("create journals a durable unit and starts an executor pair", () => {
   const created = invoke(createArgs("one"));
@@ -164,6 +245,74 @@ test("create refuses duplicate unit, branch, worktree, and same-harness partner"
   const refused = invoke(sameHarness);
   assert.notEqual(refused.status, 0);
   assert.match(refused.output.reason, /differ from the orchestrator/u);
+});
+
+test("create resumes every journaled phase from the manifest-owned task", () => {
+  const cases = [
+    ["recover-creating", "creating", {}],
+    ["recover-setting-up", "setting-up", { withWorktree: true }],
+    ["recover-initializing", "initializing-pair", { withWorktree: true }],
+    ["recover-starting", "starting", { withWorktree: true, withPair: true }],
+    ["recover-started", "starting", { withWorktree: true, withPair: true, pairStarted: true }],
+  ];
+  for (const [id, phase, state] of cases) {
+    const record = writeRecoveryRecord(id, phase, state);
+    const resumed = invoke(resumeArgs(id));
+    assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+    assert.equal(resumed.output.status, "resumed");
+    assert.equal(resumed.output.resumed_from, phase);
+    assert.equal(resumed.output.unit.lifecycle, "working");
+    assert.equal(resumed.output.unit.pair.latest_seq, 1);
+    assert.equal(readFileSync(record.task_file, "utf8"), `${record.task}\n`);
+    const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
+    assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+    assert.equal(existsSync(record.task_file), false);
+  }
+});
+
+test("create names the immutable field that prevents resume", () => {
+  writeRecoveryRecord("recover-mismatch", "creating");
+  const args = resumeArgs("recover-mismatch");
+  args[args.indexOf("--scope") + 1] = "a different scope";
+  const refused = invoke(args);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.output.reason, /scope differs/u);
+  const cleaned = invoke([
+    "dismantle", "--repo", repository, "--unit", "recover-mismatch",
+    "--force", "recover-mismatch",
+  ]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("create refuses a replaced or phase-impossible pair during recovery", () => {
+  const cases = [
+    [
+      "recover-wrong-sid",
+      "starting",
+      { withWorktree: true, withPair: true, recordSid: "sid-from-another-session" },
+      /pair sid differs/u,
+    ],
+    [
+      "recover-early-pair",
+      "setting-up",
+      { withWorktree: true, withPair: true },
+      /unexpected pair in phase setting-up/u,
+    ],
+    [
+      "recover-early-seq",
+      "initializing-pair",
+      { withWorktree: true, withPair: true, pairStarted: true },
+      /unexpected started pair/u,
+    ],
+  ];
+  for (const [id, phase, state, reason] of cases) {
+    writeRecoveryRecord(id, phase, state);
+    const refused = invoke(resumeArgs(id));
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.output.reason, reason);
+    const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
+    assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+  }
 });
 
 test("two linked worktrees hold distinct pair state", () => {

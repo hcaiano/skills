@@ -76,14 +76,23 @@ node "$UNIT" create --repo "$REPO" --unit <id> \
   --merge-policy <auto|hold> [--setup <project-worktree-setup-command>]
 ```
 
-`create` journals before mutation, creates the worktree from the base, runs the
-project's setup hook, initializes an executor-role headless pair, and starts the
-first task with pair's `send --background`. It refuses an existing record, branch, worktree,
-or same-CLI partner. Use the repository's own worktree setup pipeline when one
-exists. Read every returned record and report its staffing reason to the user.
+`create` journals the task before mutation, creates the worktree from the base,
+runs the project's setup hook, initializes an executor-role headless pair, and
+starts the first task with pair's `send --background`. It refuses an unrelated
+record, branch, worktree, or same-CLI partner. Use the repository's own
+worktree setup pipeline when one exists. Read every returned record and report
+its staffing reason to the user.
 
-Done when every admitted unit reports `status: created` and its first pair turn
-reports `status: running`, or its failure record names the exact recovery step.
+A matching `create` command resumes `creating`, `setting-up`,
+`initializing-pair`, or `starting`. On recovery, repeat every recorded option
+but omit `--task-file`; the manifest-owned task file is authoritative. Setup
+hooks must be safe to repeat because a death can occur after the hook runs but
+before its next journal write. A resumed receipt names `resumed_from`. Any
+different immutable option refuses and names the field.
+
+Done when every admitted unit reports `status: created` or `status: resumed`
+and its first pair turn reports `status: running`, or its failure record names
+the exact recovery step.
 
 ## Monitor and recover
 

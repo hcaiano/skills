@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
+  realpathSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -101,6 +102,12 @@ const atomicWrite = (path, value) => {
   writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
   renameSync(temporary, path);
 };
+const atomicWriteText = (path, value) => {
+  mkdirSync(dirname(path), { recursive: true });
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, value, { flag: "wx" });
+  renameSync(temporary, path);
+};
 const writeRecord = (path, record) => {
   record.updated_at = new Date().toISOString();
   atomicWrite(path, record);
@@ -180,10 +187,11 @@ const latestReceipt = (worktree) => {
     .filter((name) => /^\d{4}-.+-receipt\.json$/u.test(name))
     .sort();
   if (receipts.length === 0) return null;
+  const receiptFile = join(transcripts, receipts.at(-1));
   try {
-    return JSON.parse(readFileSync(join(transcripts, receipts.at(-1)), "utf8"));
+    return { ...JSON.parse(readFileSync(receiptFile, "utf8")), receipt_file: receiptFile };
   } catch {
-    return { unreadable: join(transcripts, receipts.at(-1)) };
+    return { unreadable: receiptFile };
   }
 };
 
@@ -276,11 +284,83 @@ const removeRemoteBranch = (repo, branch) => {
   }
 };
 
+const recoverableCreatePhases = new Set([
+  "creating",
+  "setting-up",
+  "initializing-pair",
+  "starting",
+]);
+const normalizedModel = (value) => value === "CLI-default" || !value ? null : value;
+const nestedValue = (value, path) => path.split(".").reduce((current, key) => current?.[key], value);
+const ensureMatchingCreate = (record, options, task) => {
+  const requestedWorktree = existsSync(options.worktree)
+    ? realpathSync(options.worktree)
+    : resolve(options.worktree);
+  const recordedWorktree = existsSync(record.worktree)
+    ? realpathSync(record.worktree)
+    : resolve(record.worktree);
+  const expected = new Map([
+    ["branch", options.branch],
+    ["base", options.base],
+    ["lead", options.lead],
+    ["staffing.current.partner", options.partner],
+    ["staffing.current.model", normalizedModel(options.model)],
+    ["staffing.current.effort", options.effort],
+    ["staffing.current.reason", options.reason],
+    ["scope", options.scope],
+    ["validation", options.validation],
+    ["merge_policy", options["merge-policy"]],
+    ["setup", options.setup ?? null],
+  ]);
+  if (recordedWorktree !== requestedWorktree) {
+    fail(`unit ${record.unit_id} cannot resume: worktree differs`, {
+      recorded: record.worktree,
+      requested: options.worktree,
+    });
+  }
+  if (task !== null) expected.set("task", task);
+  for (const [field, wanted] of expected) {
+    const recorded = nestedValue(record, field);
+    if (recorded !== wanted) {
+      fail(`unit ${record.unit_id} cannot resume: ${field} differs`, { recorded, requested: wanted });
+    }
+  }
+};
+const ensureManifestTask = (place, record) => {
+  const path = record.task_file ?? join(place.registry, "tasks", `${record.unit_id}.md`);
+  const body = `${record.task.trim()}\n`;
+  if (existsSync(path)) {
+    if (readFileSync(path, "utf8") !== body) {
+      fail(`unit ${record.unit_id} manifest task differs at ${path}`);
+    }
+  } else {
+    atomicWriteText(path, body);
+  }
+  record.task_file = path;
+  record.resources.task_file = true;
+  return path;
+};
+const pairIsAbsent = (status) =>
+  !status.ok && /no (?:active )?pair(?: session)?\b/u.test(status.reason ?? "");
+const proveUnitWorktree = (place, record) => {
+  const row = worktreeRows(place.root).find((candidate) => candidate.path === record.worktree);
+  if (!row) return false;
+  if (row.branch !== record.branch) {
+    fail(`unit ${record.unit_id} worktree branch differs`, {
+      recorded: record.branch,
+      observed: row.branch ?? null,
+    });
+  }
+  record.resources.worktree = true;
+  record.resources.local_branch = true;
+  return true;
+};
+
 const create = (options) => {
   const place = repository(options.repo);
   const id = unitId(options.unit);
   const path = recordPath(place, id);
-  const required = ["worktree", "branch", "base", "lead", "partner", "effort", "reason", "task-file", "scope", "validation", "merge-policy"];
+  const required = ["worktree", "branch", "base", "lead", "partner", "effort", "reason", "scope", "validation", "merge-policy"];
   for (const key of required) if (!options[key]) fail(`create requires --${key}`, null, 2);
   if (!isAbsolute(options.worktree)) fail("--worktree must be an absolute path", null, 2);
   if (!partnerKinds.has(options.lead) || !partnerKinds.has(options.partner)) {
@@ -288,95 +368,191 @@ const create = (options) => {
   }
   if (options.lead === options.partner) fail("the partner arena must differ from the orchestrator harness");
   if (!mergePolicies.has(options["merge-policy"])) fail("--merge-policy must be auto or hold", null, 2);
-  if (!existsSync(options["task-file"])) fail(`task file does not exist: ${options["task-file"]}`);
-  const task = readFileSync(options["task-file"], "utf8").trim();
-  if (!task) fail("task file is empty");
-  if (existsSync(options.worktree)) fail(`worktree path already exists: ${options.worktree}`);
+  if (options["task-file"] && !existsSync(options["task-file"])) {
+    fail(`task file does not exist: ${options["task-file"]}`);
+  }
+  const requestedTask = options["task-file"] ? readFileSync(options["task-file"], "utf8").trim() : null;
+  if (options["task-file"] && !requestedTask) fail("task file is empty");
 
   return withRegistryLock(place, () => {
     mkdirSync(place.units, { recursive: true });
-    if (existsSync(path)) fail(`unit ${id} already exists`);
-    const duplicate = listRecords(place).find(
-      (record) => record.branch === options.branch || record.worktree === options.worktree,
-    );
-    if (duplicate) fail(`unit ${id} conflicts with recorded unit ${duplicate.unit_id}`);
-    const existingRef = branchExists(place.root, options.branch);
-    if (existingRef) fail(`branch ${options.branch} already exists at ${existingRef}`);
+    const resumed = existsSync(path);
+    let resumedFrom = null;
+    let record;
+    if (resumed) {
+      record = readRecord(place, id).record;
+      resumedFrom = record.lifecycle;
+      if (!recoverableCreatePhases.has(resumedFrom)) {
+        fail(`unit ${id} already exists in non-resumable phase ${resumedFrom}`);
+      }
+      ensureMatchingCreate(record, options, requestedTask);
+      record.resources ??= {};
+    } else {
+      if (!options["task-file"]) fail("a new unit requires --task-file", null, 2);
+      if (existsSync(options.worktree)) fail(`worktree path already exists: ${options.worktree}`);
+      const duplicate = listRecords(place).find(
+        (candidate) => candidate.branch === options.branch || candidate.worktree === options.worktree,
+      );
+      if (duplicate) fail(`unit ${id} conflicts with recorded unit ${duplicate.unit_id}`);
+      const existingRef = branchExists(place.root, options.branch);
+      if (existingRef) fail(`branch ${options.branch} already exists at ${existingRef}`);
 
-    const record = {
-      schema_version: 1,
-      unit_id: id,
-      repository: place.root,
-      common_git_dir: place.commonGitDir,
-      worktree: options.worktree,
-      branch: options.branch,
-      base: options.base,
-      lifecycle: "creating",
-      lead: options.lead,
-      task,
-      scope: options.scope,
-      validation: options.validation,
-      merge_policy: options["merge-policy"],
-      setup: options.setup ?? null,
-      resources: { worktree: false, local_branch: false, pair: false },
-      staffing: {
-        current: {
-          partner: options.partner,
-          model: options.model === "CLI-default" || !options.model ? null : options.model,
-          effort: options.effort,
-          reason: options.reason,
-          selected_at: new Date().toISOString(),
+      record = {
+        schema_version: 1,
+        unit_id: id,
+        repository: place.root,
+        common_git_dir: place.commonGitDir,
+        worktree: options.worktree,
+        branch: options.branch,
+        base: options.base,
+        lifecycle: "creating",
+        lead: options.lead,
+        task: requestedTask,
+        task_file: join(place.registry, "tasks", `${id}.md`),
+        scope: options.scope,
+        validation: options.validation,
+        merge_policy: options["merge-policy"],
+        setup: options.setup ?? null,
+        resources: { task_file: false, worktree: false, local_branch: false, pair: false },
+        staffing: {
+          current: {
+            partner: options.partner,
+            model: normalizedModel(options.model),
+            effort: options.effort,
+            reason: options.reason,
+            selected_at: new Date().toISOString(),
+          },
+          history: [],
         },
-        history: [],
-      },
-      pair: null,
-      cleanup: [],
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
+        pair: null,
+        cleanup: [],
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+    }
     const rollback = [];
     let pairInitialized = false;
     writeRecord(path, record);
 
     try {
-      const hasOrigin = git(place.root, "remote", "get-url", "origin").status === 0;
-      if (hasOrigin) {
-        gitChecked(place.root, ["fetch", "origin", options.base], "fetch unit base");
-      }
-      const remoteBase = git(place.root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${options.base}`).status === 0;
-      const startPoint = remoteBase ? `origin/${options.base}` : options.base;
-      gitChecked(place.root, ["worktree", "add", "-b", options.branch, options.worktree, startPoint], "create worktree");
-      record.worktree = gitChecked(options.worktree, ["rev-parse", "--show-toplevel"], "resolve worktree").stdout.trim();
-      record.resources.worktree = true;
-      record.resources.local_branch = true;
-      record.lifecycle = "setting-up";
+      const taskFile = ensureManifestTask(place, record);
       writeRecord(path, record);
 
-      if (options.setup) {
-        runChecked("sh", ["-c", options.setup], { cwd: options.worktree }, "unit setup");
+      if (!proveUnitWorktree(place, record)) {
+        if (existsSync(record.worktree)) {
+          throw new Error(`recorded worktree path exists but is not a linked worktree: ${record.worktree}`);
+        }
+        const existingRef = branchExists(place.root, record.branch);
+        if (existingRef) {
+          throw new Error(`recorded worktree is missing but branch ${record.branch} exists at ${existingRef}`);
+        }
+        const hasOrigin = git(place.root, "remote", "get-url", "origin").status === 0;
+        if (hasOrigin) {
+          gitChecked(place.root, ["fetch", "origin", record.base], "fetch unit base");
+        }
+        const remoteBase = git(place.root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${record.base}`).status === 0;
+        const startPoint = remoteBase ? `origin/${record.base}` : record.base;
+        gitChecked(place.root, ["worktree", "add", "-b", record.branch, record.worktree, startPoint], "create worktree");
+        record.worktree = gitChecked(record.worktree, ["rev-parse", "--show-toplevel"], "resolve worktree").stdout.trim();
+        record.resources.worktree = true;
+        record.resources.local_branch = true;
+        record.lifecycle = "setting-up";
+        writeRecord(path, record);
       }
-      record.lifecycle = "initializing-pair";
-      writeRecord(path, record);
 
-      const initArgs = ["--partner", options.partner, "--effort", options.effort, "--role", "executor"];
-      if (record.staffing.current.model) initArgs.push("--model", record.staffing.current.model);
-      const initialized = pair("init", options.worktree, initArgs);
-      pairInitialized = true;
+      if (["creating", "setting-up"].includes(record.lifecycle)) {
+        record.lifecycle = "setting-up";
+        writeRecord(path, record);
+        if (record.setup) {
+          runChecked("sh", ["-c", record.setup], { cwd: record.worktree }, "unit setup");
+        }
+        record.lifecycle = "initializing-pair";
+        writeRecord(path, record);
+      }
+
+      let currentPair = pairStatus(record.worktree);
+      if (currentPair.ok) {
+        if (!resumed || ["creating", "setting-up"].includes(resumedFrom)) {
+          throw new Error(`unit ${id} has an unexpected pair in phase ${resumedFrom ?? "creating"}`);
+        }
+        if (
+          resumedFrom === "initializing-pair" &&
+          ((currentPair.seq ?? 0) !== 0 || currentPair.in_flight)
+        ) {
+          throw new Error(`unit ${id} has an unexpected started pair in phase initializing-pair`);
+        }
+        if (record.pair?.sid && currentPair.sid !== record.pair.sid) {
+          throw new Error(`unit ${id} pair sid differs: expected ${record.pair.sid}, observed ${currentPair.sid}`);
+        }
+        if (resumedFrom === "starting") {
+          if (!record.pair?.sid) throw new Error(`unit ${id} starting record has no pair sid`);
+          if ((currentPair.seq ?? 0) > 1) {
+            throw new Error(`unit ${id} pair has unexpected seq ${currentPair.seq} in phase starting`);
+          }
+        }
+      } else {
+        if (!pairIsAbsent(currentPair)) {
+          throw new Error(`cannot prove pair state while creating unit ${id}: ${currentPair.reason}`);
+        }
+        if (resumedFrom === "starting") {
+          throw new Error(`unit ${id} recorded pair ${record.pair?.sid ?? "without a sid"} is absent in phase starting`);
+        }
+        const initArgs = [
+          "--partner", record.staffing.current.partner,
+          "--effort", record.staffing.current.effort,
+          "--role", "executor",
+        ];
+        if (record.staffing.current.model) initArgs.push("--model", record.staffing.current.model);
+        currentPair = pair("init", record.worktree, initArgs);
+        pairInitialized = true;
+      }
+      for (const [field, wanted] of [
+        ["partner", record.staffing.current.partner],
+        ["role", "executor"],
+        ["model", record.staffing.current.model],
+        ["effort", record.staffing.current.effort],
+      ]) {
+        if ((currentPair[field] ?? null) !== wanted) {
+          throw new Error(`recorded pair ${field} differs: expected ${wanted ?? "CLI-default"}, observed ${currentPair[field] ?? "CLI-default"}`);
+        }
+      }
       record.resources.pair = true;
-      record.pair = { sid: initialized.sid, latest_seq: 0 };
+      record.pair = { sid: currentPair.sid, latest_seq: currentPair.seq ?? 0 };
       record.lifecycle = "starting";
       writeRecord(path, record);
 
-      const running = pair("send", options.worktree, [
-        "--kind", "task", "--body-file", options["task-file"], "--background",
-      ]);
-      if (running.status !== "running") throw new Error(`pair send did not start: ${JSON.stringify(running)}`);
-      record.pair.latest_seq = running.seq;
-      record.pair.latest_receipt_file = running.receipt_file;
+      currentPair = pairStatus(record.worktree);
+      if (!currentPair.ok) throw new Error(`cannot prove initialized pair: ${currentPair.reason}`);
+      if (currentPair.sid !== record.pair.sid) {
+        throw new Error(`unit ${id} pair sid changed before task start`);
+      }
+      if ((currentPair.seq ?? 0) === 0 && !currentPair.in_flight) {
+        const running = pair("send", record.worktree, [
+          "--kind", "task", "--body-file", taskFile, "--background",
+        ]);
+        if (running.status !== "running") throw new Error(`pair send did not start: ${JSON.stringify(running)}`);
+        record.pair.latest_seq = running.seq;
+        record.pair.latest_receipt_file = running.receipt_file;
+      } else {
+        record.pair.latest_seq = currentPair.in_flight?.seq ?? currentPair.seq;
+        const receipt = latestReceipt(record.worktree);
+        if (receipt?.receipt_file) record.pair.latest_receipt_file = receipt.receipt_file;
+      }
       record.lifecycle = "working";
+      delete record.error;
       writeRecord(path, record);
-      return { ok: true, status: "created", unit: describe(place, record) };
+      return {
+        ok: true,
+        status: resumed ? "resumed" : "created",
+        ...(resumed ? { resumed_from: resumedFrom } : {}),
+        unit: describe(place, record),
+      };
     } catch (error) {
+      if (resumed) {
+        record.error = error.message;
+        writeRecord(path, record);
+        fail(error.message, { recovery_record: path, resumed_from: resumedFrom });
+      }
       record.lifecycle = "create-failed";
       record.error = error.message;
       writeRecord(path, record);
@@ -401,6 +577,15 @@ const create = (options) => {
           record.resources.local_branch = false;
         } catch (branchError) {
           rollback.push({ resource: "local-branch", ok: false, error: branchError.message });
+        }
+      }
+      if (record.resources.task_file) {
+        try {
+          trashPath(record.task_file);
+          rollback.push({ resource: "task-file", ok: true });
+          record.resources.task_file = false;
+        } catch (taskError) {
+          rollback.push({ resource: "task-file", ok: false, error: taskError.message });
         }
       }
       record.rollback = rollback;
@@ -573,6 +758,12 @@ const dismantle = (options) => {
       record.resources.local_branch = false;
     });
     step("remote-branch", () => removeRemoteBranch(place.root, record.branch));
+    if (record.task_file && existsSync(record.task_file)) {
+      step("task-file", () => {
+        trashPath(record.task_file);
+        record.resources.task_file = false;
+      });
+    }
     const result = { ok: true, status: "dismantled", unit_id: id, merged_pr: merged, forced, done: record.cleanup };
     trashPath(path);
     return result;
