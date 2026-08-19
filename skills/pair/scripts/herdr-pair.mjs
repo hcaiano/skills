@@ -171,23 +171,28 @@ function participantRecord(pane) {
 
 // A pane id alone does not identify a conversation: the same pane can hold a
 // replacement agent session after the first one exits. terminal_id catches a
-// recycled terminal; agent_session_id catches a fresh conversation started in
-// the SAME terminal, which would otherwise inherit the pair and receive
-// session-bound sends. A null recorded id stays tolerant — normalizeSession
-// backfills it on the next verify, so sessions written before this check keep
-// working.
+// recycled terminal. For Claude, Cursor, and Grok, agent_session_id catches a
+// fresh conversation started in the SAME terminal, which would otherwise
+// inherit the pair and receive session-bound sends. Codex is different: Herdr
+// reports a new thread id after compaction and can report a subagent thread id
+// while delegation runs, so its pane and terminal are the stable identity.
+// A null recorded id stays tolerant — normalizeSession backfills it on the
+// next verify, so sessions written before this check keep working.
 function participantMatches(record, pane) {
   // Herdr can briefly report a live pane without its agent_session metadata
   // while the agent is restarting or before its binding has been re-reported.
   // The pane and terminal still prove which terminal we are talking to; a
   // missing live session id is unreported, not evidence of a replacement
-  // conversation. Keep rejecting a live id that disagrees with the record.
+  // conversation. Keep rejecting a live id that disagrees with the record for
+  // CLIs whose ids are stable. A Codex id mismatch is a thread roll within the
+  // already-pinned pane and terminal, not a replaced partner.
   const liveAgentSessionId = pane.agent_session?.value ?? null;
   return (
     record?.pane_id === pane.pane_id &&
     (!record.terminal_id || record.terminal_id === pane.terminal_id) &&
     (!record.agent_session_id ||
       liveAgentSessionId === null ||
+      pane.agent === "codex" ||
       record.agent_session_id === liveAgentSessionId)
   );
 }

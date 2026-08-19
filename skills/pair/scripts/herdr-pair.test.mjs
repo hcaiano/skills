@@ -563,21 +563,22 @@ try {
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
 
   // A replacement conversation in the SAME pane and terminal must not inherit
-  // the pair: the recorded agent_session_id pins the partner's conversation.
+  // the pair for CLIs whose session ids are stable.
   recycledState.panes["w1:p2"].agent_session.value = "claude-session-replacement";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
   assert.throws(
     () => run("verify"),
     /recorded partner is no longer the partner agent/u,
   );
+
+  // Codex rolls its thread id after compaction and reports subagent thread ids
+  // while delegating. Matching pane and terminal identity must survive either
+  // non-null id change.
+  recycledState.panes["w1:p2"].agent_session.value = "claude-session-w1-p2";
   recycledState.panes["w1:p1"].agent_session.value = "codex-session-replacement";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
-  assert.throws(
-    () => run("verify"),
-    /live panes do not match the participants recorded for this tab/u,
-  );
+  assert.equal(JSON.parse(run("verify")).session.sid, created.sid);
   recycledState.panes["w1:p1"].agent_session.value = "codex-session-w1-p1";
-  recycledState.panes["w1:p2"].agent_session.value = "claude-session-w1-p2";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
 
   const nullSessionBinding = JSON.parse(readFileSync(sessionPath, "utf8"));
