@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -288,6 +288,12 @@ else if (args[0] === "agent" && args[1] === "prompt") {
     },
   });
 } else if (args[0] === "pane" && args[1] === "read") {
+  const source = args[args.indexOf("--source") + 1];
+  const tail = state.pane_tails?.[args[2]];
+  if (source === "recent-unwrapped" && tail !== undefined) {
+    process.stdout.write(tail);
+    process.exit(0);
+  }
   // Returning "" here used to make every composer check read "nothing is
   // holding the text", so the whole landing proof passed vacuously and a lost
   // paste was indistinguishable from a delivered one. The pane now renders its
@@ -360,6 +366,15 @@ const runRaw = (...args) =>
     encoding: "utf8",
     env: { ...env, HERDR_PANE_ID: "stale:pane" },
   });
+
+function installedCliHelp(command) {
+  const result = spawnSync(command, ["--help"], { encoding: "utf8" });
+  if (result.error?.code === "ENOENT") return null;
+  assert.equal(result.error, undefined, `${command} --help failed to start`);
+  assert.equal(result.status, 0, `${command} --help exited ${result.status}`);
+  return `${result.stdout ?? ""}${result.stderr ?? ""}`;
+}
+
 const tabDirectory = join(home, ".herdr-coworkers", "w1", "w1_t1");
 // One file per pair, named after the partner pane; `session.json` is the
 // single-pair name written before multi-pair and still resolved.
@@ -548,21 +563,22 @@ try {
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
 
   // A replacement conversation in the SAME pane and terminal must not inherit
-  // the pair: the recorded agent_session_id pins the partner's conversation.
+  // the pair for CLIs whose session ids are stable.
   recycledState.panes["w1:p2"].agent_session.value = "claude-session-replacement";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
   assert.throws(
     () => run("verify"),
     /recorded partner is no longer the partner agent/u,
   );
+
+  // Codex rolls its thread id after compaction and reports subagent thread ids
+  // while delegating. Matching pane and terminal identity must survive either
+  // non-null id change.
+  recycledState.panes["w1:p2"].agent_session.value = "claude-session-w1-p2";
   recycledState.panes["w1:p1"].agent_session.value = "codex-session-replacement";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
-  assert.throws(
-    () => run("verify"),
-    /live panes do not match the participants recorded for this tab/u,
-  );
+  assert.equal(JSON.parse(run("verify")).session.sid, created.sid);
   recycledState.panes["w1:p1"].agent_session.value = "codex-session-w1-p1";
-  recycledState.panes["w1:p2"].agent_session.value = "claude-session-w1-p2";
   writeFileSync(statePath, `${JSON.stringify(recycledState, null, 2)}\n`);
 
   const nullSessionBinding = JSON.parse(readFileSync(sessionPath, "utf8"));
@@ -574,6 +590,22 @@ try {
   const reboundSessionId = JSON.parse(run("verify")).session.participants.codex
     .agent_session_id;
   assert.equal(reboundSessionId, "codex-session-w1-p1");
+
+  // Herdr can report the matching pane and terminal before it re-attaches the
+  // live agent_session metadata. That is unreported, not a replacement
+  // conversation; keep the recorded id and let the next verify backfill it.
+  const unreportedSessionState = JSON.parse(readFileSync(statePath, "utf8"));
+  unreportedSessionState.panes["w1:p1"].agent_session = null;
+  writeFileSync(statePath, `${JSON.stringify(unreportedSessionState, null, 2)}\n`);
+  const unreported = JSON.parse(run("verify")).session;
+  assert.equal(unreported.participants.codex.agent_session_id, "codex-session-w1-p1");
+  unreportedSessionState.panes["w1:p1"].agent_session = {
+    agent: "codex",
+    kind: "id",
+    source: "herdr:codex",
+    value: "codex-session-w1-p1",
+  };
+  writeFileSync(statePath, `${JSON.stringify(unreportedSessionState, null, 2)}\n`);
 
   const beforeDelayedAck = JSON.parse(readFileSync(sessionPath, "utf8"));
   beforeDelayedAck.delivery.next.claude = 1;
@@ -1241,13 +1273,14 @@ try {
     ["grok", ["--model", "grok-5", "--effort", "high"], ["--", "-m", "grok-5", "--reasoning-effort", "high"]],
     ["codex", ["--model", "gpt-5", "--effort", "high"], ["--", "-m", "gpt-5", "-c", 'model_reasoning_effort="high"']],
     ["cursor", ["--model", "claude-opus-4-8", "--effort", "high"], ["--", "--model", "claude-opus-4-8[effort=high]"]],
+    ["claude", ["--model", "opus", "--effort", "xhigh"], ["--", "--effort", "xhigh", "--model", "opus"]],
     ["claude", ["--model", "opus"], ["--", "--model", "opus"]],
     ["claude", [], []],
     // --autonomy full launches the partner past its permission prompts, each
     // CLI through its own verified flag.
-    ["claude", ["--autonomy", "full"], ["--", "--permission-mode", "acceptEdits"]],
-    ["grok", ["--autonomy", "full", "--model", "grok-5"], ["--", "--permission-mode", "acceptEdits", "-m", "grok-5"]],
-    ["codex", ["--autonomy", "full"], ["--", "-a", "on-failure", "-s", "workspace-write"]],
+    ["claude", ["--autonomy", "full"], ["--", "--permission-mode", "bypassPermissions"]],
+    ["grok", ["--autonomy", "full", "--model", "grok-5"], ["--", "--always-approve", "-m", "grok-5"]],
+    ["codex", ["--autonomy", "full"], ["--", "-a", "never", "-s", "danger-full-access"]],
     ["cursor", ["--autonomy", "full"], ["--", "--force"]],
   ]) {
     // The lead is any CLI other than the one being spawned.
@@ -1270,6 +1303,37 @@ try {
     );
     const argv = JSON.parse(readFileSync(statePath, "utf8")).last_agent_start_argv;
     assert.deepEqual(argv.slice(argv.indexOf("60000") + 1), expected, `${partner} agent arguments`);
+  }
+
+  // Keep the pane mappings pinned to the installed CLIs' help contracts. A
+  // missing optional CLI skips only this live check; fixture-based mapping
+  // tests above still run in every environment.
+  for (const [command, contracts] of [
+    ["claude", [
+      /--permission-mode <mode>/u,
+      /bypassPermissions/u,
+      /--effort <level>/u,
+      /low, medium, high, xhigh, max/u,
+    ]],
+    ["grok", [
+      /--always-approve/u,
+      /--permission-mode <MODE>/u,
+      /dontAsk/u,
+      /bypassPermissions/u,
+    ]],
+    ["codex", [
+      /--ask-for-approval <APPROVAL_POLICY>/u,
+      /never/u,
+      /--sandbox <SANDBOX_MODE>/u,
+      /danger-full-access/u,
+    ]],
+    ["cursor-agent", [/-f, --force/u]],
+  ]) {
+    const help = installedCliHelp(command);
+    if (help === null) continue;
+    for (const contract of contracts) {
+      assert.match(help, contract, `${command} --help no longer exposes ${contract}`);
+    }
   }
 
   // A pane of the caller's own CLI is not a partner: it echoes rather than reviews.
@@ -1382,6 +1446,9 @@ try {
     };
     orphanState.processes = { "wO:p1": [{ argv: ["claude"], cwd: "/workspace", name: "claude" }] };
     orphanState.fail_agent_start = true;
+    orphanState.pane_tails = {
+      "wO:p1s": "claude: CLI boot failed: authentication expired\n",
+    };
     writeFileSync(statePath, `${JSON.stringify(orphanState, null, 2)}\n`);
     assert.throws(
       () => runRaw(
@@ -1389,7 +1456,7 @@ try {
         "--as", "claude", "--terminal-id", "term-wO-p1", "--repo-root", "/workspace",
         "--partner", "grok",
       ),
-      /simulated agent start failure/u,
+      /simulated agent start failure[\s\S]*CLI boot failed: authentication expired/u,
     );
     const afterOrphan = JSON.parse(readFileSync(statePath, "utf8"));
     assert.equal(afterOrphan.panes["wO:p1s"], undefined, "a failed spawn must close its split pane");

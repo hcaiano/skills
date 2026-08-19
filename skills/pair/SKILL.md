@@ -29,12 +29,15 @@ With no pair to resume, ask the user in plain chat text — no structured-questi
 tool needed — for three things, and start nothing until they answer:
 
 - **Partner**: which of the four CLIs, other than yours.
-- **Model**: `CLI default`, or any model name they name. There is no catalog
-  here: for a cursor partner run `cursor-agent --list-models` and offer what it
-  prints; for the others take the answer as given.
-- **Effort**: only for a partner that has it — grok (`--reasoning-effort`),
-  codex (`model_reasoning_effort`), cursor (an `[effort=…]` suffix on the model
-  name, so it needs a model too). Claude Code has none; do not ask.
+- **Model**: `CLI default`, or any model name they name. When choosing a
+  model, effort, or pool, read [`references/models.md`](references/models.md);
+  it owns the risk, speed, context, catalog, and effort rubric. For a cursor
+  partner run `cursor-agent --list-models`; for Grok run `grok models`; for the
+  others take the user's answer as given.
+- **Effort**: only for a partner that exposes it — Claude Code
+  (`--effort low|medium|high|xhigh|max`), grok (`--reasoning-effort`), codex
+  (`model_reasoning_effort`), or cursor (an `[effort=…]` suffix on the model
+  name, so it needs a model too).
 
 Then ask for the **role**, which sets who holds the write leases by default:
 
@@ -125,6 +128,9 @@ Two `accepted` statuses complete one work cycle. The initiator gives the user a
 local handoff naming the result, verification evidence, unresolved issues, and
 every pair pane, worktree, or watcher still active. Both agents may idle; the
 next task resumes the same pair and `sid`. The session remains active.
+
+Session renewal is a user decision. If a fresh pair is chosen, carry continuity
+in a written checkpoint in its first task.
 
 `blocked` and `stalemate` also hand off without deleting the session. End the
 session only when the user explicitly asks to end the pair; the backend
