@@ -17,6 +17,12 @@ Published history is merged, never rebased or force-pushed.
 
 ## Ship
 
+Assign delivery to an arena that can reach the remote. A headless Codex write
+turn uses the `workspace-write` sandbox, which can block network access. If the
+executor proves that block, restaff the unit to a network-capable arena with
+the approved checkpoint. Do not bypass the unit by pushing from the
+orchestrator.
+
 Send a new pair `task` that names the scope-approved SHA and explicitly tells
 the executor to use the installed `ship-it` skill. The executor must:
 
