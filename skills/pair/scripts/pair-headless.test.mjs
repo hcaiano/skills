@@ -702,6 +702,16 @@ test("background send survives its launcher and wait reads the atomic receipt", 
   assert.equal(after.status, "replied", "wait defaults to state.seq after the marker is gone");
 });
 
+test("the worker waits when it runs before the launcher publishes ownership", (t) => {
+  const repo = newRepo("worker-first-handoff");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
+  process.env.PAIR_HEADLESS_TEST_HANDOFF_DELAY_MS = "250";
+  t.after(() => delete process.env.PAIR_HEADLESS_TEST_HANDOFF_DELAY_MS);
+  const receipt = run("ok", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("race")).receipt;
+  assert.equal(receipt.status, "replied");
+  assert.equal(existsSync(join(realpathSync(repo), ".git", "pair", "in-flight.json")), false);
+});
+
 test("wait reports a lost supervisor without spending its timeout", () => {
   const repo = newRepo("worker-lost");
   run("ok", "claude", "init", "--repo", repo, "--partner", "codex");

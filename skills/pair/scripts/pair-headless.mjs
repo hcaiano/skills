@@ -1014,14 +1014,19 @@ const runWorker = () => {
   const write = opt("write-value") === "true";
   const state = readState(place.statePath);
   if (!state?.sid || !Number.isInteger(seq) || !kind || !token) process.exit(2);
-  const marker = readMarker(place.lockPath);
-  if (
-    marker?.seq !== seq ||
-    marker?.owner_token !== token ||
-    marker?.supervisor_pid !== process.pid
-  ) {
-    process.exit(2);
+  // spawn() can schedule this worker before the launcher publishes our pid in
+  // the marker. Wait for that ownership handoff; a one-shot read loses a valid
+  // turn and leaves a dead marker whenever the child wins the schedule race.
+  let marker = null;
+  const ownershipStarted = Date.now();
+  while (Date.now() - ownershipStarted <= START_TIMEOUT_MS) {
+    marker = readMarker(place.lockPath);
+    if (marker?.seq !== seq || marker?.owner_token !== token) process.exit(2);
+    if (marker.supervisor_pid === process.pid) break;
+    if (marker.supervisor_pid != null) process.exit(2);
+    sleepSync(10);
   }
+  if (marker?.supervisor_pid !== process.pid) process.exit(2);
 
   const paths = turnPaths(place, seq, kind);
   const pendingFork = state.pending_fork?.attempted_seq === seq
@@ -1256,6 +1261,12 @@ const runSend = () => {
   if (!Number.isInteger(worker.pid)) {
     releaseMarker(place.lockPath, marker);
     fail("could not start the detached turn supervisor");
+  }
+  const testHandoffDelay = Number(
+    process.env.PAIR_HEADLESS_TEST_HANDOFF_DELAY_MS ?? 0,
+  );
+  if (Number.isFinite(testHandoffDelay) && testHandoffDelay > 0) {
+    sleepSync(testHandoffDelay);
   }
   if (!replaceOwnedMarker(place.lockPath, marker, {
     launcher_pid: null,
