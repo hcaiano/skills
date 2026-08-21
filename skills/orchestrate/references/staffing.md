@@ -18,14 +18,14 @@ Direct unit partners have this floor:
 
 | arena | normal lane | hard lane | excluded direct lane |
 |---|---|---|---|
-| Claude | `sonnet-5` | `opus-5` | Haiku; Fable is advisor-only |
-| Codex | `gpt-5.6-terra` | `gpt-5.6-sol` | Luna |
-| Cursor | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
-| Grok | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
-| OpenCode | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
+| Claude | `claude-opus-5` | `claude-opus-5` | `claude-fable-5`; advisor and orchestrator only—it plans, it does not run units |
+| Codex | `gpt-5.6-sol` | `gpt-5.6-sol` | `gpt-5.6-luna`; legal only for a volume or mechanical unit with Sol-reviewed delivery, otherwise excluded |
+| Cursor | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
+| Grok | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
+| OpenCode | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
 
-Use the roster's current-seat rules and live-catalog commands. The floor table
-restricts orchestration roles; it does not create another roster.
+The floor table restricts orchestration roles; it does not create another
+roster.
 
 ## Read capacity
 
