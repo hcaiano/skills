@@ -46,7 +46,7 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const POLL_MS = 2000;
@@ -174,16 +174,28 @@ export const locate = (repo, home = homedir()) => {
       statePath: join(stateDir, "session.json"),
       lockPath: join(stateDir, "in-flight.json"),
       transcripts: join(stateDir, "transcripts"),
+      writableRoot: stateDir,
     };
   }
   const root = top.stdout.trim();
   const stateDir = join(dir.stdout.trim(), "pair");
+  const common = git(repo, "rev-parse", "--git-common-dir");
+  if (common.status !== 0) {
+    return { error: `cannot resolve the Git common directory for ${repo}` };
+  }
+  let writableRoot;
+  try {
+    writableRoot = realpathSync(resolve(directory, common.stdout.trim()));
+  } catch (error) {
+    return { error: `cannot resolve the Git common directory for ${repo}: ${error.message}` };
+  }
   return {
     root,
     stateDir,
     statePath: join(stateDir, "session.json"),
     lockPath: join(stateDir, "in-flight.json"),
     transcripts: join(stateDir, "transcripts"),
+    writableRoot,
   };
 };
 
@@ -396,11 +408,23 @@ export const cursorModel = (model, effort) => {
 // arrives through the spawn and the sandbox through a config override — the
 // same split ask-peer measured. Model and effort are settings of the session,
 // so they are passed when it is created and never on a resume.
-export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, write, model, effort }) => {
+export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, writableRoot = root, write, model, effort }) => {
   if (partner === "codex") {
     const sandbox = write ? "workspace-write" : "read-only";
+    const writeConfig = write
+      ? [
+          "-c",
+          `sandbox_workspace_write.writable_roots=${JSON.stringify([writableRoot])}`,
+          "-c",
+          "sandbox_workspace_write.network_access=true",
+        ]
+      : [];
     if (resume) {
-      return { bin: "codex", args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, "--json", "-o", replyFile, "-"], promptVia: "stdin" };
+      return {
+        bin: "codex",
+        args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, ...writeConfig, "--json", "-o", replyFile, "-"],
+        promptVia: "stdin",
+      };
     }
     return {
       bin: "codex",
@@ -410,6 +434,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
         sandbox,
         "-C",
         root,
+        ...writeConfig,
         ...(model ? ["-m", model] : []),
         ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
         "--json",
@@ -840,6 +865,7 @@ const runInit = () => {
     replyFile,
     promptFile,
     root: place.root,
+    writableRoot: place.writableRoot,
     write: false,
     model,
     effort,
@@ -1064,6 +1090,7 @@ const runWorker = () => {
     replyFile: paths.replyFile,
     promptFile: paths.promptFile,
     root: place.root,
+    writableRoot: place.writableRoot,
     write,
     effort: state.partner === "claude" ? state.effort : null,
   });

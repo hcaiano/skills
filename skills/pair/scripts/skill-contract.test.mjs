@@ -246,6 +246,12 @@ test("the headless backend states what each guarantee is actually worth", () => 
     headlessBackend,
     /Codex turn is held by a filesystem\s+sandbox[\s\S]*Claude turn is\s+held by a permission mode[\s\S]*without being an OS sandbox/u,
   );
+  assert.match(
+    headlessBackend,
+    /Every writable Codex turn resolves the Git common directory again[\s\S]*sandbox_workspace_write\.writable_roots=\["<git-common-dir>"\][\s\S]*sandbox_workspace_write\.network_access=true[\s\S]*resumed Codex sessions/u,
+  );
+  assert.match(headlessHelper, /sandbox_workspace_write\.writable_roots=/u);
+  assert.match(headlessHelper, /sandbox_workspace_write\.network_access=true/u);
   // Cursor writes by default in --print, which is the trap: its read-only turn
   // is the one that had to ask.
   assert.match(

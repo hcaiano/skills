@@ -187,6 +187,20 @@ const newRepo = (name) => {
   return repo;
 };
 
+const newLinkedWorktree = (name) => {
+  const repo = newRepo(`${name}-main`);
+  const commit = spawnSync(
+    "git",
+    ["-C", repo, "-c", "user.name=Pair Tests", "-c", "user.email=pair@example.test", "commit", "--allow-empty", "-q", "-m", "init"],
+    { encoding: "utf8" },
+  );
+  assert.equal(commit.status, 0, commit.stderr);
+  const worktree = join(root, `${name}-linked`);
+  const added = spawnSync("git", ["-C", repo, "worktree", "add", "-q", "-b", `${name}-branch`, worktree], { encoding: "utf8" });
+  assert.equal(added.status, 0, added.stderr);
+  return { repo, worktree };
+};
+
 const env = (mode, self = "claude") => ({
   ...process.env,
   PATH: `${bin}:${process.env.PATH}`,
@@ -306,9 +320,14 @@ test("a plain directory supports the full headless pair lifecycle", () => {
   const created = run("ok", "claude", "init", "--repo", plain, "--partner", "codex");
   assert.equal(created.receipt.status, "created");
   assert.equal(created.receipt.state_file, expectedPlace.statePath);
-  const sent = run("ok", "claude", "send", "--repo", plain, "--kind", "task", "--body-file", bodyFile("plain task"));
+  const sent = run("ok", "claude", "send", "--repo", plain, "--kind", "task", "--body-file", bodyFile("plain task"), "--write");
   assert.equal(sent.receipt.status, "replied");
   assert.equal(sent.receipt.seq, 1);
+  assert.ok(
+    invocations()[0].argv.includes(
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([expectedPlace.stateDir])}`,
+    ),
+  );
   const status = run("ok", "claude", "status", "--repo", plain).receipt;
   assert.equal(status.sid, CODEX_SID);
   assert.equal(status.seq, 1);
@@ -334,7 +353,21 @@ test("each turn's command matches the flags the installed CLIs accept", () => {
   const resume = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true });
   // `codex exec resume` accepts neither -C nor -s, so the sandbox arrives as a
   // config override and the directory through the spawn's cwd.
-  assert.deepEqual(resume.args, ["exec", "resume", "S", "-c", 'sandbox_mode="workspace-write"', "--json", "-o", "/r", "-"]);
+  assert.deepEqual(resume.args, [
+    "exec",
+    "resume",
+    "S",
+    "-c",
+    'sandbox_mode="workspace-write"',
+    "-c",
+    'sandbox_workspace_write.writable_roots=["/repo"]',
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+    "--json",
+    "-o",
+    "/r",
+    "-",
+  ]);
   const claudeCreate = turnCommand({ partner: "claude", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false });
   // stream-json, not json: a `json` run stays silent until it finishes, which
   // would make the idle deadline kill a long working turn.
@@ -610,7 +643,29 @@ test("--write is the only thing that opens the sandbox for a turn", () => {
   const repo = newRepo("write-lease");
   run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("implement"), "--write");
-  assert.equal(invocations()[0].argv[4], 'sandbox_mode="workspace-write"');
+  assert.deepEqual(invocations()[0].argv.slice(3, 9), [
+    "-c",
+    'sandbox_mode="workspace-write"',
+    "-c",
+    `sandbox_workspace_write.writable_roots=${JSON.stringify([join(realpathSync(repo), ".git")])}`,
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+  ]);
+});
+
+test("a Codex write turn opens the linked worktree's Git common directory", () => {
+  const { repo, worktree } = newLinkedWorktree("linked-sandbox");
+  run("ok", "claude", "init", "--repo", worktree, "--partner", "codex");
+  run("ok", "claude", "send", "--repo", worktree, "--kind", "task", "--body-file", bodyFile("commit from the worktree"), "--write");
+
+  const place = locate(worktree);
+  assert.equal(place.writableRoot, join(realpathSync(repo), ".git"));
+  assert.ok(
+    invocations()[0].argv.includes(
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([place.writableRoot])}`,
+    ),
+  );
+  assert.ok(invocations()[0].argv.includes("sandbox_workspace_write.network_access=true"));
 });
 
 test("send refuses a body or kind the protocol does not define", () => {
