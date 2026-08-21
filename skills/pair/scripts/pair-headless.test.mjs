@@ -333,7 +333,7 @@ test("the command dispatcher runs when the helper is invoked through a symlink",
 test("git worktrees and plain directories get stable, separate state locations", () => {
   const plain = join(root, "not-a-repo");
   mkdirSync(plain, { recursive: true });
-  const plainPlace = locate(plain, root);
+  const plainPlace = locate(plain, root, "");
   const plainHash = createHash("sha256").update(realpathSync(plain)).digest("hex").slice(0, 12);
   assert.equal(
     plainPlace.statePath,
@@ -347,10 +347,43 @@ test("git worktrees and plain directories get stable, separate state locations",
   assert.match(place.transcripts, /\.git\/pair\/transcripts$/u);
 });
 
+test("a plain directory honors XDG_STATE_HOME", () => {
+  const plain = join(root, "xdg-state-directory");
+  const stateHome = join(root, "redirected-state");
+  mkdirSync(plain, { recursive: true });
+  const plainHash = createHash("sha256").update(realpathSync(plain)).digest("hex").slice(0, 12);
+
+  const place = locate(plain, join(root, "unused-home"), stateHome);
+
+  assert.equal(
+    place.statePath,
+    join(stateHome, "pair", `xdg-state-directory-${plainHash}`, "session.json"),
+  );
+
+  const created = JSON.parse(execFileSync(
+    process.execPath,
+    [helper, "init", "--repo", plain, "--partner", "codex"],
+    {
+      encoding: "utf8",
+      env: { ...env("ok", "claude"), XDG_STATE_HOME: stateHome },
+    },
+  ));
+  assert.equal(created.state_file, place.statePath);
+  const ended = JSON.parse(execFileSync(
+    process.execPath,
+    [helper, "end", "--repo", plain],
+    {
+      encoding: "utf8",
+      env: { ...env("ok", "claude"), XDG_STATE_HOME: stateHome },
+    },
+  ));
+  assert.equal(ended.status, "ended");
+});
+
 test("a plain directory supports the full headless pair lifecycle", () => {
   const plain = join(root, "plain-lifecycle");
   mkdirSync(plain, { recursive: true });
-  const expectedPlace = locate(plain, root);
+  const expectedPlace = locate(plain, root, "");
 
   const created = run("ok", "claude", "init", "--repo", plain, "--partner", "codex");
   assert.equal(created.receipt.status, "created");

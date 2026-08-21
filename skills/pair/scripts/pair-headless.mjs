@@ -18,7 +18,8 @@
 //   default to 45 idle minutes
 //
 // Git worktree state lives in `<git-dir>/pair/session.json`. A plain directory
-// uses `~/.local/state/pair/<basename>-<realpath-hash>/` instead. A turn holds
+// uses `${XDG_STATE_HOME:-~/.local/state}/pair/<basename>-<realpath-hash>/`
+// instead. A turn holds
 // `in-flight.json` beside it for as long as it runs, because half-duplex means
 // one resume of the CLI session at a time; a send refuses over any existing
 // marker and `clear` is the only remover. The deadline mechanic (output-based
@@ -154,7 +155,11 @@ export const resolveWrite = (role, { write, readOnly }) => {
 const git = (repo, ...args) =>
   spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
 
-export const locate = (repo, home = homedir()) => {
+export const locate = (
+  repo,
+  home = homedir(),
+  xdgStateHome = process.env.XDG_STATE_HOME,
+) => {
   let directory;
   try {
     directory = realpathSync(repo);
@@ -169,7 +174,10 @@ export const locate = (repo, home = homedir()) => {
   const dir = git(repo, "rev-parse", "--absolute-git-dir");
   if (top.status !== 0 || dir.status !== 0) {
     const hash = createHash("sha256").update(directory).digest("hex").slice(0, 12);
-    const stateDir = join(home, ".local", "state", "pair", `${basename(directory) || "root"}-${hash}`);
+    const stateHome = xdgStateHome?.trim()
+      ? resolve(xdgStateHome)
+      : join(home, ".local", "state");
+    const stateDir = join(stateHome, "pair", `${basename(directory) || "root"}-${hash}`);
     return {
       root: directory,
       stateDir,

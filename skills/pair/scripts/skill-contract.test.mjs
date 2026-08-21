@@ -132,6 +132,7 @@ test("the roster is the single editable model preference source", () => {
   assert.match(roster, /machine-specific[\s\S]*`staffing\.md`/u);
   assert.match(roster, /free for one week from 2026-08-21/u);
   assert.match(roster, /re-verify the ID with `opencode models --refresh`/u);
+  assert.match(roster, /malformed protocol headers[^|]*judge the receipt and diff, not the header/u);
   assert.match(roster, /Promo IDs belong only in roster data, never in scripts/u);
   assert.doesNotMatch(`${helper}\n${headlessHelper}`, /x-preview-f-free/u);
   for (const excluded of [
@@ -216,6 +217,10 @@ test("busy and idle partners keep distinct delivery proofs", () => {
     herdrBackend,
     /For an idle partner, the helper proves landing from the composer[\s\S]*sends Enter until the composer releases the\s+text, performs one full resend, and fails loudly/u,
   );
+  assert.match(
+    herdrBackend,
+    /pane registered in the last minute[\s\S]*TUI splash two seconds to settle[\s\S]*same\s+pending reservation stays active/u,
+  );
 });
 
 test("code and prose expose the same delivery receipts", () => {
@@ -270,9 +275,10 @@ test("the headless backend documents the helper's whole command surface", () => 
   assert.match(headlessBackend, /scripts\/pair-headless\.mjs/u);
   assert.match(headlessBackend, /half-duplex/u);
   assert.match(headlessBackend, /`<git-dir>\/pair\/session\.json`/u);
-  assert.match(headlessBackend, /`~\/\.local\/state\/pair\/<basename>-<realpath-hash>\/`/u);
+  assert.match(headlessBackend, /`\$XDG_STATE_HOME\/pair\/<basename>-<realpath-hash>\/`/u);
+  assert.match(headlessBackend, /defaults to `~\/\.local\/state\/pair\/<basename>-<realpath-hash>\/`/u);
   assert.match(headlessBackend, /directory does not need to use Git/u);
-  assert.match(headlessBackend, /GitHub remote is not a\s+precondition/u);
+  assert.match(headlessBackend, /GitHub remote\s+is not a precondition/u);
   assert.match(headlessBackend, /the helper refuses\s+to pair a CLI kind with itself/u);
 });
 

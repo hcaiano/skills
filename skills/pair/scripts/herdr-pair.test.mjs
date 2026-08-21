@@ -165,12 +165,15 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
   const wasWorking = pane.agent_status === "working";
   const droppedWhileWorking = state.drop_paste_when_working === true && wasWorking;
+  state.prompt_attempts = (state.prompt_attempts ?? 0) + 1;
+  const droppedDuringFreshSplash =
+    state.drop_first_prompt_during_splash === true && state.prompt_attempts === 1;
   state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
   // Both harnesses collapse a large multi-line paste into a summary line, so
   // the composer never shows the message text itself. state.drop_paste models
   // the failure this fake used to hide: the paste silently never lands.
-  if (state.drop_paste !== true && !droppedWhileWorking && !(state.hide_composer_when_working === true && wasWorking)) {
+  if (state.drop_paste !== true && !droppedWhileWorking && !droppedDuringFreshSplash && !(state.hide_composer_when_working === true && wasWorking)) {
     const lines = args[3].split("\\n").length;
     state.composers = state.composers ?? {};
     state.composers[args[2]] = state.show_composer_when_working === true && wasWorking
@@ -186,7 +189,7 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
   const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok|opencode) ->/)?.[1];
   const sid = state.last_message.match(/sid=([^\\]\\s]+)\\]/)?.[1];
-  if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
+  if (control && sender && state.auto_ack !== false && !droppedWhileWorking && !droppedDuringFreshSplash) {
     const sequence = Number(control[2]);
     const slug = pane.tab_id.replaceAll(":", "_");
     // One file per pair: acknowledge the session the message names, never
@@ -1302,15 +1305,21 @@ try {
       "--partner-repo-root", "/unit-worktree", "--model", "gpt-5", "--effort", "high",
     ));
     assert.equal(spawned.partnerRepoRoot, "/unit-worktree");
+    assert.equal(Number.isNaN(Date.parse(spawned.partnerRegisteredAt)), false);
     const session = JSON.parse(runRaw(
       "init", ...leadPin, "--partner-pane", spawned.partner.pane_id,
       "--partner-repo-root", "/unit-worktree", "--role", "executor",
+      "--partner-registered-at", spawned.partnerRegisteredAt,
       "--model", "gpt-5", "--effort", "high",
     ));
     assert.equal(session.model, "gpt-5");
     assert.equal(session.effort, "high");
     assert.equal(session.participants.claude.repo_root, "/lead-repository");
     assert.equal(session.participants.codex.repo_root, "/unit-worktree");
+    assert.equal(
+      session.participants.codex.registered_at,
+      spawned.partnerRegisteredAt,
+    );
     const verified = JSON.parse(runRaw("verify", ...leadPin, "--sid", session.sid));
     assert.equal(verified.session.sid, session.sid);
     runRaw("end", ...leadPin, "--sid", session.sid);
@@ -1663,6 +1672,7 @@ try {
       runRaw("spawn", ...leadPin, "--partner", "grok", "--partner-pane", first.partner.pane_id),
     );
     assert.equal(reused.partner.pane_id, first.partner.pane_id);
+    assert.equal(reused.partnerRegisteredAt, undefined);
     assert.equal(
       Object.keys(JSON.parse(readFileSync(statePath, "utf8")).panes).length,
       paneCountBeforeReuse,
@@ -1795,7 +1805,12 @@ try {
     const startSession = (extra) => {
       writeDeliveryState(extra);
       rmSync(join(deliveryHome, ".herdr-coworkers"), { recursive: true, force: true });
-      return JSON.parse(deliveryRun("init", ...pin)).sid;
+      const registration = extra.partner_registered_at;
+      return JSON.parse(deliveryRun(
+        "init",
+        ...pin,
+        ...(registration ? ["--partner-registered-at", registration] : []),
+      )).sid;
     };
 
     // A collapsed paste still delivers. The composer shows a summary line, never
@@ -1813,6 +1828,29 @@ try {
       1,
       "an idle delivery that lands must not resend the full prompt",
     );
+
+    // Herdr can register a new agent before its TUI finishes drawing the
+    // splash. The first paste then disappears without changing the composer.
+    // A recent registration gets one settled retry under the same pending
+    // reservation, and the second paste must be proved before submission.
+    sid = startSession({
+      auto_ack: true,
+      drop_first_prompt_during_splash: true,
+      partner_registered_at: new Date().toISOString(),
+      working_on_prompt: false,
+    });
+    const settledFreshPane = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--ack-timeout-ms", "2000",
+    );
+    assert.match(settledFreshPane, /receipt=acknowledged/u);
+    const freshPane = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      freshPane.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      2,
+      "a fresh pane retries the same reservation once after its splash settles",
+    );
+    assert.equal(freshPane.enter_keys, 1);
 
     // A prompt sent while the partner is already working enters Herdr's queue
     // without appearing in the composer. That unobservable queue must get one

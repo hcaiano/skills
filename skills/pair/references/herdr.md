@@ -141,8 +141,10 @@ For an idle partner, the helper proves landing from the composer: the composer
 must first be seen to change, because a paste that never arrived and one already
 submitted look identical; then it sends Enter until the composer releases the
 text, performs one full resend, and fails loudly if delivery still cannot be
-proved. The sequence ACK can recover an interruption immediately after
-submission on either path.
+proved. When `spawn` reports that the pane registered in the last minute, the
+helper gives its TUI splash two seconds to settle before that resend. The same
+pending reservation stays active. The sequence ACK can recover an interruption
+immediately after submission on either path.
 
 Callers that need a structured receipt can add `--format json`. The JSON
 includes the receipt token, sequence, ACK state, and current delivery

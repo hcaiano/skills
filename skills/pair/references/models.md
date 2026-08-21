@@ -69,7 +69,7 @@ seed. Live catalogs remain authoritative for model IDs.
 | `grok-4.6` | grok | 8 | barato ($2/$6 below 200K) | S — SWE-bench (Vals) 95.6, AA #3 | med-fast | frontier coding and live web/X research at bargain price | high (CLI default); xhigh only on need | 2026-08-21 |
 | `kimi-k3` | cursor | 7.5 | médio ($3/$15 flat 1M) | A — vendor: T-Bench 88.3, FrontierSWE 81.2 | medium | long-context repository review; proven excellent reviewer/consultant in the Mediavine run | ID `kimi-k3-high`; use `-max` for hard reviews | 2026-08-21 |
 | `composer-2.5` | cursor | 6 | barato ($0.50/$2.50, about $0.07/task) | B+ — AA 62 | very fast | rapid cheap iteration inside Cursor | n/a (`std` versus `-fast`) | 2026-08-21 |
-| `opencode/x-preview-f-free` ("Ox Alpha") | opencode | 7 (provisional) | **free for one week from 2026-08-21** | ~A/S, anecdotal only (DeepSWE community 80%, n=10) | fast (anecdotal) | free burst execution/evaluation during the preview week; no durable roles; re-verify the ID with `opencode models --refresh` | variants low/high/max; use high | 2026-08-21 |
+| `opencode/x-preview-f-free` ("Ox Alpha") | opencode | 7 (provisional) | **free for one week from 2026-08-21** | ~A/S, anecdotal only (DeepSWE community 80%, n=10) | fast (anecdotal) | free burst execution/evaluation during the preview week; no durable roles; re-verify the ID with `opencode models --refresh`; replies can have malformed protocol headers, so judge the receipt and diff, not the header | variants low/high/max; use high | 2026-08-21 |
 
 Promo IDs belong only in roster data, never in scripts.
 

@@ -20,9 +20,10 @@ path; the project cwd is unrelated to the installed skill path.
 
 Set `REPO_ROOT` to the existing task directory. A Git worktree keeps session
 state in `<git-dir>/pair/session.json`, so a worktree holds one pair and a linked
-worktree gets its own. A plain directory keeps the same state layout in
-`~/.local/state/pair/<basename>-<realpath-hash>/`. A GitHub remote is not a
-precondition, and the directory does not need to use Git.
+worktree gets its own. A plain directory uses
+`$XDG_STATE_HOME/pair/<basename>-<realpath-hash>/` when `XDG_STATE_HOME` is set,
+and defaults to `~/.local/state/pair/<basename>-<realpath-hash>/`. A GitHub remote
+is not a precondition, and the directory does not need to use Git.
 
 Look for a pair to resume before creating one: `status --repo "$REPO_ROOT"`
 reports a recorded session, and `init` resumes it rather than replacing it.

@@ -34,6 +34,8 @@ const roles = ["peer", "executor"];
 const schemaVersion = 3;
 const staleLockMs = 60000;
 const pasteSettleMs = 400;
+const freshPaneWindowMs = 60000;
+const freshPaneSettleMs = 2000;
 const processStartFormat = "ps-lstart-c-utc-v1";
 let callerContext = null;
 
@@ -154,12 +156,13 @@ function currentPane() {
   return pane;
 }
 
-function participantRecord(pane, repoRoot = null) {
+function participantRecord(pane, repoRoot = null, registeredAt = null) {
   return {
     pane_id: pane.pane_id,
     terminal_id: pane.terminal_id ?? null,
     agent_session_id: pane.agent_session?.value ?? null,
     repo_root: repoRoot,
+    ...(registeredAt ? { registered_at: registeredAt } : {}),
   };
 }
 
@@ -712,6 +715,7 @@ async function spawn(args) {
   ).pane;
   const name = pairAgentName(binding.partnerAgent, split.pane_id);
   let pane;
+  let partnerRegisteredAt = null;
   try {
     // A fresh split can report agent_pane_busy while its shell is still
     // starting up — that is a readiness race, not a real occupant, so retry
@@ -731,6 +735,7 @@ async function spawn(args) {
           "60000",
           ...(agentArguments.length > 0 ? ["--", ...agentArguments] : []),
         );
+        partnerRegisteredAt = new Date().toISOString();
         break;
       } catch (error) {
         if (!error.message.includes("agent_pane_busy") || Date.now() >= busyDeadline) {
@@ -758,7 +763,7 @@ async function spawn(args) {
     throw error;
   }
   process.stdout.write(
-    `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent, partnerRepoRoot }, null, 2)}\n`,
+    `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent, partnerRepoRoot, partnerRegisteredAt }, null, 2)}\n`,
   );
 }
 
@@ -932,6 +937,14 @@ async function initSession(args) {
   const options = parseOptions(args);
   const role = options.role ?? "peer";
   const partnerRepoRoot = options["partner-repo-root"] ?? callerContext.repoRoot;
+  const suppliedRegistration = options["partner-registered-at"] ?? null;
+  const registrationTime = suppliedRegistration === null
+    ? null
+    : new Date(suppliedRegistration);
+  if (registrationTime && Number.isNaN(registrationTime.getTime())) {
+    fail("--partner-registered-at must be an ISO timestamp returned by spawn");
+  }
+  const partnerRegisteredAt = registrationTime?.toISOString() ?? null;
   if (!roles.includes(role)) fail(`unknown role ${role} — use ${roles.join(" or ")}`);
   // Resolve the caller's own pane first. Partner discovery runs on the create
   // path alone: an established session resolves through its own recorded
@@ -1020,7 +1033,11 @@ async function initSession(args) {
       active: true,
       participants: {
         [binding.self.agent]: participantRecord(binding.self, callerContext.repoRoot),
-        [binding.partner.agent]: participantRecord(binding.partner, partnerRepoRoot),
+        [binding.partner.agent]: participantRecord(
+          binding.partner,
+          partnerRepoRoot,
+          partnerRegisteredAt,
+        ),
       },
       round: 0,
       last_status: byKind(null),
@@ -1406,6 +1423,13 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
     const head = (message.split("\n").find((line) => line.trim()) ?? "").trim().slice(0, 40);
     const before = composerContent(paneId);
     const wasWorking = paneGet(paneId).agent_status === "working";
+    const partnerRecord = Object.values(session.participants ?? {}).find(
+      (record) => record?.pane_id === paneId,
+    );
+    const registeredAt = Date.parse(partnerRecord?.registered_at ?? "");
+    const registrationAge = Date.now() - registeredAt;
+    const recentlyRegistered = Number.isFinite(registeredAt) &&
+      registrationAge >= 0 && registrationAge <= freshPaneWindowMs;
     herdr("agent", "prompt", paneId, message);
     await sleep(pasteSettleMs);
     // A working target has no reliable visible arrival signal. Keep the
@@ -1428,6 +1452,10 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
 
     let arrived = await composerArrived(paneId, head, before);
     if (!arrived) {
+      // A newly registered TUI can still be drawing its splash after Herdr
+      // reports the agent. Let that exact first-turn race settle before the
+      // one full resend. The pending reservation stays unchanged throughout.
+      if (recentlyRegistered) await sleep(freshPaneSettleMs);
       herdr("agent", "prompt", paneId, message);
       await sleep(pasteSettleMs);
       arrived = await composerArrived(paneId, head, before);
