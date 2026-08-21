@@ -1752,6 +1752,71 @@ async function endSession(args) {
   process.stdout.write(`ended herdr-pair session ${session.sid} for tab ${binding.self.tab_id}\n`);
 }
 
+async function repinSession(args) {
+  const options = parseOptions(args);
+  if (!options.sid || !options["previous-pane"] || !options["previous-terminal-id"]) {
+    fail("repin requires --sid, --previous-pane, and --previous-terminal-id");
+  }
+  const self = currentPane();
+  const path = resolveSessionPath(self, options.sid);
+  let changed = false;
+  let previous = null;
+  await withSessionLock(path, (session) => {
+    requireLockedSession(session, options.sid, "repin");
+    validateSessionEnvelope(session, { self });
+    const recorded = session.participants?.[self.agent];
+    if (!recorded) fail(`session ${options.sid} has no ${self.agent} participant`);
+    const replacement = participantRecord(self, callerContext.repoRoot);
+    if (participantMatches(recorded, self) && recorded.repo_root === callerContext.repoRoot) {
+      return;
+    }
+    if (
+      recorded.pane_id !== options["previous-pane"] ||
+      recorded.terminal_id !== options["previous-terminal-id"]
+    ) {
+      fail(
+        `repin refused: recorded ${self.agent} participant is ${recorded.pane_id}/${recorded.terminal_id ?? "unknown"}, not the claimed previous identity`,
+      );
+    }
+    let oldPane = null;
+    try {
+      oldPane = paneGet(recorded.pane_id);
+    } catch {
+      oldPane = null;
+    }
+    if (
+      oldPane &&
+      participantMatches(recorded, oldPane) &&
+      matchingForegroundProcess(
+        processInfo(oldPane.pane_id),
+        self.agent,
+        recorded.repo_root ?? callerContext.repoRoot,
+      )
+    ) {
+      fail(`repin refused: previous ${self.agent} participant ${recorded.pane_id} is still live`);
+    }
+    previous = structuredClone(recorded);
+    session.participants[self.agent] = replacement;
+    session.participant_history ??= [];
+    session.participant_history.push({
+      agent: self.agent,
+      from: previous,
+      to: replacement,
+      repinned_at: new Date().toISOString(),
+    });
+    changed = true;
+  });
+  const session = JSON.parse(readFileSync(path, "utf8"));
+  process.stdout.write(`${JSON.stringify({
+    ok: true,
+    sid: session.sid,
+    agent: self.agent,
+    changed,
+    previous,
+    participant: session.participants[self.agent],
+  }, null, 2)}\n`);
+}
+
 async function send(args) {
   const options = parseOptions(args);
   const kind = options.kind;
@@ -1760,6 +1825,8 @@ async function send(args) {
   if (!kind || !bodyFile || !claimedSid) {
     fail("send requires --sid, --kind, and --body-file");
   }
+  const format = options.format ?? "text";
+  if (!["text", "json"].includes(format)) fail("--format must be text or json");
 
   let binding = await verifiedSession(claimedSid);
   if (binding.session.sid !== claimedSid) {
@@ -1852,7 +1919,26 @@ async function send(args) {
           : deliveryReceipts.lost;
     }
   }
-  process.stdout.write(`${header} seq=${sequence} ${receipt}\n`);
+  if (format === "json") {
+    const session = JSON.parse(readFileSync(binding.path, "utf8"));
+    const receiptToken = receipt.slice("receipt=".length);
+    process.stdout.write(`${JSON.stringify({
+      ok: true,
+      sid: binding.session.sid,
+      from: binding.self.agent,
+      to: binding.partner.agent,
+      kind,
+      seq: sequence,
+      receipt: receiptToken,
+      acknowledged: receiptToken === "acknowledged",
+      delivery_proof: deliveryProof,
+      reservation: session.delivery?.pending?.[binding.self.agent] ?? null,
+      submitted: session.delivery?.submitted?.[binding.self.agent] ?? 0,
+      received: session.delivery?.received?.[binding.self.agent] ?? 0,
+    })}\n`);
+  } else {
+    process.stdout.write(`${header} seq=${sequence} ${receipt}\n`);
+  }
 }
 
 async function reconcileSession(args) {
@@ -1927,6 +2013,8 @@ async function main() {
     await resetSession(args);
   } else if (command === "reconcile") {
     await reconcileSession(args);
+  } else if (command === "repin") {
+    await repinSession(args);
   } else if (command === "end") {
     await endSession(args);
   } else {

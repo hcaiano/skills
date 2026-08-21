@@ -1457,7 +1457,7 @@ try {
       },
     };
     mixedState.processes = {
-      "wX:p1": [{ argv: ["cursor-agent"], argv0: "cursor-agent", cwd: "/workspace", name: "cursor-agent" }],
+      "wX:p1": [{ argv: ["cursor"], argv0: "cursor", cwd: "/workspace", name: "cursor" }],
       "wX:p2": [{ argv: ["grok"], cwd: "/workspace", name: "grok" }],
     };
     mixedState.auto_ack = true;
@@ -1470,20 +1470,33 @@ try {
     assert.equal(mixed.role, "executor");
     assert.equal(mixed.initiator, "cursor");
     assert.deepEqual(Object.keys(mixed.participants).sort(), ["cursor", "grok"]);
+
+    const repinState = JSON.parse(readFileSync(statePath, "utf8"));
+    repinState.panes["wX:p1"].terminal_id = "term-wX-p1-2";
+    writeFileSync(statePath, `${JSON.stringify(repinState, null, 2)}\n`);
+    const repinnedCursorPin = cursorPin.with(9, "term-wX-p1-2");
+    const repinned = JSON.parse(runRaw(
+      "repin", ...repinnedCursorPin, "--sid", mixed.sid,
+      "--previous-pane", "wX:p1", "--previous-terminal-id", "term-wX-p1",
+    ));
+    assert.equal(repinned.changed, true);
+    assert.equal(repinned.participant.terminal_id, "term-wX-p1-2");
     const mixedBody = join(root, "mixed-body.txt");
     writeFileSync(mixedBody, "own the parser scope\n");
-    const mixedSent = runRaw(
-      "send", ...cursorPin,
+    const mixedSent = JSON.parse(runRaw(
+      "send", ...repinnedCursorPin,
       "--sid", mixed.sid, "--kind", "task", "--body-file", mixedBody,
-      "--ack-timeout-ms", "1000",
-    );
-    assert.match(mixedSent, /^\[agent cursor -> grok kind=task sid=/u);
-    assert.match(mixedSent, /receipt=acknowledged/u);
+      "--ack-timeout-ms", "1000", "--format", "json",
+    ));
+    assert.equal(mixedSent.receipt, "acknowledged");
+    assert.equal(mixedSent.acknowledged, true);
+    assert.equal(mixedSent.reservation, null);
     const mixedSession = JSON.parse(
       readFileSync(join(home, ".herdr-coworkers", "wX", "wX_t1", "pair-wX_p2.json"), "utf8"),
     );
     assert.equal(mixedSession.delivery.received.cursor, 1);
-    runRaw("end", ...cursorPin, "--sid", mixed.sid);
+    assert.equal(mixedSession.participant_history.at(-1).to.terminal_id, "term-wX-p1-2");
+    runRaw("end", ...repinnedCursorPin, "--sid", mixed.sid);
   }
 
   // A fresh split can report agent_pane_busy while its shell is still coming
