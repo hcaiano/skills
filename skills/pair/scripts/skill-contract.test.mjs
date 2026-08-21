@@ -137,11 +137,15 @@ test("the roster is the single editable model preference source", () => {
   assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 8);
   for (const seat of seatModels) assert.match(seats, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
   assert.match(seats, /Planear \/ orquestrar[\s\S]*medium[\s\S]*opening planning prompt[\s\S]*never max/u);
-  assert.match(seats, /Arquitetura \/ review dura[\s\S]*high[\s\S]*medium[\s\S]*over-scopes diffs/u);
-  assert.match(seats, /Execução principal[\s\S]*`ultra` is not an effort value[\s\S]*never set automatically/u);
+  assert.match(seats, /Execução de alta qualidade \(back-end e geral\)[\s\S]*`gpt-5\.6-sol`[\s\S]*`ultra` is a subagent mode/u);
+  assert.match(seats, /Execução rápida[\s\S]*`grok-4\.6`[\s\S]*CLI default[\s\S]*`ox-alpha` high/u);
   assert.match(seats, /Execução barata em volume[\s\S]*xhigh\/max[\s\S]*never for UI work[\s\S]*verbose at max/u);
-  assert.match(seats, /Front-end \/ design[\s\S]*`kimi-k3-high`[\s\S]*current WebDev Arena #1/u);
-  assert.match(seats, /Claude Code's `\/design`/u);
+  assert.match(seats, /Executor grátis \(enquanto durar\)[\s\S]*`opencode\/x-preview-f-free`[\s\S]*variant high/u);
+  assert.match(seats, /UI \/ design \(taste\)[\s\S]*`kimi-k3`[\s\S]*`claude-opus-5`[\s\S]*Opus high for design review and medium for UI diffs[\s\S]*one covers the other/u);
+  assert.match(seats, /Opus's primary seat is UI\/design[\s\S]*legitimate secondary use is execution[\s\S]*stronger supervisor such as Fable[\s\S]*SWE-V 96[\s\S]*daily-use experience[\s\S]*experience\s+governs/u);
+  assert.match(seats, /open question[\s\S]*`kimi-k3` will replace\s+Opus[\s\S]*next design tasks/u);
+  assert.match(seats, /Grok is a fast, good execution seat[\s\S]*Ox Alpha[\s\S]*real executor/u);
+  assert.match(seats, /Claude Code's\s+`\/design`/u);
   assert.match(seats, /composer-2\.5[\s\S]*"Grok plans, Composer builds"[\s\S]*56\.1 and 69\.9[\s\S]*not a headline seat/u);
 
   const scoredModels = [
@@ -155,15 +159,41 @@ test("the roster is the single editable model preference source", () => {
     "ox-alpha",
     "gpt-daybreak-blue",
   ];
-  assert.equal(scores.split("\n").filter((line) => /^\| `[^`]+`/u.test(line)).length, 9);
+  const scoreRows = scores.split("\n").filter((line) => /^\| `[^`]+`/u.test(line));
+  assert.equal(scoreRows.length, 9);
   for (const model of scoredModels) assert.match(scores, new RegExp(`\`${model.replaceAll(".", "\\.")}\``, "u"));
   assert.match(scores, /\| Model \| Inteligência \| Taste \| Velocidade \| Custo \| Key evidence \| Updated \|/u);
   assert.equal(scores.match(/2026-08-21/g)?.length, 9);
-  assert.match(scores, /Henrique's editable seeds[\s\S]*provisional/u);
+  assert.match(scores, /Henrique's editable seeds[\s\S]*daily-use experience governs[\s\S]*benchmark aggregates inform[\s\S]*provisional/u);
+  assert.match(scores, /Inteligência and Taste use a 0–10 scale/u);
+  assert.match(scores, /Velocidade uses only `lento`, `médio`, or `rápido`[\s\S]*reasoning\s+effort makes a run slower/u);
+  assert.match(scores, /Custo uses only `barato`, `médio`, or `caro`[\s\S]*subscription consumed[\s\S]*never uses\s+API prices/u);
   assert.match(scores, /Staff only the latest generation of each model family/u);
   assert.match(scores, /Scores rank models that already meet the risk and context bar/u);
   assert.match(scores, /Prefer a native harness over a Cursor duplicate/u);
   assert.match(scores, /machine-specific headless[\s\S]*`staffing\.md`/u);
+
+  const dimensions = Object.fromEntries(scoreRows.map((line) => {
+    const [model, intelligence, taste, speed, cost] = line
+      .split("|")
+      .slice(1, 6)
+      .map((cell) => cell.trim().replaceAll("`", ""));
+    return [model, [intelligence, taste, speed, cost]];
+  }));
+  assert.deepEqual(dimensions, {
+    "claude-fable-5": ["9.5", "9", "lento", "caro"],
+    "gpt-5.6-sol": ["9", "7?", "médio", "médio"],
+    "gpt-daybreak-blue": ["9", "n/a", "médio", "médio"],
+    "grok-4.6": ["8.5", "6?", "rápido", "barato"],
+    "kimi-k3": ["8", "10", "lento", "médio"],
+    "ox-alpha": ["7.5?", "6?", "rápido", "barato"],
+    "claude-opus-5": ["8", "9", "médio", "médio"],
+    "gpt-5.6-luna": ["7", "5?", "rápido", "barato"],
+    "composer-2.5": ["7", "6?", "rápido", "barato"],
+  });
+  assert.doesNotMatch(scores, /API (?:input|output)|\$[0-9.]+\/M/u);
+  assert.match(scores, /`kimi-k3`[\s\S]*inside the \$200 Cursor subscription/u);
+  assert.match(scores, /`claude-opus-5` \| 8 \| 9[\s\S]*SWE-V 96[\s\S]*daily use puts it below Sol[\s\S]*UI\/design or work supervised by Fable/u);
 
   assert.match(pace, /usage-state\.mjs/u);
   assert.match(pace, /`used_percent >= 90`[\s\S]*refuses[\s\S]*rate limit[\s\S]*fallback/u);
@@ -174,7 +204,7 @@ test("the roster is the single editable model preference source", () => {
   assert.match(effort, /per-seat guidance in Seats por papel overrides these generic ladders/u);
   assert.match(effort, /Sol `ultra`[\s\S]*multi-subagent delegation mode[\s\S]*Never set it by default/u);
   assert.match(effort, /Fable max has an overthinking regression/u);
-  assert.match(effort, /Opus high[\s\S]*over-scope\s+implementation diffs/u);
+  assert.match(effort, /Opus high is suitable for design review[\s\S]*medium for UI diffs/u);
   assert.match(effort, /Luna's hidden `max`[\s\S]*volume execution under external[\s\S]*review/u);
 
   const removed = ["claude-haiku-4-5", "gpt-5.6-terra", "claude-sonnet-5"];
@@ -201,7 +231,7 @@ test("the roster is the single editable model preference source", () => {
   ]) {
     assert.match(roster, new RegExp(excluded.replaceAll(".", "\\."), "u"));
   }
-  assert.match(roster, /re-verify[\s\S]*`opencode models --refresh`/u);
+  assert.match(roster, /Re-verify[\s\S]*`opencode models --refresh`/u);
   assert.match(roster, /malformed[\s\S]*protocol headers[\s\S]*judge the receipt and diff, not the header/u);
 });
 

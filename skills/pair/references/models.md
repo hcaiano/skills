@@ -47,16 +47,24 @@ remain authoritative for model IDs.
 | Papel | Seat | Harness | Effort | Fallback |
 |---|---|---|---|---|
 | Planear / orquestrar | `claude-fable-5` | claude | **medium** for normal work; **high** only on the opening planning prompt of a large orchestration; never max because short tasks show an overthinking regression | `gpt-5.6-sol` high |
-| Arquitetura / review dura | `claude-opus-5` | claude | **high** for architecture and review; **medium** for implementation diffs because high over-scopes diffs in FrontierCode and two or more sources | `claude-fable-5` medium |
-| Execução principal | `gpt-5.6-sol` | codex | **high**; `ultra` is not an effort value: it is an in-weights multi-subagent mode and is never set automatically | `grok-4.6` high |
-| Execução barata em volume | `gpt-5.6-luna` | codex | **xhigh/max** with Sol planning and review; never for UI work; verbose at max | `ox-alpha` while free |
-| Front-end / design | `kimi-k3` | cursor (`kimi-k3-high`; `-max` for hard reviews) | encoded in the model ID | `claude-opus-5` (current WebDev Arena #1) |
-| Cyber (defensivo) | `gpt-daybreak-blue-latest` | codex | low by default; raise when needed | — (defense only; refuses offensive work) |
-| Research live web/X | `grok-4.6` | grok | high (CLI default) | claude with WebSearch |
-| Burst grátis | `opencode/x-preview-f-free` (Ox Alpha) | opencode | variant high | expires about 2026-08-28; re-verify the ID |
+| Execução de alta qualidade (back-end e geral) | `gpt-5.6-sol` | codex | **high**; `ultra` is a subagent mode, not an effort value | `grok-4.6` high |
+| Execução rápida | `grok-4.6` | grok | **high** (CLI default) | `ox-alpha` high |
+| Execução barata em volume | `gpt-5.6-luna` | codex | **xhigh/max** with Sol planning and review; never for UI work; verbose at max | `ox-alpha` |
+| Executor grátis (enquanto durar) | `ox-alpha` (`opencode/x-preview-f-free`) | opencode | variant high | — expires ~2026-08-28 |
+| UI / design (taste) | `kimi-k3` **e** `claude-opus-5` | cursor / claude | `kimi-k3-high` (`-max` for hard work); Opus high for design review and medium for UI diffs | one covers the other |
+| Cyber (defensivo) | `gpt-daybreak-blue-latest` | codex | low; raise on need | — |
+| Research live web/X | `grok-4.6` | grok | high (CLI default) | claude + WebSearch |
 
-For the Front-end / design seat, pair the model with Claude Code's `/design`
-command during the initial design-planning phase.
+Opus's primary seat is UI/design. Its legitimate secondary use is execution
+under a stronger supervisor such as Fable. Its strong benchmark aggregates,
+including SWE-V 96, diverge from Henrique's daily-use experience outside UI;
+his experience governs. The open question is whether `kimi-k3` will replace
+Opus for UI entirely. Evaluate that question over the next design tasks. During
+the initial design-planning phase, pair the UI/design seat with Claude Code's
+`/design` command.
+
+Grok is a fast, good execution seat as well as the live-research seat. Ox Alpha
+is a real executor while it is free, not only a burst option.
 
 `composer-2.5` has one niche: fast in-Cursor iteration under an external plan,
 as in "Grok plans, Composer builds". It is much faster in wall-clock time than
@@ -65,10 +73,14 @@ not a headline seat.
 
 ### Dimension scores
 
-Scores are Henrique's editable seeds. They are provisional and can change when
-he gets new evidence. The four dimensions use a 0–10 scale; `?` marks low
-confidence. Benchmark and practitioner evidence backs each cell. Each row
-carries its last `Updated` date. Apply these rules to every seed:
+Scores are Henrique's editable seeds. His daily-use experience governs them;
+benchmark aggregates inform them. They are provisional and can change when he
+gets new evidence. Inteligência and Taste use a 0–10 scale; `?` marks low
+confidence. Velocidade uses only `lento`, `médio`, or `rápido`. More reasoning
+effort makes a run slower. Custo uses only `barato`, `médio`, or `caro`, based
+on the subscription consumed and how constrained its pool is; it never uses
+API prices. Each row carries its last `Updated` date. Apply these rules to every
+seed:
 
 - Staff only the latest generation of each model family in each harness. The
   live catalogs decide current IDs.
@@ -82,15 +94,15 @@ carries its last `Updated` date. Apply these rules to every seed:
 
 | Model | Inteligência | Taste | Velocidade | Custo | Key evidence | Updated |
 |---|---:|---:|---:|---|---|---|
-| `claude-fable-5` | 9.5 | 9 | 4 | premium pool | Artificial Analysis Intelligence leader; SWE-Pro 80 | 2026-08-21 |
-| `claude-opus-5` | 9.5 | 9 | 5? | pool | SWE-V 96; current WebDev Arena #1 | 2026-08-21 |
-| `gpt-5.6-sol` | 9 | 7? | 6? | pool | Artificial Analysis Coding Agent #1; top terminal executor | 2026-08-21 |
-| `gpt-5.6-luna` | 7 | 5? | 9 | pool; API output $1.20/M | CAI 74.6; Luna max is not Sol | 2026-08-21 |
-| `grok-4.6` | 8.5 | 6? | 6 | subscription with a real quota, not unlimited | knowledge-work leader; DeepSWE and T-Bench v3 trail Sol and Fable | 2026-08-21 |
-| `kimi-k3` | 8 | 10 | 4 | medium; API output $15/M through Cursor | DesignArena #1; Arena Frontend #1 at launch; SWE-Marathon #1 | 2026-08-21 |
-| `composer-2.5` | 7 | 6? | 9 | low-cost Cursor pool | CursorBench 56.1; wall-clock winner | 2026-08-21 |
-| `ox-alpha` | 7.5? | 6? | 7? | free until about 2026-08-28 | community-only data; likely GLM-5.x | 2026-08-21 |
-| `gpt-daybreak-blue` | 9 | n/a | 6? | gated Codex pool | Sol with defensive safeguards; offensive about 2% versus Cyber 95% | 2026-08-21 |
+| `claude-fable-5` | 9.5 | 9 | lento | caro | Artificial Analysis Intelligence leader; premium pool | 2026-08-21 |
+| `gpt-5.6-sol` | 9 | 7? | médio | médio | Artificial Analysis Coding Agent #1; top back-end executor confirmed by Henrique | 2026-08-21 |
+| `gpt-daybreak-blue` | 9 | n/a | médio | médio | equal to Sol; defensive-only | 2026-08-21 |
+| `grok-4.6` | 8.5 | 6? | rápido | barato | deep quota on SuperGrok; fast quality executor confirmed by Henrique | 2026-08-21 |
+| `kimi-k3` | 8 | 10 | lento | médio | DesignArena #1; inside the $200 Cursor subscription | 2026-08-21 |
+| `ox-alpha` | 7.5? | 6? | rápido | barato | community praise; likely GLM-5.x; free week, then a cheap OpenCode plan | 2026-08-21 |
+| `claude-opus-5` | 8 | 9 | médio | médio | benchmarks say far more (SWE-V 96), but daily use puts it below Sol; UI/design or work supervised by Fable | 2026-08-21 |
+| `gpt-5.6-luna` | 7 | 5? | rápido | barato | volume executor at xhigh/max | 2026-08-21 |
+| `composer-2.5` | 7 | 6? | rápido | barato | niche: fast in-Cursor iteration under an external plan | 2026-08-21 |
 
 Promo IDs belong only in roster data, never in scripts.
 
@@ -149,8 +161,7 @@ Four seat caveats override the ladders:
 - Sol `ultra` is an in-weights multi-subagent delegation mode, not an effort
   value. Never set it by default.
 - Fable max has an overthinking regression on short tasks.
-- Opus high is suitable for architecture and review, but it can over-scope
-  implementation diffs.
+- Opus high is suitable for design review; use medium for UI diffs.
 - Luna's hidden `max` is a valid setting for volume execution under external
   planning and review.
 
