@@ -69,7 +69,7 @@ test("staffing matches difficulty and records its evidence", () => {
   assert.match(staffing, /use its Taste score/u);
   assert.match(staffing, /pool headroom first and speed second/u);
   assert.match(staffing, /current\s+orchestrator\s+CLI\s+is\s+not\s+a legal partner/iu);
-  assert.match(staffing, /Claude \| `claude-opus-5` \| `claude-opus-5`[\s\S]*`claude-fable-5`[\s\S]*it plans, it does not run units/u);
+  assert.match(staffing, /Claude \| `claude-opus-5` for UI\/design units; general\/back-end units prefer the Codex or Grok arenas per the Roster \| `claude-opus-5` for UI\/design units; general\/back-end units prefer the Codex or Grok arenas per the Roster[\s\S]*`claude-fable-5`[\s\S]*it plans, it does not run units/u);
   assert.match(staffing, /Codex \| `gpt-5\.6-sol` \| `gpt-5\.6-sol`[\s\S]*`gpt-5\.6-luna`[\s\S]*legal only for a volume or mechanical unit with Sol-reviewed delivery, otherwise excluded/u);
   for (const arena of ["Cursor", "Grok", "OpenCode"]) {
     assert.match(staffing, new RegExp(`\\| ${arena} \\| a current Roster seat with evidence for the task`, "u"));

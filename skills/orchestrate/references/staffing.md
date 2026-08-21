@@ -18,7 +18,7 @@ Direct unit partners have this floor:
 
 | arena | normal lane | hard lane | excluded direct lane |
 |---|---|---|---|
-| Claude | `claude-opus-5` | `claude-opus-5` | `claude-fable-5`; advisor and orchestrator only—it plans, it does not run units |
+| Claude | `claude-opus-5` for UI/design units; general/back-end units prefer the Codex or Grok arenas per the Roster | `claude-opus-5` for UI/design units; general/back-end units prefer the Codex or Grok arenas per the Roster | `claude-fable-5`; advisor and orchestrator only—it plans, it does not run units |
 | Codex | `gpt-5.6-sol` | `gpt-5.6-sol` | `gpt-5.6-luna`; legal only for a volume or mechanical unit with Sol-reviewed delivery, otherwise excluded |
 | Cursor | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
 | Grok | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
