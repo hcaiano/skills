@@ -184,7 +184,7 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   // send time, provably idle by the time the receipt is chosen.
   if (state.idle_after_prompt === true) pane.agent_status = "idle";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
-  const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok) ->/)?.[1];
+  const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok|opencode) ->/)?.[1];
   const sid = state.last_message.match(/sid=([^\\]\\s]+)\\]/)?.[1];
   if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
     const sequence = Number(control[2]);
@@ -924,6 +924,7 @@ try {
     codex: "accepted",
     cursor: null,
     grok: null,
+    opencode: null,
   });
   assert.equal(session.completed_cycles, 1);
   assert.equal(existsSync(sessionPath), true);
@@ -938,7 +939,7 @@ try {
   const reset = JSON.parse(run("reset"));
   assert.equal(reset.reset, true);
   assert.equal(reset.round, 0);
-  assert.deepEqual(reset.last_status, { claude: null, codex: null, cursor: null, grok: null });
+  assert.deepEqual(reset.last_status, { claude: null, codex: null, cursor: null, grok: null, opencode: null });
   assert.equal(reset.delivery.received.codex, 6);
 
   // A partner that never idles still gets the message: the send waits only a
@@ -1224,6 +1225,7 @@ try {
     ["wY:p1", "wY:t1", "wY", "pair-claude-wy_p1s", "/workspace", "/workspace", "claude"],
     [longSpawnPane, "w655f3dd90835016:t123", "w655f3dd90835016", longSpawnName, "/workspace", "/workspace", "cursor"],
     ["wZ:p1", "wZ:t1", "wZ", "pair-grok-wz_p1s", "/shell-home", "/workspace", "grok"],
+    ["wQ:p1", "wQ:t1", "wQ", "pair-opencode-wq_p1s", "/workspace", "/workspace", "opencode"],
   ]) {
     const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
     spawnState.panes = {
@@ -1276,12 +1278,14 @@ try {
     ["claude", ["--model", "opus", "--effort", "xhigh"], ["--", "--effort", "xhigh", "--model", "opus"]],
     ["claude", ["--model", "opus"], ["--", "--model", "opus"]],
     ["claude", [], []],
+    ["opencode", ["--model", "provider/model"], ["--", "-m", "provider/model"]],
     // --autonomy full launches the partner past its permission prompts, each
     // CLI through its own verified flag.
     ["claude", ["--autonomy", "full"], ["--", "--permission-mode", "bypassPermissions"]],
     ["grok", ["--autonomy", "full", "--model", "grok-5"], ["--", "--always-approve", "-m", "grok-5"]],
     ["codex", ["--autonomy", "full"], ["--", "-a", "never", "-s", "danger-full-access"]],
     ["cursor", ["--autonomy", "full"], ["--", "--force"]],
+    ["opencode", ["--autonomy", "full"], ["--", "--auto"]],
   ]) {
     // The lead is any CLI other than the one being spawned.
     const lead = partner === "grok" ? "claude" : "grok";
@@ -1303,6 +1307,29 @@ try {
     );
     const argv = JSON.parse(readFileSync(statePath, "utf8")).last_agent_start_argv;
     assert.deepEqual(argv.slice(argv.indexOf("60000") + 1), expected, `${partner} agent arguments`);
+  }
+
+  // OpenCode documents --variant on `opencode run`, but Herdr starts its TUI.
+  // Refuse an effort instead of forwarding a flag that the TUI does not own.
+  {
+    const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
+    spawnState.panes = {
+      "wV:p1": {
+        agent: "claude", agent_session: { value: "session-wV" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wV:p1",
+        tab_id: "wV:t1", terminal_id: "term-wV-p1", workspace_id: "wV",
+      },
+    };
+    spawnState.processes = { "wV:p1": [{ argv: ["claude"], cwd: "/workspace", name: "claude" }] };
+    writeFileSync(statePath, `${JSON.stringify(spawnState, null, 2)}\n`);
+    assert.throws(
+      () => runRaw(
+        "spawn", "--pane", "wV:p1", "--workspace", "wV", "--tab-id", "wV:t1",
+        "--as", "claude", "--terminal-id", "term-wV-p1", "--repo-root", "/workspace",
+        "--partner", "opencode", "--effort", "high",
+      ),
+      /OpenCode exposes --variant only on `opencode run`/u,
+    );
   }
 
   // Keep the pane mappings pinned to the installed CLIs' help contracts. A
@@ -1328,6 +1355,7 @@ try {
       /danger-full-access/u,
     ]],
     ["cursor-agent", [/-f, --force/u]],
+    ["opencode", [/-m, --model/u, /--auto/u]],
   ]) {
     const help = installedCliHelp(command);
     if (help === null) continue;

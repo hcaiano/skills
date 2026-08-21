@@ -28,6 +28,7 @@ test("Cursor foreground proof accepts the cursor-agent executable", () => {
 
 test("other agent kinds keep their literal executable basename", () => {
   assert.deepEqual(acceptedAgentBasenames("codex"), ["codex"]);
+  assert.deepEqual(acceptedAgentBasenames("opencode"), ["opencode"]);
   assert.equal(
     matchingForegroundProcess(
       { foreground_processes: [{ argv: ["/usr/bin/codex"], cwd: "/workspace" }] },
@@ -35,5 +36,13 @@ test("other agent kinds keep their literal executable basename", () => {
       "/workspace",
     )?.argv[0],
     "/usr/bin/codex",
+  );
+  assert.equal(
+    matchingForegroundProcess(
+      { foreground_processes: [{ argv: ["/usr/local/bin/opencode"], cwd: "/workspace", name: "opencode" }] },
+      "opencode",
+      "/workspace",
+    )?.name,
+    "opencode",
   );
 });

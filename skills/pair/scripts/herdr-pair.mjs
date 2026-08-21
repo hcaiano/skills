@@ -25,12 +25,12 @@ const scriptPath = fileURLToPath(import.meta.url);
 // exactly two of them, and never twice the same one: two panes of one CLI echo
 // each other instead of reviewing each other. One pane may hold several
 // concurrent pairs — one sid-scoped session file each.
-const agentKinds = ["claude", "codex", "cursor", "grok"];
+const agentKinds = ["claude", "codex", "cursor", "grok", "opencode"];
 const kindList = agentKinds.join("|");
 const roles = ["peer", "executor"];
-// Schema 3 keys participants by agent kind across four kinds and records the
-// role. There is no migration from the two-kind schemas: an old session names
-// panes a new one cannot place, so it is ended rather than rewritten.
+// Schema 3 keys participants by agent kind across all supported kinds and
+// records the role. There is no migration from the two-kind schemas: an old
+// session names panes a new one cannot place, so it is ended instead.
 const schemaVersion = 3;
 const staleLockMs = 60000;
 const pasteSettleMs = 400;
@@ -164,9 +164,10 @@ function participantRecord(pane) {
 
 // A pane id alone does not identify a conversation: the same pane can hold a
 // replacement agent session after the first one exits. terminal_id catches a
-// recycled terminal. For Claude, Cursor, and Grok, agent_session_id catches a
-// fresh conversation started in the SAME terminal, which would otherwise
-// inherit the pair and receive session-bound sends. Codex is different: Herdr
+// recycled terminal. For Claude, Cursor, Grok, and OpenCode,
+// agent_session_id catches a fresh conversation started in the SAME terminal,
+// which would otherwise inherit the pair and receive session-bound sends.
+// Codex is different: Herdr
 // reports a new thread id after compaction and can report a subagent thread id
 // while delegation runs, so its pane and terminal are the stable identity.
 // A null recorded id stays tolerant — normalizeSession backfills it on the
@@ -486,7 +487,7 @@ function tabAgentPanes(self) {
 }
 
 // A partner's kind is read off its own pane rather than derived from the
-// caller's, which is what makes any of the four kinds pairable — and a pane of
+// caller's, which is what makes any supported kind pairable — and a pane of
 // the caller's own kind is refused rather than accepted: two panes of one CLI
 // echo each other instead of reviewing each other.
 function requireLivePartner(self, partner) {
@@ -592,6 +593,7 @@ const autonomyArguments = {
   // this deliberately broad pane-only permission.
   codex: ["-a", "never", "-s", "danger-full-access"],
   cursor: ["--force"],
+  opencode: ["--auto"],
 };
 
 function agentStartArguments(partnerAgent, options) {
@@ -621,6 +623,15 @@ function agentStartArguments(partnerAgent, options) {
       ...autonomyArgs,
       ...(model ? ["-m", model] : []),
       ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
+    ];
+  }
+  if (partnerAgent === "opencode") {
+    if (effort) {
+      fail("OpenCode exposes --variant only on `opencode run`; its Herdr TUI cannot set --effort");
+    }
+    return [
+      ...autonomyArgs,
+      ...(model ? ["-m", model] : []),
     ];
   }
   return [
