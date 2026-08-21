@@ -134,7 +134,7 @@ test("the roster is the single editable model preference source", () => {
     "grok-4.6",
     "opencode/x-preview-f-free",
   ];
-  assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 8);
+  assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 9);
   for (const seat of seatModels) assert.match(seats, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
   assert.match(seats, /Planear \/ orquestrar[\s\S]*medium[\s\S]*opening planning prompt[\s\S]*never max/u);
   assert.match(seats, /Execução de alta qualidade \(back-end e geral\)[\s\S]*`gpt-5\.6-sol`[\s\S]*`ultra` is a subagent mode/u);
@@ -142,6 +142,7 @@ test("the roster is the single editable model preference source", () => {
   assert.match(seats, /Execução barata em volume[\s\S]*xhigh\/max[\s\S]*never for UI work[\s\S]*verbose at max/u);
   assert.match(seats, /Executor grátis \(enquanto durar\)[\s\S]*`opencode\/x-preview-f-free`[\s\S]*variant high/u);
   assert.match(seats, /UI \/ design \(taste\)[\s\S]*`kimi-k3`[\s\S]*`claude-opus-5`[\s\S]*Opus high for design review and medium for UI diffs[\s\S]*one covers the other/u);
+  assert.match(seats, /Image gen \(UI ideas, imagens, app logos, qualquer coisa que precise de imagem\) \| \*\*Image Gen 2 with `gpt-5\.6`\*\* \| the `gpt-5\.6` surface that exposes Image Gen 2 \| — \| — \|/u);
   assert.match(seats, /Opus's primary seat is UI\/design[\s\S]*legitimate secondary use is execution[\s\S]*stronger supervisor such as Fable[\s\S]*SWE-V 96[\s\S]*daily-use experience[\s\S]*experience\s+governs/u);
   assert.match(seats, /open question[\s\S]*`kimi-k3` will replace\s+Opus[\s\S]*next design tasks/u);
   assert.match(seats, /Grok is a fast, good execution seat[\s\S]*Ox Alpha[\s\S]*real executor/u);
@@ -182,15 +183,17 @@ test("the roster is the single editable model preference source", () => {
   }));
   assert.deepEqual(dimensions, {
     "claude-fable-5": ["9.5", "9", "lento", "caro"],
-    "gpt-5.6-sol": ["9", "7?", "médio", "médio"],
+    "gpt-5.6-sol": ["9", "8", "médio", "médio"],
     "gpt-daybreak-blue": ["9", "n/a", "médio", "médio"],
-    "grok-4.6": ["8.5", "6?", "rápido", "barato"],
+    "grok-4.6": ["8.5", "6", "rápido", "barato"],
     "kimi-k3": ["8", "10", "lento", "médio"],
-    "ox-alpha": ["7.5?", "6?", "rápido", "barato"],
+    "ox-alpha": ["7", "8", "rápido", "barato"],
     "claude-opus-5": ["8", "9", "médio", "médio"],
-    "gpt-5.6-luna": ["7", "5?", "rápido", "barato"],
-    "composer-2.5": ["7", "6?", "rápido", "barato"],
+    "gpt-5.6-luna": ["7", "5", "rápido", "barato"],
+    "composer-2.5": ["7", "6", "rápido", "barato"],
   });
+  assert.doesNotMatch(scoreRows.join("\n"), /\?/u);
+  assert.match(scores, /`ox-alpha` \| 7 \| 8[\s\S]*community praise for its design taste/u);
   assert.doesNotMatch(scores, /API (?:input|output)|\$[0-9.]+\/M/u);
   assert.match(scores, /`kimi-k3`[\s\S]*inside the \$200 Cursor subscription/u);
   assert.match(scores, /`claude-opus-5` \| 8 \| 9[\s\S]*SWE-V 96[\s\S]*daily use puts it below Sol[\s\S]*UI\/design or work supervised by Fable/u);

@@ -52,6 +52,7 @@ remain authoritative for model IDs.
 | Execução barata em volume | `gpt-5.6-luna` | codex | **xhigh/max** with Sol planning and review; never for UI work; verbose at max | `ox-alpha` |
 | Executor grátis (enquanto durar) | `ox-alpha` (`opencode/x-preview-f-free`) | opencode | variant high | — expires ~2026-08-28 |
 | UI / design (taste) | `kimi-k3` **e** `claude-opus-5` | cursor / claude | `kimi-k3-high` (`-max` for hard work); Opus high for design review and medium for UI diffs | one covers the other |
+| Image gen (UI ideas, imagens, app logos, qualquer coisa que precise de imagem) | **Image Gen 2 with `gpt-5.6`** | the `gpt-5.6` surface that exposes Image Gen 2 | — | — |
 | Cyber (defensivo) | `gpt-daybreak-blue-latest` | codex | low; raise on need | — |
 | Research live web/X | `grok-4.6` | grok | high (CLI default) | claude + WebSearch |
 
@@ -95,14 +96,14 @@ seed:
 | Model | Inteligência | Taste | Velocidade | Custo | Key evidence | Updated |
 |---|---:|---:|---:|---|---|---|
 | `claude-fable-5` | 9.5 | 9 | lento | caro | Artificial Analysis Intelligence leader; premium pool | 2026-08-21 |
-| `gpt-5.6-sol` | 9 | 7? | médio | médio | Artificial Analysis Coding Agent #1; top back-end executor confirmed by Henrique | 2026-08-21 |
+| `gpt-5.6-sol` | 9 | 8 | médio | médio | Artificial Analysis Coding Agent #1; top back-end executor confirmed by Henrique | 2026-08-21 |
 | `gpt-daybreak-blue` | 9 | n/a | médio | médio | equal to Sol; defensive-only | 2026-08-21 |
-| `grok-4.6` | 8.5 | 6? | rápido | barato | deep quota on SuperGrok; fast quality executor confirmed by Henrique | 2026-08-21 |
+| `grok-4.6` | 8.5 | 6 | rápido | barato | deep quota on SuperGrok; fast quality executor confirmed by Henrique | 2026-08-21 |
 | `kimi-k3` | 8 | 10 | lento | médio | DesignArena #1; inside the $200 Cursor subscription | 2026-08-21 |
-| `ox-alpha` | 7.5? | 6? | rápido | barato | community praise; likely GLM-5.x; free week, then a cheap OpenCode plan | 2026-08-21 |
+| `ox-alpha` | 7 | 8 | rápido | barato | community praise for its design taste; likely GLM-5.x; free week, then a cheap OpenCode plan | 2026-08-21 |
 | `claude-opus-5` | 8 | 9 | médio | médio | benchmarks say far more (SWE-V 96), but daily use puts it below Sol; UI/design or work supervised by Fable | 2026-08-21 |
-| `gpt-5.6-luna` | 7 | 5? | rápido | barato | volume executor at xhigh/max | 2026-08-21 |
-| `composer-2.5` | 7 | 6? | rápido | barato | niche: fast in-Cursor iteration under an external plan | 2026-08-21 |
+| `gpt-5.6-luna` | 7 | 5 | rápido | barato | volume executor at xhigh/max | 2026-08-21 |
+| `composer-2.5` | 7 | 6 | rápido | barato | niche: fast in-Cursor iteration under an external plan | 2026-08-21 |
 
 Promo IDs belong only in roster data, never in scripts.
 
