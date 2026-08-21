@@ -57,6 +57,14 @@ ship it.
    record of what was reviewed. A gate that stops for user direction stops the
    delivery too. This step is complete when the gate's receipt exists, its
    `Gate HEAD` is the current clean HEAD, and nothing is pushed.
+
+   **Review convergence.** Count every completed LLM review round for this
+   delivery, including an orchestrator's second-arena fan-out and review-it's
+   initial or conditional rounds. After three rounds, a further review needs a
+   regression that is traceable to the latest commit. Record the failing
+   behavior, the latest commit that introduced it, and the focused proof. All
+   other later findings become recorded residuals; they do not reopen review.
+   The two-round post-gate mutation cap in step 4 still applies.
 4. **Validate the final HEAD, then push it.** On the clean final HEAD, rerun
    step 2's proportional validation map for the final diff: repository-defined
    test, lint, typecheck, and build entries covering the changed contracts and
@@ -106,7 +114,9 @@ ship it.
    transport record — and adds delivery's own fields around it:
    `Focused proof:` (why its exact commands cover every altered behavior),
    `Final validated HEAD: <40-character pushed SHA>`, the deterministic commands
-   and results, and every check delegated to native PR CI and why.
+   and results, every check delegated to native PR CI and why, `Review rounds:`
+   with each reviewed SHA, and `Residual findings:` with every item closed by
+   the convergence rule.
    `Reviewed HEAD`, `Gate HEAD`, and `Final validated HEAD` are the delivery's
    chain of custody — reviewed at this ancestor, fixed in these SHAs, validated
    on the head that ships — so a corrected delivery is expected to carry
