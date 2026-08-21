@@ -60,15 +60,18 @@ test("pair is the only unit transport", () => {
 
 test("staffing matches difficulty and records its evidence", () => {
   assert.match(staffing, /Match model intelligence to task difficulty/u);
+  assert.match(staffing, /models\.md[\s\S]*owns the model-choice rubric,\s+roster, live catalogs, costs, scores, and effort syntax/u);
+  assert.match(staffing, /This file owns arena\s+floors, capacity evidence, and the orchestration decision record/u);
+  assert.match(staffing, /Apply the roster before these\s+arena floors/u);
+  assert.match(staffing, /use its Taste score/u);
   assert.match(staffing, /pool headroom first and speed second/u);
   assert.match(staffing, /current orchestrator CLI is not a legal partner/u);
   assert.match(staffing, /Haiku; Fable is advisor-only/u);
   assert.match(staffing, /Luna/u);
   assert.match(staffing, /OpenCode/u);
-  assert.match(staffing, /opencode models/u);
   assert.match(staffing, /one-line reason/u);
-  assert.match(staffing, /effort-specific name exactly as the live catalog prints/u);
-  assert.match(staffing, /omit `--effort`/u);
+  assert.match(staffing, /compared roster Taste scores when a score breaks the tie/u);
+  assert.doesNotMatch(staffing, /Quality evidence|x-preview-f-free|SWE-Pro|AA Coding Agent Index/u);
   assert.match(
     staffing,
     /headless `cursor-agent` run proves that shell commands are\s+rejected[^]*consult and read-only review arena/u,
