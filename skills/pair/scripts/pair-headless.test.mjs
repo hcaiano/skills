@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -280,15 +281,42 @@ test("the command dispatcher runs when the helper is invoked through a symlink",
   assert.equal(sent.receipt.status, "replied");
 });
 
-test("a headless pair requires a git repository", () => {
+test("git worktrees and plain directories get stable, separate state locations", () => {
   const plain = join(root, "not-a-repo");
   mkdirSync(plain, { recursive: true });
-  assert.match(locate(plain).error, /not a git repository/u);
+  const plainPlace = locate(plain, root);
+  const plainHash = createHash("sha256").update(realpathSync(plain)).digest("hex").slice(0, 12);
+  assert.equal(
+    plainPlace.statePath,
+    join(root, ".local", "state", "pair", `not-a-repo-${plainHash}`, "session.json"),
+  );
+  assert.equal(plainPlace.root, realpathSync(plain));
   const repo = newRepo("located");
   const place = locate(repo);
   assert.equal(place.error, undefined);
   assert.match(place.statePath, /\.git\/pair\/session\.json$/u);
   assert.match(place.transcripts, /\.git\/pair\/transcripts$/u);
+});
+
+test("a plain directory supports the full headless pair lifecycle", () => {
+  const plain = join(root, "plain-lifecycle");
+  mkdirSync(plain, { recursive: true });
+  const expectedPlace = locate(plain, root);
+
+  const created = run("ok", "claude", "init", "--repo", plain, "--partner", "codex");
+  assert.equal(created.receipt.status, "created");
+  assert.equal(created.receipt.state_file, expectedPlace.statePath);
+  const sent = run("ok", "claude", "send", "--repo", plain, "--kind", "task", "--body-file", bodyFile("plain task"));
+  assert.equal(sent.receipt.status, "replied");
+  assert.equal(sent.receipt.seq, 1);
+  const status = run("ok", "claude", "status", "--repo", plain).receipt;
+  assert.equal(status.sid, CODEX_SID);
+  assert.equal(status.seq, 1);
+  assert.equal(status.state_file, expectedPlace.statePath);
+  const ended = run("ok", "claude", "end", "--repo", plain).receipt;
+  assert.equal(ended.status, "ended");
+  assert.equal(existsSync(expectedPlace.stateDir), false);
+  assert.equal(existsSync(`${expectedPlace.stateDir}.trashed`), true);
 });
 
 test("each turn's command matches the flags the installed CLIs accept", () => {

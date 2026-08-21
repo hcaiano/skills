@@ -18,9 +18,11 @@ Set `SKILL_DIR` to this skill directory and
 `PAIR_SCRIPT="$SKILL_DIR/scripts/pair-headless.mjs"`. Always use that absolute
 path; the project cwd is unrelated to the installed skill path.
 
-The task must be a git repository: the session state lives in
-`<git-dir>/pair/session.json`, so a worktree holds one pair and a linked
-worktree gets its own. Set `REPO_ROOT` to it.
+Set `REPO_ROOT` to the existing task directory. A Git worktree keeps session
+state in `<git-dir>/pair/session.json`, so a worktree holds one pair and a linked
+worktree gets its own. A plain directory keeps the same state layout in
+`~/.local/state/pair/<basename>-<realpath-hash>/`. A GitHub remote is not a
+precondition, and the directory does not need to use Git.
 
 Look for a pair to resume before creating one: `status --repo "$REPO_ROOT"`
 reports a recorded session, and `init` resumes it rather than replacing it.
@@ -83,10 +85,12 @@ running record contains both `supervisor_pid` and `partner_pid`. It also names
 the `transcript` and the eventual `receipt_file`; this running record is not the
 final receipt.
 
-The worker tees streaming output to `<git-dir>/pair/transcripts/`, waits on an
-idle and a total deadline (`--idle-min`, `--total-min`), and writes the final
-receipt to a temporary file before renaming it into place. It releases the lock
-only after that rename. `wait` reads only a complete receipt:
+The worker tees streaming output to the state directory's `transcripts/`, waits
+on an idle and a total deadline (`--idle-min`, `--total-min`), and writes the
+final receipt to a temporary file before renaming it into place. For a Git
+worktree that transcript path is `<git-dir>/pair/transcripts/`; for a plain
+directory it is under the fallback above. The worker releases the lock only
+after that rename. `wait` reads only a complete receipt:
 
 ```bash
 node "$PAIR_SCRIPT" wait --repo "$REPO_ROOT" [--seq "$SEQ"]
@@ -107,19 +111,20 @@ applicable, `receipt_file`:
 - `status=empty-reply`: the run exited clean with nothing in it. Read
   `transcript` first — the partner may have consumed the prompt and still
   produced no final message, so a resend can duplicate work; for a write-lease
-  turn inspect `git status` before resending. A body that names a file path
-  beats a long one.
+  turn inspect the task directory and `git status` when Git is present before
+  resending. A body that names a file path beats a long one.
 - `status=failed`: the CLI exited nonzero. Read `transcript` for the reason
   before resending — an auth or rate-limit failure repeats.
 - `status=hang-killed`: the turn passed a deadline and was killed. Read
   `transcript` to see how far it got; a killed write-lease turn may have left
-  edits, so inspect `git status` before resending. The receipt adds
-  `partial_reply=true` only when nonempty assistant text was recovered.
+  edits, so inspect the task directory and `git status` when Git is present
+  before resending. The receipt adds `partial_reply=true` only when nonempty
+  assistant text was recovered.
 - `status=failed` with `reason=grok-cancelled`: Grok emitted a clean cancelled
   end event. Treat it as a failure, never as `replied` or `empty-reply`.
 - `status=worker-lost`: the supervisor died before it could write a receipt.
-  Inspect the transcript, lock, and worktree, then recover the marker before a
-  new send.
+  Inspect the transcript, lock, and task directory, then recover the marker
+  before a new send.
 - `status=wait-timeout`: the selected worker has not produced a receipt within
   the wait bound. Inspect `status` and the transcript before choosing a new
   action.
@@ -132,7 +137,7 @@ The stream is the watchdog's liveness signal for Grok (`streaming-json`), Cursor
 
 After two consecutive proved Grok cancellations, the receipt advises a fork.
 The counter increments while the turn owns the lock and resets on the next
-terminal non-cancelled result. Inspect the worktree and transcript before
+terminal non-cancelled result. Inspect the task directory and transcript before
 following that advice; cancellation is not proof that the edits are complete.
 
 ## Fork a cancelled Grok session
@@ -161,8 +166,9 @@ checkpoint in that message to carry only the task state that needs continuity.
 
 The session's role sets each turn's default: under `peer` a turn is read-only
 unless you pass `--write`, and under `executor` it is writable unless you pass
-`--read-only`. Pass the flag exactly where the lease differs from the role, and
-inspect `git diff` and real validation output yourself afterwards.
+`--read-only`. Pass the flag exactly where the lease differs from the role.
+Inspect the task files, `git diff` when Git is present, and real validation
+output yourself afterwards.
 
 What holds a turn differs by partner. A Codex turn is held by a filesystem
 sandbox (`read-only`, or `workspace-write` with `--write`). A Claude turn is
@@ -172,11 +178,12 @@ same kind of mode (`plan` or `acceptEdits`). A Cursor turn writes by default in
 `--print`, so its read-only turns are the ones carrying `--mode plan` — the
 mode restrains the agent, and is not an OS sandbox either.
 
-The transport is half-duplex, so one turn runs at a time. A send takes a lock
-by creating `<git-dir>/pair/in-flight.json`, which records the turn's sequence,
-`supervisor_pid`, and `partner_pid`, and refuses over any existing marker while
-spending nothing. `status` shows the marker under `in_flight`. When its
-processes are gone, clear it:
+The transport is half-duplex, so one turn runs at a time. In a Git worktree, a
+send takes a lock by creating `<git-dir>/pair/in-flight.json`; in a plain
+directory, the lock is beside `session.json` in the fallback state directory.
+It records the turn's sequence, `supervisor_pid`, and `partner_pid`, and
+refuses over any existing marker while spending nothing. `status` shows the marker
+under `in_flight`. When its processes are gone, clear it:
 
 ```bash
 node "$PAIR_SCRIPT" clear --repo "$REPO_ROOT"

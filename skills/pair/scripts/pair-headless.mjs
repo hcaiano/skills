@@ -16,20 +16,20 @@
 //   node pair-headless.mjs end    --repo <root>
 //   [--idle-min 20] [--total-min 60] on init and send
 //
-// State lives in `<git-dir>/pair/session.json`, so the session belongs to the
-// worktree the work happens in: one pair per worktree, and a linked worktree
-// gets its own. A turn holds `in-flight.json` beside it for as long as it runs,
-// because half-duplex means one resume of the CLI session at a time; a send
-// refuses over any existing marker and `clear` is the only remover. The
-// deadline mechanic (output-based liveness — stock macOS has no `timeout` — and
-// a kill of the PID itself, never the group) follows review-it's headless
-// wrappers; the receipt shape follows theirs too, so a caller reads one JSON
-// object per command and never a transcript to learn what happened.
+// Git worktree state lives in `<git-dir>/pair/session.json`. A plain directory
+// uses `~/.local/state/pair/<basename>-<realpath-hash>/` instead. A turn holds
+// `in-flight.json` beside it for as long as it runs, because half-duplex means
+// one resume of the CLI session at a time; a send refuses over any existing
+// marker and `clear` is the only remover. The deadline mechanic (output-based
+// liveness — stock macOS has no `timeout` — and a kill of the PID itself, never
+// the group) follows review-it's headless wrappers; the receipt shape follows
+// theirs too, so a caller reads one JSON object per command and never a
+// transcript to learn what happened.
 //
 // Exit 0: JSON receipt {ok: true, ...}. Exit 1: {ok: false, reason, ...}.
 // Exit 2: usage error.
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -46,7 +46,7 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const POLL_MS = 2000;
@@ -152,10 +152,30 @@ export const resolveWrite = (role, { write, readOnly }) => {
 const git = (repo, ...args) =>
   spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
 
-export const locate = (repo) => {
+export const locate = (repo, home = homedir()) => {
+  let directory;
+  try {
+    directory = realpathSync(repo);
+    if (!statSync(directory).isDirectory()) {
+      return { error: `not a directory: ${repo}` };
+    }
+  } catch (error) {
+    return { error: `cannot resolve task directory ${repo}: ${error.message}` };
+  }
+
   const top = git(repo, "rev-parse", "--show-toplevel");
   const dir = git(repo, "rev-parse", "--absolute-git-dir");
-  if (top.status !== 0 || dir.status !== 0) return { error: `not a git repository: ${repo} — the headless pair keeps its session in the repository's git directory` };
+  if (top.status !== 0 || dir.status !== 0) {
+    const hash = createHash("sha256").update(directory).digest("hex").slice(0, 12);
+    const stateDir = join(home, ".local", "state", "pair", `${basename(directory) || "root"}-${hash}`);
+    return {
+      root: directory,
+      stateDir,
+      statePath: join(stateDir, "session.json"),
+      lockPath: join(stateDir, "in-flight.json"),
+      transcripts: join(stateDir, "transcripts"),
+    };
+  }
   const root = top.stdout.trim();
   const stateDir = join(dir.stdout.trim(), "pair");
   return {

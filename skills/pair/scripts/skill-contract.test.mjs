@@ -207,6 +207,9 @@ test("the headless backend documents the helper's whole command surface", () => 
   assert.match(headlessBackend, /scripts\/pair-headless\.mjs/u);
   assert.match(headlessBackend, /half-duplex/u);
   assert.match(headlessBackend, /`<git-dir>\/pair\/session\.json`/u);
+  assert.match(headlessBackend, /`~\/\.local\/state\/pair\/<basename>-<realpath-hash>\/`/u);
+  assert.match(headlessBackend, /directory does not need to use Git/u);
+  assert.match(headlessBackend, /GitHub remote is not a\s+precondition/u);
   assert.match(headlessBackend, /the helper refuses\s+to pair a model with itself/u);
 });
 
@@ -252,7 +255,7 @@ test("the headless backend states what each guarantee is actually worth", () => 
   // An empty reply may still have consumed the prompt, so resending can duplicate work.
   assert.match(
     headlessBackend,
-    /`status=empty-reply`[\s\S]*Read\s+`transcript` first[\s\S]*may have consumed the prompt[\s\S]*inspect `git status` before resending/u,
+    /`status=empty-reply`[\s\S]*Read\s+`transcript` first[\s\S]*may have consumed the prompt[\s\S]*inspect the task directory and `git status` when Git is present/u,
   );
   // session_known is evidence of loss, never proof of health.
   assert.match(
