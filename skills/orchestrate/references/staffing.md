@@ -53,6 +53,12 @@ unit.
 For Cursor, choose an effort-specific name exactly as the live catalog prints
 it and omit `--effort`; the name is the recorded effort control.
 
+On a machine where a headless `cursor-agent` run proves that shell commands are
+rejected, treat Cursor as a consult and read-only review arena. It cannot own a
+unit that must validate or commit. This limit is machine- and backend-specific:
+a Cursor pane on the Herdr backend keeps its own permission plumbing and is
+eligible for implementation when its live checks succeed.
+
 ## Record and restaff
 
 Every unit record names partner, model (or `CLI default`), effort, timestamp,

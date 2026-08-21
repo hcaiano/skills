@@ -27,7 +27,16 @@ test("one durable record owns the complete unit atom", () => {
   assert.match(skill, /manifest-owned task file is authoritative/u);
   assert.match(skill, /resumes `creating`, `setting-up`,\s+`initializing-pair`, or `starting`/u);
   assert.match(skill, /recoverable Cursor record that stores a separate effort/u);
+  assert.match(skill, /## Addendum — <UTC timestamp>/u);
+  assert.match(skill, /executor rereads the complete file[^]*again after every restaff/u);
   assert.match(unit, /resumed_from/u);
+});
+
+test("unit creation protects the PR body handoff", () => {
+  assert.match(skill, /adds `\/PR_BODY\.md` once to the repository's Git\s+exclude file/u);
+  assert.match(unit, /"rev-parse", "--git-path", "info\/exclude"/u);
+  assert.match(unit, /const pattern = "\/PR_BODY\.md"/u);
+  assert.match(unit, /delivery_setup\.pr_body_exclude/u);
 });
 
 test("the unit helper exposes one tested lifecycle surface", () => {
@@ -60,6 +69,11 @@ test("staffing matches difficulty and records its evidence", () => {
   assert.match(staffing, /one-line reason/u);
   assert.match(staffing, /effort-specific name exactly as the live catalog prints/u);
   assert.match(staffing, /omit `--effort`/u);
+  assert.match(
+    staffing,
+    /headless `cursor-agent` run proves that shell commands are\s+rejected[^]*consult and read-only review arena/u,
+  );
+  assert.match(staffing, /Cursor pane on the Herdr backend keeps its own permission plumbing/u);
   assert.doesNotMatch(staffing, /frontier by default|least expensive/u);
 });
 
@@ -81,6 +95,19 @@ test("delivery keeps the exact-head chain of custody", () => {
   assert.match(delivery, /--match-head-commit <verified-head>/u);
   assert.match(delivery, /before and\s+after screenshots/u);
   assert.match(delivery, /merged, never rebased or force-pushed/u);
+});
+
+test("delivery owns review fan-out, Git mechanics, push auth, and literal holds", () => {
+  assert.match(delivery, /Use \*\*executor delivery\*\* by default/u);
+  assert.match(delivery, /Use \*\*orchestrator-owned Git mechanics\*\* only after the executor proves/u);
+  assert.match(delivery, /create a checkpoint commit without editing them/u);
+  assert.match(delivery, /CLI and model family must differ from the\s+executor's/u);
+  assert.match(delivery, /same single correction round/u);
+  assert.match(delivery, /Prefer an existing\s+SSH push URL or SSH remote/u);
+  assert.match(delivery, /gh auth refresh -s workflow/u);
+  assert.match(delivery, /A held PR stays open for Henrique's own review/u);
+  assert.match(delivery, /never merges it, including with admin rights/u);
+  assert.match(delivery, /Dependent units wait when this rule serializes them/u);
 });
 
 test("cleanup proves merge and binds force to one exact unit", () => {
