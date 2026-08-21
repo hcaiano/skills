@@ -1,18 +1,18 @@
 # Staffing
 
 Read this reference before each unit wave and each restaff. Pair's
-[`models.md`](../../pair/references/models.md) owns the model-choice rubric,
-roster, live catalogs, costs, scores, and effort syntax. This file owns arena
-floors, capacity evidence, and the orchestration decision record. Last
-calibrated 2026-08-21.
+[`models.md`](../../pair/references/models.md) owns the model-choice rubric and
+the Roster subsections Seats por papel, Dimension scores, Pace and fallback,
+and Effort. This file owns arena floors, capacity evidence, and the
+orchestration decision record. Last calibrated 2026-08-21.
 
 ## Decide
 
 Match model intelligence to task difficulty. Apply the roster before these
 arena floors. When two legal choices meet the same bar, use its Taste score;
 when scores tie, use pool headroom first and speed second. Choose effort on the
-roster's per-CLI ladder. The current orchestrator CLI is not a legal partner;
-pair refuses same-CLI pairing.
+Roster's Seats por papel and Effort subsections. The current orchestrator CLI
+is not a legal partner; pair refuses same-CLI pairing.
 
 Direct unit partners have this floor:
 

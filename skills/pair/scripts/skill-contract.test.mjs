@@ -94,7 +94,7 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   assert.match(models, /Speed/u);
   assert.match(models, /Pool/u);
   assert.match(models, /`CLI default`/u);
-  assert.match(models, /A Codex pair spawn always sets effort\s+explicitly, including medium/u);
+  assert.match(models, /A Codex pair spawn always\s+sets\s+effort\s+explicitly, including medium/u);
   assert.match(models, /SKILL_DIR[\s\S]*usage-state\.mjs/u);
   // Claude Code has an effort door; the backend and prose must carry it.
   assert.match(skill, /Claude Code\s+\(`--effort low\|medium\|high\|xhigh\|max`\)/u);
@@ -107,36 +107,89 @@ test("an existing pair is resumed, never respawned to change its model", () => {
 });
 
 test("the roster is the single editable model preference source", () => {
-  const roster = models.slice(models.indexOf("## Roster"), models.indexOf("## Effort"));
-  const seats = [
+  const roster = models.slice(models.indexOf("## Roster"));
+  const seats = roster.slice(
+    roster.indexOf("### Seats por papel"),
+    roster.indexOf("### Dimension scores"),
+  );
+  const scores = roster.slice(
+    roster.indexOf("### Dimension scores"),
+    roster.indexOf("### Pace and fallback"),
+  );
+  const pace = roster.slice(
+    roster.indexOf("### Pace and fallback"),
+    roster.indexOf("### Effort"),
+  );
+  const effort = roster.slice(
+    roster.indexOf("### Effort"),
+    roster.indexOf("### Specialists and excluded"),
+  );
+  const seatModels = [
     "claude-fable-5",
     "claude-opus-5",
-    "claude-sonnet-5",
-    "claude-haiku-4-5",
     "gpt-5.6-sol",
-    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "kimi-k3",
+    "gpt-daybreak-blue-latest",
+    "grok-4.6",
+    "opencode/x-preview-f-free",
+  ];
+  assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 8);
+  for (const seat of seatModels) assert.match(seats, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
+  assert.match(seats, /Planear \/ orquestrar[\s\S]*medium[\s\S]*opening planning prompt[\s\S]*never max/u);
+  assert.match(seats, /Arquitetura \/ review dura[\s\S]*high[\s\S]*medium[\s\S]*over-scopes diffs/u);
+  assert.match(seats, /Execução principal[\s\S]*`ultra` is not an effort value[\s\S]*never set automatically/u);
+  assert.match(seats, /Execução barata em volume[\s\S]*xhigh\/max[\s\S]*never for UI work[\s\S]*verbose at max/u);
+  assert.match(seats, /Front-end \/ design[\s\S]*`kimi-k3-high`[\s\S]*current WebDev Arena #1/u);
+  assert.match(seats, /Claude Code's `\/design`/u);
+  assert.match(seats, /composer-2\.5[\s\S]*"Grok plans, Composer builds"[\s\S]*56\.1 and 69\.9[\s\S]*not a headline seat/u);
+
+  const scoredModels = [
+    "claude-fable-5",
+    "claude-opus-5",
+    "gpt-5.6-sol",
     "gpt-5.6-luna",
     "grok-4.6",
     "kimi-k3",
     "composer-2.5",
-    "opencode/x-preview-f-free",
+    "ox-alpha",
+    "gpt-daybreak-blue",
   ];
-  assert.equal(roster.split("\n").filter((line) => /^\| `[^`]+`/u.test(line)).length, 11);
-  for (const seat of seats) assert.match(roster, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
-  assert.match(roster, /Staff only the latest generation of each model family/u);
-  assert.match(roster, /Taste scores rank models that already meet the task's risk and context bar/u);
-  assert.match(roster, /Henrique's editable seed values[\s\S]*`Updated` is the last update date/u);
-  assert.match(roster, /API-priced rows use `barato`, `médio`, or `caro`/u);
-  assert.match(roster, /subscription pools[\s\S]*`usage-state\.mjs`, not token prices/u);
-  assert.match(roster, /Claude, GPT, or Grok models that Cursor also lists[\s\S]*native\s+harness row/u);
-  assert.match(roster, /machine-specific[\s\S]*`staffing\.md`/u);
-  assert.match(roster, /free for one week from 2026-08-21/u);
-  assert.match(roster, /re-verify the ID with `opencode models --refresh`/u);
-  assert.match(roster, /malformed protocol headers[^|]*judge the receipt and diff, not the header/u);
+  assert.equal(scores.split("\n").filter((line) => /^\| `[^`]+`/u.test(line)).length, 9);
+  for (const model of scoredModels) assert.match(scores, new RegExp(`\`${model.replaceAll(".", "\\.")}\``, "u"));
+  assert.match(scores, /\| Model \| Inteligência \| Taste \| Velocidade \| Custo \| Key evidence \| Updated \|/u);
+  assert.equal(scores.match(/2026-08-21/g)?.length, 9);
+  assert.match(scores, /Henrique's editable seeds[\s\S]*provisional/u);
+  assert.match(scores, /Staff only the latest generation of each model family/u);
+  assert.match(scores, /Scores rank models that already meet the risk and context bar/u);
+  assert.match(scores, /Prefer a native harness over a Cursor duplicate/u);
+  assert.match(scores, /machine-specific headless[\s\S]*`staffing\.md`/u);
+
+  assert.match(pace, /usage-state\.mjs/u);
+  assert.match(pace, /`used_percent >= 90`[\s\S]*refuses[\s\S]*rate limit[\s\S]*fallback/u);
+  assert.match(pace, /Cursor is the deliberate universal fallback harness/u);
+  assert.match(pace, /Balance equal-bar work across subscriptions/u);
+  assert.match(pace, /Grok 4\.6 "unlimited" has a quota in practice/u);
+
+  assert.match(effort, /per-seat guidance in Seats por papel overrides these generic ladders/u);
+  assert.match(effort, /Sol `ultra`[\s\S]*multi-subagent delegation mode[\s\S]*Never set it by default/u);
+  assert.match(effort, /Fable max has an overthinking regression/u);
+  assert.match(effort, /Opus high[\s\S]*over-scope\s+implementation diffs/u);
+  assert.match(effort, /Luna's hidden `max`[\s\S]*volume execution under external[\s\S]*review/u);
+
+  const removed = ["claude-haiku-4-5", "gpt-5.6-terra", "claude-sonnet-5"];
+  for (const model of removed) {
+    assert.doesNotMatch(seats, new RegExp(model.replaceAll(".", "\\."), "u"));
+    assert.doesNotMatch(scores, new RegExp(model.replaceAll(".", "\\."), "u"));
+    assert.match(roster, new RegExp(model.replaceAll(".", "\\."), "u"));
+  }
+  assert.match(roster, /are removed by\s+decision/u);
+  assert.match(roster, /Harness sub-agents already delegate to cheap and mid-tier models/u);
   assert.match(roster, /Promo IDs belong only in roster data, never in scripts/u);
   assert.doesNotMatch(`${helper}\n${headlessHelper}`, /x-preview-f-free/u);
+
   for (const excluded of [
-    "gpt-daybreak-blue-latest",
+    "gpt-5.6-cyber",
     "claude-mythos-5",
     "gpt-reserve",
     "codex-auto-review",
@@ -148,13 +201,15 @@ test("the roster is the single editable model preference source", () => {
   ]) {
     assert.match(roster, new RegExp(excluded.replaceAll(".", "\\."), "u"));
   }
+  assert.match(roster, /re-verify[\s\S]*`opencode models --refresh`/u);
+  assert.match(roster, /malformed[\s\S]*protocol headers[\s\S]*judge the receipt and diff, not the header/u);
 });
 
 test("each harness effort ladder matches its current control surface", () => {
-  assert.match(models, /Claude Code accepts\s+`--effort low\|medium\|high\|xhigh\|max`[\s\S]*model-independent/u);
-  assert.match(models, /Codex[\s\S]*`low\|medium\|high\|xhigh\|max`[\s\S]*Sol and Terra also support `ultra`/u);
-  assert.match(models, /Sol uses\s+low; Terra and Luna use medium/u);
-  assert.match(models, /A Codex pair spawn always sets effort\s+explicitly, including medium/u);
+  assert.match(models, /Claude Code accepts\s+`--effort low\|medium\|high\|xhigh\|max`/u);
+  assert.match(models, /Codex[\s\S]*`low\|medium\|high\|xhigh\|max`/u);
+  assert.match(models, /Sol uses low, and Luna uses medium/u);
+  assert.match(models, /A Codex pair spawn always\s+sets\s+effort\s+explicitly, including medium/u);
   assert.match(models, /Cursor[\s\S]*effort is encoded in the model ID[\s\S]*`kimi-k3-high`/u);
   assert.match(models, /`--model '<id>\[effort=…\]'`/u);
   assert.match(models, /Grok 4\.6 accepts `low\|medium\|high\|xhigh`[\s\S]*defaults to high/u);
