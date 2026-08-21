@@ -1452,6 +1452,21 @@ const runStatus = () => {
   const place = requirePlace();
   const state = readState(place.statePath);
   if (!state?.sid) fail(`no pair session in ${place.statePath} — run init first`);
+  const latestReceiptFile = (state.seq ?? 0) > 0
+    ? findReceipt(place, state.seq)
+    : null;
+  let latestReceipt = null;
+  if (latestReceiptFile) {
+    try {
+      latestReceipt = {
+        ...JSON.parse(readFileSync(latestReceiptFile, "utf8")),
+        receipt_file: latestReceiptFile,
+      };
+    } catch {
+      latestReceipt = { unreadable: latestReceiptFile };
+    }
+  }
+  const forks = state.forked ?? [];
   emit(
     {
       ok: true,
@@ -1466,9 +1481,11 @@ const runStatus = () => {
       transcripts: state.transcripts ?? place.transcripts,
       session_known: sessionKnown(state.partner, state.sid, place.root),
       in_flight: readMarker(place.lockPath),
+      latest_receipt: latestReceipt,
       grok_cancelled_consecutive: state.grok_cancelled_consecutive ?? 0,
       pending_fork: state.pending_fork ?? null,
-      forked: state.forked ?? [],
+      forked: forks,
+      lineage: { current_sid: state.sid, forks },
     },
     0,
   );

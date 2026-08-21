@@ -957,6 +957,10 @@ test("a scheduled Grok fork commits only after the new session is proved", () =>
     forked_at: status.forked[0].forked_at,
     successor_sid: scheduled.pending_sid,
   });
+  assert.deepEqual(status.lineage, {
+    current_sid: scheduled.pending_sid,
+    forks: status.forked,
+  });
   const resumed = run("ok", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("again")).receipt;
   assert.equal(resumed.status, "replied");
   assert.ok(invocations()[0].argv.includes(scheduled.pending_sid));
@@ -1482,6 +1486,10 @@ test("status reports the session and end trashes it", () => {
   const status = run("ok", "claude", "status", "--repo", repo).receipt;
   assert.equal(status.sid, CODEX_SID);
   assert.equal(status.seq, 1);
+  assert.equal(status.latest_receipt.status, "replied");
+  assert.equal(status.latest_receipt.seq, 1);
+  assert.match(status.latest_receipt.receipt_file, /0001-task-receipt\.json$/u);
+  assert.deepEqual(status.lineage, { current_sid: CODEX_SID, forks: [] });
   assert.equal(status.partner, "codex");
   const ended = run("ok", "claude", "end", "--repo", repo).receipt;
   assert.equal(ended.ok, true);

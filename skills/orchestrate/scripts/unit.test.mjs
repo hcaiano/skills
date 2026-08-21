@@ -52,6 +52,11 @@ const statePath = join(gitDir, "fake-pair.json");
 const counterPath = join(gitDir, "fake-pair-counter");
 const inFlight = join(gitDir, "fake-in-flight");
 const read = () => existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : null;
+const latestReceipt = (state) => {
+  if (!state || state.seq < 1) return null;
+  const receipt = join(gitDir, "pair", "transcripts", String(state.seq).padStart(4, "0") + "-task-receipt.json");
+  return existsSync(receipt) ? {...JSON.parse(readFileSync(receipt, "utf8")), receipt_file:receipt} : null;
+};
 const emit = (value, code = 0) => { console.log(JSON.stringify(value)); process.exit(code); };
 if (command === "init") {
   const current = read();
@@ -61,7 +66,7 @@ if (command === "init") {
   const count = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) + 1 : 1;
   writeFileSync(counterPath, String(count));
   const baseSid = "sid-" + partner + "-" + gitDir.split("/").at(-1);
-  const state = {ok:true,sid:baseSid + (count === 1 ? "" : "-" + count),partner,role:"executor",model:option("model"),effort:option("effort"),seq:0};
+  const state = {ok:true,sid:baseSid + (count === 1 ? "" : "-" + count),partner,role:"executor",model:option("model"),effort:option("effort"),seq:0,forked:[]};
   writeFileSync(statePath, JSON.stringify(state));
   if (process.env.FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER === partner) emit({...state,model:"forced-wrong-model"});
   emit(state);
@@ -83,7 +88,16 @@ if (command === "send") {
 if (command === "status") {
   const state = read();
   if (!state) emit({ok:false,reason:"no pair"}, 1);
-  emit({...state,session_known:true,in_flight:existsSync(inFlight) ? {seq:state.seq,pid:456} : null});
+  emit({...state,session_known:true,in_flight:existsSync(inFlight) ? {seq:state.seq,pid:456} : null,latest_receipt:latestReceipt(state),lineage:{current_sid:state.sid,forks:state.forked || []}});
+}
+if (command === "fork") {
+  const state = read();
+  if (!state) emit({ok:false,reason:"no pair"}, 1);
+  const successor = state.sid + "-fork";
+  state.forked = [...(state.forked || []), {sid:state.sid,forked_at:"2026-08-21T00:00:00.000Z",successor_sid:successor}];
+  state.sid = successor;
+  writeFileSync(statePath, JSON.stringify(state));
+  emit({...state,lineage:{current_sid:state.sid,forks:state.forked}});
 }
 if (command === "end") {
   if (existsSync(inFlight)) emit({ok:false,reason:"in flight"}, 1);
@@ -264,6 +278,64 @@ test("fresh list and status reconstruct the unit from disk", () => {
   assert.equal(status.status, 0);
   assert.equal(status.output.unit.observed.worktree.branch, "feat/one");
   assert.equal(status.output.unit.observed.pair.session_known, true);
+});
+
+test("status advances a recorded pair sid through public fork lineage", () => {
+  const id = "fork-status";
+  const created = invoke(createArgs(id, "grok"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const oldSid = created.output.unit.pair.sid;
+  const worktree = join(root, `worktree-${id}`);
+  const forked = spawnSync(process.execPath, [pairScript, "fork", "--repo", worktree], {
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(forked.status, 0, forked.stderr);
+  const successor = JSON.parse(forked.stdout).sid;
+  assert.notEqual(successor, oldSid);
+
+  const status = invoke(["status", "--repo", repository, "--unit", id]);
+  assert.equal(status.status, 0, status.stderr || JSON.stringify(status.output));
+  assert.equal(status.output.unit.pair.sid, successor);
+  assert.equal(status.output.unit.observed.pair.sid, successor);
+});
+
+test("restaff ends the reachable head of a forked pair", () => {
+  const id = "fork-restaff";
+  const created = invoke(createArgs(id, "grok"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const worktree = join(root, `worktree-${id}`);
+  const forked = spawnSync(process.execPath, [pairScript, "fork", "--repo", worktree], {
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(forked.status, 0, forked.stderr);
+  const successor = JSON.parse(forked.stdout).sid;
+
+  const restaffed = invoke(restaffArgs(id, "codex"));
+  assert.equal(restaffed.status, 0, restaffed.stderr || JSON.stringify(restaffed.output));
+  assert.equal(restaffed.output.unit.staffing.current.partner, "codex");
+  assert.equal(restaffed.output.unit.staffing.history[0].checkpoint.pair_sid, successor);
+});
+
+test("an unrelated live pair sid is refused by status and restaff", () => {
+  const id = "unrelated-sid";
+  const created = invoke(createArgs(id));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const worktree = join(root, `worktree-${id}`);
+  const gitDir = git(worktree, "rev-parse", "--absolute-git-dir");
+  const fakeStatePath = join(gitDir, "fake-pair.json");
+  const state = JSON.parse(readFileSync(fakeStatePath, "utf8"));
+  state.sid = "sid-from-an-unrelated-session";
+  state.forked = [];
+  writeFileSync(fakeStatePath, JSON.stringify(state));
+
+  const status = invoke(["status", "--repo", repository, "--unit", id]);
+  assert.notEqual(status.status, 0);
+  assert.match(status.output.reason, /pair sid differs/u);
+  const restaffed = invoke(restaffArgs(id));
+  assert.notEqual(restaffed.status, 0);
+  assert.match(restaffed.output.reason, /pair sid differs/u);
 });
 
 test("create refuses duplicate unit, branch, worktree, and same-harness partner", () => {
@@ -582,10 +654,10 @@ test("restaff recovery claims the first target for a legacy failed record", () =
 
 test("legacy restaff recovery adopts a live target with a stale recorded sid", () => {
   const cases = [
-    ["restaff-legacy-live-zero", { FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER: "grok" }, 0],
-    ["restaff-legacy-live-one", { FAKE_PAIR_BAD_SEND_AFTER_START: "grok" }, 1],
+    ["restaff-legacy-live-zero", { FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER: "grok" }],
+    ["restaff-legacy-live-one", { FAKE_PAIR_BAD_SEND_AFTER_START: "grok" }],
   ];
-  for (const [id, environment, expectedSeq] of cases) {
+  for (const [id, environment] of cases) {
     const created = invoke(createArgs(id));
     assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
     const oldSid = created.output.unit.pair.sid;
@@ -602,9 +674,8 @@ test("legacy restaff recovery adopts a live target with a stale recorded sid", (
     writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
 
     const before = invoke(["status", "--repo", repository, "--unit", id]);
-    assert.equal(before.output.unit.observed.pair.partner, "grok");
-    assert.equal(before.output.unit.observed.pair.seq, expectedSeq);
-    assert.notEqual(before.output.unit.observed.pair.sid, oldSid);
+    assert.notEqual(before.status, 0);
+    assert.match(before.output.reason, /pair (sid|staffing) differs/u);
 
     const resumed = invoke(restaffArgs(id));
     assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));

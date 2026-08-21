@@ -250,22 +250,45 @@ const pairStatus = (worktree) => {
   }
 };
 
-const latestReceipt = (worktree) => {
-  if (!worktree || !existsSync(worktree)) return null;
-  const gitDir = git(worktree, "rev-parse", "--absolute-git-dir");
-  if (gitDir.status !== 0) return null;
-  const transcripts = join(gitDir.stdout.trim(), "pair", "transcripts");
-  if (!existsSync(transcripts)) return null;
-  const receipts = readdirSync(transcripts)
-    .filter((name) => /^\d{4}-.+-receipt\.json$/u.test(name))
-    .sort();
-  if (receipts.length === 0) return null;
-  const receiptFile = join(transcripts, receipts.at(-1));
-  try {
-    return { ...JSON.parse(readFileSync(receiptFile, "utf8")), receipt_file: receiptFile };
-  } catch {
-    return { unreadable: receiptFile };
+const lineageForks = (status) =>
+  status.lineage?.forks ?? status.forked ?? [];
+
+const lineageReaches = (status, recordedSid) => {
+  if (!recordedSid || !status?.sid) return false;
+  let sid = recordedSid;
+  const seen = new Set();
+  while (sid && !seen.has(sid)) {
+    if (sid === status.sid) return true;
+    seen.add(sid);
+    sid = lineageForks(status).find((entry) => entry.sid === sid)?.successor_sid ?? null;
   }
+  return false;
+};
+
+const reconcilePairHead = (record, status) => {
+  if (!record.pair?.sid || !status?.ok) return { changed: false };
+  if (!lineageReaches(status, record.pair.sid)) {
+    return {
+      changed: false,
+      error: `unit ${record.unit_id} pair sid differs: expected ${record.pair.sid}, observed ${status.sid}`,
+    };
+  }
+  let changed = false;
+  if (record.pair.sid !== status.sid) {
+    record.pair.sid = status.sid;
+    changed = true;
+  }
+  const latestSeq = status.in_flight?.seq ?? status.seq ?? record.pair.latest_seq ?? 0;
+  if (record.pair.latest_seq !== latestSeq) {
+    record.pair.latest_seq = latestSeq;
+    changed = true;
+  }
+  const receiptFile = status.latest_receipt?.receipt_file ?? null;
+  if (receiptFile && record.pair.latest_receipt_file !== receiptFile) {
+    record.pair.latest_receipt_file = receiptFile;
+    changed = true;
+  }
+  return { changed };
 };
 
 const pullRequests = (repo, branch) => {
@@ -300,14 +323,14 @@ const worktreeRows = (repo) => {
   return rows;
 };
 
-const describe = (place, record) => {
+const describe = (place, record, observedPair = pairStatus(record.worktree)) => {
   const worktree = worktreeRows(place.root).find((row) => row.path === record.worktree) ?? null;
   return {
     ...record,
     observed: {
       worktree,
-      pair: pairStatus(record.worktree),
-      latest_receipt: latestReceipt(record.worktree),
+      pair: observedPair,
+      latest_receipt: observedPair.ok ? observedPair.latest_receipt ?? null : null,
       pull_requests: pullRequests(record.worktree && existsSync(record.worktree) ? record.worktree : place.root, record.branch),
     },
   };
@@ -619,8 +642,10 @@ const create = (options) => {
         ) {
           throw new Error(`unit ${id} has an unexpected started pair in phase initializing-pair`);
         }
-        if (record.pair?.sid && currentPair.sid !== record.pair.sid) {
-          throw new Error(`unit ${id} pair sid differs: expected ${record.pair.sid}, observed ${currentPair.sid}`);
+        if (record.pair?.sid) {
+          const reconciled = reconcilePairHead(record, currentPair);
+          if (reconciled.error) throw new Error(reconciled.error);
+          if (reconciled.changed) writeRecord(path, record);
         }
         if (resumedFrom === "starting") {
           if (!record.pair?.sid) throw new Error(`unit ${id} starting record has no pair sid`);
@@ -658,9 +683,8 @@ const create = (options) => {
 
       currentPair = pairStatus(record.worktree);
       if (!currentPair.ok) throw new Error(`cannot prove initialized pair: ${currentPair.reason}`);
-      if (currentPair.sid !== record.pair.sid) {
-        throw new Error(`unit ${id} pair sid changed before task start`);
-      }
+      const reconciled = reconcilePairHead(record, currentPair);
+      if (reconciled.error) throw new Error(reconciled.error);
       if ((currentPair.seq ?? 0) === 0 && !currentPair.in_flight) {
         const running = pair("send", record.worktree, [
           "--kind", "task", "--body-file", taskFile, "--background",
@@ -670,7 +694,7 @@ const create = (options) => {
         record.pair.latest_receipt_file = running.receipt_file;
       } else {
         record.pair.latest_seq = currentPair.in_flight?.seq ?? currentPair.seq;
-        const receipt = latestReceipt(record.worktree);
+        const receipt = currentPair.latest_receipt ?? null;
         if (receipt?.receipt_file) record.pair.latest_receipt_file = receipt.receipt_file;
       }
       record.lifecycle = "working";
@@ -743,8 +767,25 @@ const list = (options) => {
 
 const status = (options) => {
   const place = repository(options.repo);
-  const { record } = readRecord(place, unitId(options.unit));
-  return { ok: true, unit: describe(place, record) };
+  const id = unitId(options.unit);
+  return withRegistryLock(place, () => {
+    const { path, record } = readRecord(place, id);
+    const observedPair = pairStatus(record.worktree);
+    if (observedPair.ok && record.pair?.sid) {
+      if (pairMatchesStaffing(observedPair, record.staffing.current)) {
+        const reconciled = reconcilePairHead(record, observedPair);
+        if (reconciled.error) fail(reconciled.error, { recorded: record.pair.sid, observed: observedPair.sid });
+        if (reconciled.changed) writeRecord(path, record);
+      } else if (!(
+        recoverableRestaffPhases.has(record.lifecycle)
+        && record.pending_staffing
+        && pairMatchesStaffing(observedPair, record.pending_staffing)
+      )) {
+        fail(`unit ${id} observed pair staffing differs from its recorded pair`);
+      }
+    }
+    return { ok: true, unit: describe(place, record, observedPair) };
+  });
 };
 
 const recoverableRestaffPhases = new Set(["restaffing", "restaff-failed"]);
@@ -805,17 +846,19 @@ const restaff = (options) => {
       const currentStatus = pairStatus(record.worktree);
       if (!currentStatus.ok) fail(`cannot prove pair state for unit ${id}`, currentStatus);
       if (currentStatus.in_flight) fail(`unit ${id} has an in-flight turn`, currentStatus.in_flight);
-      if (record.pair?.sid && currentStatus.sid !== record.pair.sid) {
-        fail(`unit ${id} pair sid differs before restaff`, {
-          recorded: record.pair.sid,
-          observed: currentStatus.sid,
-        });
+      if (!pairMatchesStaffing(currentStatus, record.staffing.current)) {
+        fail(`unit ${id} pair staffing differs before restaff`);
+      }
+      const reconciled = reconcilePairHead(record, currentStatus);
+      if (reconciled.error) {
+        fail(reconciled.error, { recorded: record.pair?.sid, observed: currentStatus.sid });
       }
       checkpoint = {
+        pair_sid: currentStatus.sid,
         head: gitChecked(record.worktree, ["rev-parse", "HEAD"], "read unit HEAD").stdout.trim(),
         diff_stat: gitChecked(record.worktree, ["diff", "--stat"], "read unit diff").stdout.trim(),
         worktree_status: gitChecked(record.worktree, ["status", "--short"], "read unit worktree status").stdout.trim(),
-        receipt: latestReceipt(record.worktree),
+        receipt: currentStatus.latest_receipt ?? null,
         at: new Date().toISOString(),
       };
       const previous = { ...record.staffing.current, ended_at: checkpoint.at, checkpoint };
@@ -836,9 +879,10 @@ const restaff = (options) => {
           record.restaff_phase = "initializing-target";
         } else if (
           record.resources.pair &&
-          record.pair?.sid === currentStatus.sid &&
           pairMatchesStaffing(currentStatus, record.staffing.current)
         ) {
+          const reconciled = reconcilePairHead(record, currentStatus);
+          if (reconciled.error) throw new Error(reconciled.error);
           record.restaff_phase = "ending-old";
         } else if (pairMatchesStaffing(currentStatus, record.pending_staffing)) {
           record.restaff_phase = "starting-target";
@@ -856,9 +900,8 @@ const restaff = (options) => {
             throw new Error(`unit ${id} old pair staffing differs during restaff recovery`);
           }
           if (currentStatus.in_flight) throw new Error(`unit ${id} has an in-flight old pair turn`);
-          if (record.pair?.sid && currentStatus.sid !== record.pair.sid) {
-            throw new Error(`unit ${id} old pair sid differs during restaff recovery`);
-          }
+          const reconciled = reconcilePairHead(record, currentStatus);
+          if (reconciled.error) throw new Error(reconciled.error);
           pair("end", record.worktree);
         } else if (!pairIsAbsent(currentStatus)) {
           throw new Error(`cannot prove old pair state while restaffing unit ${id}: ${currentStatus.reason}`);
@@ -906,9 +949,8 @@ const restaff = (options) => {
         throw new Error(`cannot prove pending target pair for unit ${id}`);
       }
       if (!record.pair?.sid) record.pair = { sid: currentStatus.sid, latest_seq: currentStatus.seq ?? 0 };
-      if (currentStatus.sid !== record.pair.sid) {
-        throw new Error(`unit ${id} pending target pair sid differs during restaff recovery`);
-      }
+      const reconciledTarget = reconcilePairHead(record, currentStatus);
+      if (reconciledTarget.error) throw new Error(reconciledTarget.error);
       if ((currentStatus.seq ?? 0) > 1) {
         throw new Error(`unit ${id} pending pair has unexpected seq ${currentStatus.seq}`);
       }
@@ -929,9 +971,11 @@ const restaff = (options) => {
       let sendError = null;
       try {
         currentStatus = pairStatus(record.worktree);
-        if (!currentStatus.ok || currentStatus.sid !== record.pair.sid) {
+        if (!currentStatus.ok || !pairMatchesStaffing(currentStatus, record.pending_staffing)) {
           throw new Error(`cannot prove pending pair before restaff send for unit ${id}`);
         }
+        const reconciledTarget = reconcilePairHead(record, currentStatus);
+        if (reconciledTarget.error) throw new Error(reconciledTarget.error);
         if ((currentStatus.seq ?? 0) === 0 && !currentStatus.in_flight) {
           running = pair("send", record.worktree, ["--kind", "task", "--body-file", checkpointPath, "--background"]);
           if (running.status !== "running") {
@@ -960,7 +1004,7 @@ const restaff = (options) => {
         selected_at: new Date().toISOString(),
       };
       record.pair.latest_seq = running.in_flight?.seq ?? running.seq ?? record.pair.latest_seq;
-      const receipt = latestReceipt(record.worktree);
+      const receipt = currentStatus.latest_receipt ?? null;
       const receiptFile = running.receipt_file ?? receipt?.receipt_file;
       if (receiptFile) record.pair.latest_receipt_file = receiptFile;
       record.lifecycle = "working";
