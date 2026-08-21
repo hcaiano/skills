@@ -38,6 +38,7 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -46,6 +47,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const POLL_MS = 2000;
 const WAIT_POLL_MS = 100;
@@ -1468,7 +1470,17 @@ const COMMANDS = {
   _worker: runWorker,
 };
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+let invokedAsMain = false;
+try {
+  invokedAsMain = Boolean(
+    process.argv[1]
+      && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)),
+  );
+} catch {
+  // A missing or unreadable argv path cannot be this module's entry point.
+}
+
+if (invokedAsMain) {
   const run = COMMANDS[command];
   if (!run) {
     fail(

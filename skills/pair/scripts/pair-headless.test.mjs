@@ -11,6 +11,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -203,13 +204,13 @@ const env = (mode, self = "claude") => ({
   GROK_HOME: "",
 });
 
-const run = (mode, self, ...args) => {
+const runThrough = (entry, mode, self, ...args) => {
   writeFileSync(log, "");
   try {
     return {
       ok: true,
       receipt: JSON.parse(
-        execFileSync(process.execPath, [helper, ...args], {
+        execFileSync(process.execPath, [entry, ...args], {
           encoding: "utf8",
           env: env(mode, self),
           stdio: ["ignore", "pipe", "pipe"],
@@ -221,6 +222,7 @@ const run = (mode, self, ...args) => {
     return { ok: false, receipt: JSON.parse(error.stdout) };
   }
 };
+const run = (mode, self, ...args) => runThrough(helper, mode, self, ...args);
 const invocations = () =>
   readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
 
@@ -254,6 +256,28 @@ test("the role sets the default lease and any turn may override it", () => {
   assert.deepEqual(resolveWrite("peer", { write: true }), { write: true });
   assert.deepEqual(resolveWrite("executor", { readOnly: true }), { write: false });
   assert.match(resolveWrite("peer", { write: true, readOnly: true }).error, /contradict/u);
+});
+
+test("the command dispatcher runs when the helper is invoked through a symlink", () => {
+  const linkedHelper = join(root, "pair-headless-linked.mjs");
+  symlinkSync(helper, linkedHelper);
+  const repo = newRepo("symlink-dispatch");
+
+  const created = runThrough(linkedHelper, "ok", "claude", "init", "--repo", repo, "--partner", "codex");
+  assert.equal(created.receipt.status, "created");
+  const sent = runThrough(
+    linkedHelper,
+    "ok",
+    "claude",
+    "send",
+    "--repo",
+    repo,
+    "--kind",
+    "task",
+    "--body-file",
+    bodyFile("run through the link"),
+  );
+  assert.equal(sent.receipt.status, "replied");
 });
 
 test("a headless pair requires a git repository", () => {
