@@ -5,7 +5,7 @@
 // delivery receipt beyond the run receipt: a turn either produced a reply or it
 // did not, and the transcript is the evidence either way.
 //
-//   node pair-headless.mjs init   --repo <root> --partner claude|codex|cursor|grok
+//   node pair-headless.mjs init   --repo <root> --partner claude|codex|cursor|grok|opencode
 //                                 [--model <name>] [--effort <level>] [--role peer|executor]
 //   node pair-headless.mjs send   --repo <root> --kind <kind> --body-file <path> [--write|--read-only]
 //                                 [--background]
@@ -101,7 +101,7 @@ const flag = (name) => argv.includes(`--${name}`);
 
 // --- identity ---------------------------------------------------------------
 
-export const AGENT_KINDS = ["claude", "codex", "cursor", "grok"];
+export const AGENT_KINDS = ["claude", "codex", "cursor", "grok", "opencode"];
 const kindList = AGENT_KINDS.join("|");
 
 // Which CLI is running this helper. Detection is best-effort — it only has the
@@ -109,6 +109,7 @@ const kindList = AGENT_KINDS.join("|");
 // decides the partner on its own: it exists to catch a same-CLI pairing, which
 // produces an echo rather than a peer.
 export const detectSelf = (env = process.env) => {
+  if (env.OPENCODE_CLIENT || env.OPENCODE_PID || env.OPENCODE_WORKSPACE_ID) return "opencode";
   if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
   if (env.CODEX_SANDBOX || env.CODEX_THREAD_ID || env.CODEX_HOME) return "codex";
   if (env.CURSOR_AGENT || env.CURSOR_AGENT_CHAT_ID) return "cursor";
@@ -116,7 +117,7 @@ export const detectSelf = (env = process.env) => {
   return null;
 };
 
-// The partner is always chosen, never derived: with four CLIs there is no
+// The partner is always chosen, never derived: with several CLIs there is no
 // "opposite" to fall back on. The only rule is that it differs from the lead.
 export const resolvePartner = (requested, env = process.env) => {
   const self = detectSelf(env);
@@ -367,6 +368,9 @@ export const sessionKnown = (partner, sid, root, env = process.env, home = homed
   if (partner === "cursor") {
     return storeHolds(join(home, ".cursor", "chats"), sid);
   }
+  // OpenCode stores sessions in a database. A filesystem walk cannot prove a
+  // session absent, so keep the recorded sid and let the next resume decide.
+  if (partner === "opencode") return true;
   const projects = join(home, ".claude", "projects");
   const project = join(projects, root.replace(/[^A-Za-z0-9]/gu, "-"));
   try {
@@ -393,9 +397,9 @@ export const sessionKnown = (partner, sid, root, env = process.env, home = homed
 // --- partner turns ----------------------------------------------------------
 
 // Reasoning effort reaches each CLI through a different door: Grok and Claude
-// take flags, Codex a config override, and Cursor a bracket suffix inside the
-// model name.
-export const EFFORT_SUPPORT = { claude: true, codex: true, cursor: true, grok: true };
+// take flags, Codex a config override, Cursor a bracket suffix inside the
+// model name, and OpenCode a model variant.
+export const EFFORT_SUPPORT = { claude: true, codex: true, cursor: true, grok: true, opencode: true };
 
 // Cursor parameterizes the model itself, so an effort with no model has nowhere
 // to go and the caller has to name one.
@@ -483,6 +487,23 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
       promptVia: "stdin",
     };
   }
+  if (partner === "opencode") {
+    return {
+      bin: "opencode",
+      args: [
+        "run",
+        "--format",
+        "json",
+        "--dir",
+        root,
+        ...(resume ? ["--session", sid] : []),
+        ...(model && !resume ? ["-m", model] : []),
+        ...(effort ? ["--variant", effort] : []),
+        ...(write ? ["--auto"] : ["--agent", "plan"]),
+      ],
+      promptVia: "argv",
+    };
+  }
   // Grok takes the prompt from a file rather than stdin, and accepts the
   // session id for a NEW conversation — so the pair names the session itself
   // and never has to find it in the output.
@@ -516,6 +537,7 @@ export const parseSessionId = (partner, transcript) => {
     return typeof started?.thread_id === "string" ? started.thread_id : null;
   }
   if (partner === "cursor") return parseCursorSessionId(transcript);
+  if (partner === "opencode") return parseOpenCodeStream(transcript).sessionId;
   if (partner === "grok") return null; // pre-generated, never parsed
   return parseClaudeResult(transcript)?.session_id ?? null;
 };
@@ -594,6 +616,28 @@ export const parseGrokStream = (transcript) => {
   };
 };
 
+export const parseOpenCodeStream = (transcript) => {
+  const events = parseJsonObjects(transcript);
+  const reply = events
+    .filter(
+      (event) =>
+        event.type === "text"
+        && event.part?.type === "text"
+        && typeof event.part.text === "string",
+    )
+    .map((event) => event.part.text)
+    .join("");
+  const session = events.find(
+    (event) =>
+      typeof event.sessionID === "string"
+      || typeof event.part?.sessionID === "string",
+  );
+  return {
+    reply: reply.trim() || null,
+    sessionId: session?.sessionID ?? session?.part?.sessionID ?? null,
+  };
+};
+
 // The stream carries many objects and several of them hold a session_id — the
 // `system` init event does too — so the reply comes from the final
 // `type: "result"` event and nothing else. The session id falls back to any
@@ -621,7 +665,7 @@ export const parseClaudeResult = (transcript) => {
 };
 
 // Codex is the only partner that writes the reply itself (`-o`); for the other
-// three the reply has to be lifted out of the run's own output and put where
+// partners the reply has to be lifted out of the run's own output and put where
 // the caller was told to read it.
 export const extractReply = (partner, replyFile, transcript) => {
   if (partner === "codex") {
@@ -667,6 +711,7 @@ export const extractReply = (partner, replyFile, transcript) => {
       .join("");
     return text?.trim() || null;
   }
+  if (partner === "opencode") return parseOpenCodeStream(transcript).reply;
   return parseGrokStream(transcript).reply;
 };
 
@@ -881,12 +926,13 @@ const runInit = () => {
   const { idleMs, totalMs } = deadlines();
   const prompt = bootstrapPrompt({ self, partner, root: place.root, role });
   if (promptVia === "file") writeFileSync(promptFile, `${prompt}\n`);
+  const invocationArgs = promptVia === "argv" ? [...args, prompt] : args;
 
   supervise({
     bin,
-    args,
+    args: invocationArgs,
     cwd: place.root,
-    prompt: promptVia === "file" ? "" : prompt,
+    prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath,
     idleMs,
     totalMs,
@@ -1100,8 +1146,10 @@ const runWorker = () => {
     root: place.root,
     writableRoot: place.writableRoot,
     write,
-    effort: state.partner === "claude" ? state.effort : null,
+    effort: ["claude", "opencode"].includes(state.partner) ? state.effort : null,
   });
+  const prompt = readFileSync(paths.promptFile, "utf8");
+  const invocationArgs = promptVia === "argv" ? [...args, prompt] : args;
 
   const base = {
     seq,
@@ -1138,9 +1186,9 @@ const runWorker = () => {
 
   supervise({
     bin,
-    args,
+    args: invocationArgs,
     cwd: place.root,
-    prompt: promptVia === "file" ? "" : readFileSync(paths.promptFile, "utf8"),
+    prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath: paths.transcriptPath,
     idleMs,
     totalMs,
