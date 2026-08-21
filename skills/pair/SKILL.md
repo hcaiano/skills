@@ -1,16 +1,19 @@
 ---
 name: pair
-description: "Persistent two-agent pairing across claude, codex, cursor, and grok, in a Herdr tab or headless outside it. Use for live peer work, workflows requesting a pair, any inbound `[agent ...]` / `[herdr-pair control ...]` line, resuming a pair after context compaction, or pairing with another CLI when Herdr is absent."
+description: "Persistent two-agent pairing across claude, codex, cursor, grok, and opencode, in a Herdr tab or headless outside it. Use for live peer work, workflows requesting a pair, any inbound `[agent ...]` / `[herdr-pair control ...]` line, resuming a pair after context compaction, or pairing with another CLI when Herdr is absent."
 ---
 
 # Pair
 
 Pair two agents on one task: you are the **lead**, and the partner is one of
-`claude`, `codex`, `cursor`, or `grok` — any of them except the CLI you are
+`claude`, `codex`, `cursor`, `grok`, or `opencode` — any of them except the CLI you are
 already running, because two panes of one CLI echo rather than review. Keep the
 pair and its `sid` alive across tasks, accepted work cycles, and context
 compaction, naming its `sid` in every command — one lead can run several
 pairs at once. Keep protocol headers and identifiers literal.
+
+The refusal is based only on the CLI kind. Two different harnesses may use the
+same underlying model or provider and still form a valid pair.
 
 Two backends carry the same protocol. Inside Herdr the partner is a visible
 pane the user can read and interject in; outside it the partner is a persistent
@@ -28,16 +31,18 @@ the pair, not by restarting its pane.
 With no pair to resume, ask the user in plain chat text — no structured-question
 tool needed — for three things, and start nothing until they answer:
 
-- **Partner**: which of the four CLIs, other than yours.
+- **Partner**: which of the five CLIs, other than yours.
 - **Model**: `CLI default`, or any model name they name. When choosing a
   model, effort, or pool, read [`references/models.md`](references/models.md);
   it owns the risk, speed, context, catalog, and effort rubric. For a cursor
-  partner run `cursor-agent --list-models`; for Grok run `grok models`; for the
-  others take the user's answer as given.
+  partner run `cursor-agent --list-models`; for Grok run `grok models`; for
+  OpenCode run `opencode models`; for the others take the user's answer as
+  given.
 - **Effort**: only for a partner that exposes it — Claude Code
   (`--effort low|medium|high|xhigh|max`), grok (`--reasoning-effort`), codex
   (`model_reasoning_effort`), or cursor (an `[effort=…]` suffix on the model
-  name, so it needs a model too).
+  name, so it needs a model too), or OpenCode (`--variant` on headless
+  `opencode run`; its Herdr TUI does not expose this flag).
 
 Then ask for the **role**, which sets who holds the write leases by default:
 

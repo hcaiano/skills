@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const pairScript = process.env.ORCHESTRATE_PAIR_SCRIPT ??
   join(scriptDir, "../../pair/scripts/pair-headless.mjs");
-const partnerKinds = new Set(["claude", "codex", "cursor", "grok"]);
+const partnerKinds = new Set(["claude", "codex", "cursor", "grok", "opencode"]);
 const mergePolicies = new Set(["auto", "hold"]);
 const timeoutFromEnvironment = (name, fallback) => {
   const value = Number(process.env[name]);
@@ -376,7 +376,7 @@ const validateStaffing = (options, command, { allowLegacyCursor = false } = {}) 
     if (!options[key]) fail(`${command} requires --${key}`, null, 2);
   }
   if (!partnerKinds.has(options.lead) || !partnerKinds.has(options.partner)) {
-    fail("--lead and --partner must be claude, codex, cursor, or grok", null, 2);
+    fail("--lead and --partner must be claude, codex, cursor, grok, or opencode", null, 2);
   }
   if (options.lead === options.partner) {
     fail("the partner arena must differ from the orchestrator harness", null, 2);

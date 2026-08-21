@@ -1,6 +1,7 @@
 # Herdr backend
 
-Pair two agents — any two of `claude`, `codex`, `cursor`, and `grok`, never
+Pair two agents — any two of `claude`, `codex`, `cursor`, `grok`, and
+`opencode`, never
 twice the same kind — in one Herdr tab. A lead pane may hold several such
 pairs at once, each its own `sid`-scoped session. The user can read and interject in
 either pane. The protocol, kinds, write leases, broken-checkout announcements,
@@ -57,7 +58,9 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    ```
 
    The model and effort reach the new pane as the partner CLI's own arguments
-   after `--`, which only a pane being created can take. `--autonomy full`
+   after `--`, which only a pane being created can take. OpenCode's TUI accepts
+   `-m <provider/model>`, but it does not expose the headless `--variant` flag;
+   an OpenCode Herdr spawn therefore refuses `--effort`. `--autonomy full`
    launches the partner past its permission prompts (each CLI through its own
    flag) — required for an unattended run, since a pane has no per-turn
    permission switch. The spawn retries a still-starting shell and closes its
@@ -82,7 +85,7 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    `executor` partner holds the write leases because the protocol says so
    (spawn with `--autonomy full` when the partner must also clear its own
    CLI's permission prompts unattended).
-   A session written before the four-kind schema is refused with the exact
+   A session written before the universal pair schema is refused with the exact
    `end … --stale true` command that clears it; there is no migration.
    Record its exact `sid` as `PAIR_SID`. Every command binds to it, which is
    both what keeps a lead's concurrent pairs apart and what stops a wrong
@@ -113,14 +116,15 @@ model context has been compacted.
 
 The sender gives a busy partner a short grace period, then delivers anyway.
 Measured on Herdr 0.8.0, Claude accepts a mid-turn prompt atomically, while a
-multi-line prompt to Codex still needs Enter. Cursor and Grok are unmeasured
-here and take the conservative Codex-shaped path: one prompt, the Enter
-protection, and proof only from the `receive` ACK. When the partner is still working,
-the helper sends exactly one `agent prompt` with the header, control line, and
-body, then runs the harmless Enter loop. It skips the visible-arrival check and
-the full resend because that status has no reliable composer signal and a
-resend may duplicate a queued body. Only `receive` proves the exact sequence in the
-pair's own session file; without that ACK the receipt says the delivery is unproven.
+multi-line prompt to Codex still needs Enter. Cursor, Grok, and OpenCode are
+unmeasured here and take the conservative Codex-shaped path: one prompt, the
+Enter protection, and proof only from the `receive` ACK. When the partner is still working,
+the helper sends exactly one `agent prompt` with the header,
+control line, and body, then runs the harmless Enter loop. It skips the visible-arrival check and
+the full resend because that status has no reliable
+composer signal and a resend may duplicate a queued body. Only `receive`
+proves the exact sequence in the pair's own session file; without that ACK the
+receipt says the delivery is unproven.
 
 For an idle partner, the helper proves landing from the composer: the composer
 must first be seen to change, because a paste that never arrived and one already

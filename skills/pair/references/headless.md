@@ -27,9 +27,10 @@ precondition, and the directory does not need to use Git.
 Look for a pair to resume before creating one: `status --repo "$REPO_ROOT"`
 reports a recorded session, and `init` resumes it rather than replacing it.
 
-Require the partner CLI (`claude`, `codex`, `cursor-agent`, or `grok`) and
+Require the partner CLI (`claude`, `codex`, `cursor-agent`, `grok`, or
+`opencode`) and
 `trash` on `PATH`. The partner is chosen, never derived, and the helper refuses
-to pair a model with itself. For model, effort, and pool choices, read
+to pair a CLI kind with itself. For model, effort, and pool choices, read
 [`models.md`](models.md). Leave `--model` unset for the CLI default. Choose
 Codex effort explicitly from `low`, `high`, or `xhigh`; use the per-CLI rubric
 for the other effort controls.
@@ -55,9 +56,10 @@ from the state file.
 The helper records model and effort in session state. Claude receives
 `--effort low|medium|high|xhigh|max` on every invocation; Codex receives
 `model_reasoning_effort`, Grok `--reasoning-effort`, and Cursor an
-`[effort=…]` suffix inside `--model` (so Cursor needs a model). Resume keeps
-the recorded session and its settings; the CLI's own help is the authority for
-any value not named in [`models.md`](models.md).
+`[effort=…]` suffix inside `--model` (so Cursor needs a model). OpenCode
+receives `--variant <effort>` on every invocation. Resume keeps the recorded
+session and its settings; the CLI's own help is the authority for any value not
+named in [`models.md`](models.md).
 
 Then send the first `task`, splitting scopes and write leases as `SKILL.md`
 describes.
@@ -92,14 +94,14 @@ worktree that transcript path is `<git-dir>/pair/transcripts/`; for a plain
 directory it is under the fallback above. The worker releases the lock only
 after that rename. `wait` reads only a complete receipt:
 
+```bash
+node "$PAIR_SCRIPT" wait --repo "$REPO_ROOT" [--seq "$SEQ"]
+```
+
 A writable `kind=task` turn has a 45-minute default idle budget; every other
 turn and `init` use 20 minutes. An explicit `--idle-min` replaces that default.
 The session preamble tells the partner to keep tool output flowing during long
 turns, so useful activity resets the watchdog.
-
-```bash
-node "$PAIR_SCRIPT" wait --repo "$REPO_ROOT" [--seq "$SEQ"]
-```
 
 With no `--seq`, `wait` follows `state.seq`, not the in-flight marker, so a
 fast turn that already cleared its marker is still waitable. `--seq` selects an
@@ -136,9 +138,11 @@ applicable, `receipt_file`:
 
 The helper writes a reply file only for a nonempty extracted reply. Grok joins
 `text` deltas and leaves `thought` evidence in the transcript; Cursor uses its
-final successful `result`; Codex uses its `--json` event stream and output file.
+final successful `result`; OpenCode joins `text` parts from its raw JSON
+events; Codex uses its `--json` event stream and output file.
 The stream is the watchdog's liveness signal for Grok (`streaming-json`), Cursor
-(`stream-json`), Codex (`--json`), and Claude (`stream-json`).
+(`stream-json`), OpenCode (`--format json`), Codex (`--json`), and Claude
+(`stream-json`).
 
 After two consecutive proved Grok cancellations, the receipt advises a fork.
 The counter increments while the turn owns the lock and resets on the next
@@ -153,9 +157,9 @@ Schedule a fork after the cancellation advice:
 node "$PAIR_SCRIPT" fork --repo "$REPO_ROOT" [--retry]
 ```
 
-The command emits `status=fork-scheduled` and records the target. Forking is an
-That output means the fork runs on the next normal `send`; it does not run a
-turn by itself. Forking is an atomic transaction owned by that send. It records
+The command emits `status=fork-scheduled` and records the target. That output
+means the fork runs on the next normal `send`; it does not run a turn by itself.
+Forking is an atomic transaction owned by that send. It records
 `pending_fork` before starting, resumes the old session with
 `--resume <old-sid> --fork-session --session-id <new-sid>`, and puts the new sid
 in that turn's protocol header. State commits the new sid only after the
@@ -182,6 +186,8 @@ restrains the agent's edits without being an OS sandbox, and a Grok turn by the
 same kind of mode (`plan` or `acceptEdits`). A Cursor turn writes by default in
 `--print`, so its read-only turns are the ones carrying `--mode plan` — the
 mode restrains the agent, and is not an OS sandbox either.
+An OpenCode read-only turn selects the built-in `plan` agent. A writable turn
+uses `--auto`; this is OpenCode's permission control, not an OS sandbox.
 
 Every writable Codex turn resolves the Git common directory again and passes
 `sandbox_workspace_write.writable_roots=["<git-common-dir>"]` plus
@@ -220,7 +226,9 @@ rebuild state after compaction. Its `session_known` reports a positive absence
 only: `false` proves the CLI's session store was readable and did not hold this
 session, while `true` also covers a store that could not be read at all, so it
 is evidence of loss and never proof of health. It probes `~/.codex/sessions`,
-`~/.claude/projects`, `~/.grok/sessions`, and `~/.cursor/chats`.
+`~/.claude/projects`, `~/.grok/sessions`, and `~/.cursor/chats`. OpenCode keeps
+sessions in a database, so the helper cannot prove an OpenCode session absent
+with a filesystem walk; its next resumed turn is the authority.
 
 `end` trashes the session directory, and runs
 only when the user explicitly asks to end the pair. It refuses while an

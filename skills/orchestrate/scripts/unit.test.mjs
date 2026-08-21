@@ -274,6 +274,19 @@ test("create refuses duplicate unit, branch, worktree, and same-harness partner"
   const refused = invoke(sameHarness);
   assert.equal(refused.status, 2);
   assert.match(refused.output.reason, /differ from the orchestrator/u);
+
+  const sameOpenCode = createArgs("same-opencode", "opencode");
+  sameOpenCode[sameOpenCode.indexOf("--lead") + 1] = "opencode";
+  const refusedOpenCode = invoke(sameOpenCode);
+  assert.equal(refusedOpenCode.status, 2);
+  assert.match(refusedOpenCode.output.reason, /differ from the orchestrator/u);
+});
+
+test("OpenCode is a legal executor for a different harness", () => {
+  const created = invoke(createArgs("opencode-executor", "opencode"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.staffing.current.partner, "opencode");
+  assert.equal(created.output.unit.staffing.current.effort, "high");
 });
 
 test("cursor staffing uses the effort-specific live-catalog model without a separate effort", () => {

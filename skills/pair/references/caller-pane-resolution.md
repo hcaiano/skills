@@ -14,8 +14,9 @@ CALLER_PROOF=$(node "$CALLER_PROOF_SCRIPT" --as <agent-kind> --repo-root "$TASK_
 ```
 
 `--as` is the agent kind Herdr reports in `pane.agent` for your own pane —
-`claude`, `codex`, `cursor`, `grok`, or any other harness Herdr hosts. Pass the kind you
-actually are; the proof refuses a kind that does not match the pane it resolves.
+`claude`, `codex`, `cursor`, `grok`, `opencode`, or any other harness Herdr
+hosts. Pass the kind you actually are; the proof refuses a kind that does not
+match the pane it resolves.
 
 The helper walks your own process ancestry and looks for a pane whose live
 foreground processes include one of your ancestors. A parent process cannot be

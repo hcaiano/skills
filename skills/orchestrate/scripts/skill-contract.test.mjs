@@ -53,6 +53,8 @@ test("staffing matches difficulty and records its evidence", () => {
   assert.match(staffing, /current orchestrator CLI is not a legal partner/u);
   assert.match(staffing, /Haiku; Fable is advisor-only/u);
   assert.match(staffing, /Luna/u);
+  assert.match(staffing, /OpenCode/u);
+  assert.match(staffing, /opencode models/u);
   assert.match(staffing, /one-line reason/u);
   assert.match(staffing, /effort-specific name exactly as the live catalog prints/u);
   assert.match(staffing, /omit `--effort`/u);

@@ -39,22 +39,24 @@ test("the description carries every trigger", () => {
   ]) {
     assert.match(description, trigger);
   }
-  // The pair is no longer two fixed CLIs, and the description is where a
-  // cursor or grok user finds that out.
-  for (const kind of ["claude", "codex", "cursor", "grok"]) {
+  // The pair is no longer two fixed CLIs, and the description is where each
+  // supported harness finds that out.
+  for (const kind of ["claude", "codex", "cursor", "grok", "opencode"]) {
     assert.match(description, new RegExp(`\\b${kind}\\b`, "u"));
   }
   assert.doesNotMatch(description, /Claude-Codex/u);
 });
 
-test("the four kinds, the partner rule, and the roles are the same everywhere", () => {
-  const kinds = ["claude", "codex", "cursor", "grok"];
+test("the five kinds, the partner rule, and the roles are the same everywhere", () => {
+  const kinds = ["claude", "codex", "cursor", "grok", "opencode"];
   for (const kind of kinds) {
     assert.match(skill, new RegExp(`\`${kind}\``, "u"), `SKILL.md must name ${kind}`);
   }
   // Same CLI on both sides is the one combination that is refused, in prose
   // and in both helpers.
   assert.match(skill, /except the CLI you are\s+already running/u);
+  assert.match(skill, /refusal is based only on the CLI kind/u);
+  assert.match(skill, /same underlying model or provider/u);
   assert.match(helper, /refusing to pair \$\{self\.agent\} with itself/u);
   assert.match(headlessHelper, /refusing to pair \$\{self\} with itself/u);
   assert.deepEqual(
@@ -84,6 +86,7 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   // No hardcoded catalog: cursor's own list is the catalog.
   assert.match(skill, /cursor-agent --list-models/u);
   assert.match(skill, /grok models/u);
+  assert.match(skill, /opencode models/u);
   assert.match(skill, /`CLI default`/u);
   assert.match(skill, /references\/models\.md/u);
   assert.match(models, /Risk/u);
@@ -99,12 +102,14 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   assert.match(headlessBackend, /Claude receives\s+`--effort low\|medium\|high\|xhigh\|max`/u);
   assert.match(headlessHelper, /EFFORT_SUPPORT = \{ claude: true/u);
   assert.match(headlessBackend, /`\[effort=…\]` suffix inside `--model`/u);
+  assert.match(headlessBackend, /OpenCode\s+receives `--variant <effort>` on every invocation/u);
+  assert.match(models, /OpenCode[\s\S]*`--variant`/u);
 });
 
-test("cursor and grok delivery is documented as conservative, never as measured", () => {
+test("cursor, grok, and OpenCode delivery is documented as conservative", () => {
   assert.match(
     herdrBackend,
-    /Cursor and Grok are unmeasured\s+here and take the conservative Codex-shaped path/u,
+    /Cursor, Grok, and OpenCode are\s+unmeasured here and take the conservative Codex-shaped path/u,
   );
 });
 
@@ -214,7 +219,7 @@ test("the headless backend documents the helper's whole command surface", () => 
   assert.match(headlessBackend, /`~\/\.local\/state\/pair\/<basename>-<realpath-hash>\/`/u);
   assert.match(headlessBackend, /directory does not need to use Git/u);
   assert.match(headlessBackend, /GitHub remote is not a\s+precondition/u);
-  assert.match(headlessBackend, /the helper refuses\s+to pair a model with itself/u);
+  assert.match(headlessBackend, /the helper refuses\s+to pair a CLI kind with itself/u);
 });
 
 test("the headless backend discloses supervisor, fork, and stream contracts", () => {

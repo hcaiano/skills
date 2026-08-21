@@ -20,14 +20,16 @@ Direct unit partners have this floor:
 | Codex | `gpt-5.6-terra` | `gpt-5.6-sol` | Luna |
 | Cursor | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
 | Grok | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
+| OpenCode | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
 
 Use `CLI default` when no named model has better evidence. Do not infer quality,
 speed, or safety from a vendor label. Run live catalogs once per wave when
-Cursor or Grok is a candidate:
+Cursor, Grok, or OpenCode is a candidate:
 
 ```bash
 cursor-agent --list-models
 grok models
+opencode models
 ```
 
 ## Read capacity
@@ -45,8 +47,9 @@ out of headroom. A stale snapshot is a floor, not a current reading. Pool
 headroom breaks a tie between models that both meet the task bar; it never
 changes the required intelligence or proof.
 
-Cursor and Grok have no usage-state source here. Their successful live catalog
-and CLI start are availability evidence; a refusal restaffs the unit.
+Cursor, Grok, and OpenCode have no usage-state source here. Their successful
+live catalog and CLI start are availability evidence; a refusal restaffs the
+unit.
 For Cursor, choose an effort-specific name exactly as the live catalog prints
 it and omit `--effort`; the name is the recorded effort control.
 

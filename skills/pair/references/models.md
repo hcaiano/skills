@@ -24,7 +24,11 @@ from a vendor label. Use the model's live catalog when the user wants options:
 ```bash
 cursor-agent --list-models
 grok models
+opencode models
 ```
+
+Use `opencode models --refresh` when the local OpenCode catalog needs a fresh
+models.dev snapshot.
 
 Claude and Codex can use their CLI defaults; name a model only when the user
 chooses one or the task requires a documented model setting.
@@ -46,6 +50,10 @@ Effort describes the reasoning budget, not the model's identity:
 - **Grok**: use the values shown by `grok --help` with `--reasoning-effort`;
   use low for mechanical work, medium for normal work, and high for broad or
   risky work. Raise effort only when risk or context requires it.
+- **OpenCode**: use a variant advertised by the selected model. Headless
+  sessions pass it with `--variant`; the OpenCode Herdr TUI does not expose
+  that flag. Use low for mechanical work, high for broad or risky work, and
+  max only for very hard work when the selected model offers those values.
 
 Leave effort unset only for a CLI whose default the user explicitly chooses.
 Codex pair spawns set `low`, `high`, or `xhigh` explicitly; `medium` remains
