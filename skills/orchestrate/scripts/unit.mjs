@@ -16,9 +16,12 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
-const pairScript = process.env.ORCHESTRATE_PAIR_SCRIPT ??
+const headlessPairScript = process.env.ORCHESTRATE_PAIR_SCRIPT ??
   join(scriptDir, "../../pair/scripts/pair-headless.mjs");
+const herdrPairScript = process.env.ORCHESTRATE_HERDR_PAIR_SCRIPT ??
+  join(scriptDir, "../../pair/scripts/herdr-pair.mjs");
 const partnerKinds = new Set(["claude", "codex", "cursor", "grok", "opencode"]);
+const pairBackends = new Set(["headless", "herdr"]);
 const mergePolicies = new Set(["auto", "hold"]);
 const timeoutFromEnvironment = (name, fallback) => {
   const value = Number(process.env[name]);
@@ -138,6 +141,60 @@ const unitId = (value) => {
   }
   return value;
 };
+const selectedBackend = (options) => {
+  const backend = options.backend ?? (process.env.HERDR_ENV === "1" ? "herdr" : "headless");
+  if (!pairBackends.has(backend)) fail("--backend must be headless or herdr", null, 2);
+  return backend;
+};
+const normalizeBackend = (record) => {
+  record.backend ??= "headless";
+  if (!pairBackends.has(record.backend)) {
+    fail(`unit ${record.unit_id} records unknown backend ${record.backend}`);
+  }
+  return record.backend;
+};
+const ensureBackendOverride = (record, options) => {
+  const backend = normalizeBackend(record);
+  if (options.backend && options.backend !== backend) {
+    fail(`unit ${record.unit_id} backend differs`, {
+      recorded: backend,
+      requested: options.backend,
+    });
+  }
+  return backend;
+};
+const callerOptionNames = ["pane", "workspace", "tab-id", "as", "terminal-id", "repo-root"];
+const requestedCaller = (options, place) => {
+  for (const name of callerOptionNames) {
+    if (!options[name]) fail(`Herdr backend requires --${name} from CALLER_ID`, null, 2);
+  }
+  if (options.as !== options.lead) {
+    fail("Herdr CALLER_ID --as must match --lead", null, 2);
+  }
+  if (!isAbsolute(options["repo-root"])) {
+    fail("Herdr CALLER_ID --repo-root must be absolute", null, 2);
+  }
+  let callerRoot;
+  try {
+    callerRoot = realpathSync(options["repo-root"]);
+  } catch (error) {
+    fail(`cannot resolve Herdr CALLER_ID --repo-root: ${error.message}`, null, 2);
+  }
+  if (callerRoot !== realpathSync(place.root)) {
+    fail("Herdr CALLER_ID --repo-root must be the orchestrated repository root", null, 2);
+  }
+  return {
+    pane: options.pane,
+    workspace: options.workspace,
+    tab_id: options["tab-id"],
+    agent: options.as,
+    terminal_id: options["terminal-id"],
+    repo_root: options["repo-root"],
+  };
+};
+const callerMatches = (left, right) =>
+  ["pane", "workspace", "tab_id", "agent", "terminal_id", "repo_root"]
+    .every((field) => left?.[field] === right?.[field]);
 const recordPath = (place, id) => join(place.units, `${id}.json`);
 const atomicWrite = (path, value) => {
   mkdirSync(dirname(path), { recursive: true });
@@ -223,7 +280,19 @@ const withRegistryLock = (place, operation) => {
   }
 };
 
-const pair = (command, repo, extra = []) => {
+const backendOf = (record) => record.backend ?? "headless";
+
+const runPairHelper = (script, command, args, timeout) => {
+  const result = run(process.execPath, [script, command, ...args], { timeout });
+  if (result.status !== 0) {
+    let detail = (result.stderr || result.stdout || "").trim();
+    try { detail = JSON.parse(result.stdout).reason ?? detail; } catch {}
+    throw new Error(`pair ${command} failed: ${detail || `exit ${result.status}`}`);
+  }
+  return result.stdout.trim();
+};
+
+const headlessPair = (command, record, extra = []) => {
   // A real model bootstrap can exceed the general process limit. Headless send
   // only launches its background supervisor, but gets a smaller explicit
   // allowance so slow process startup does not hold the registry forever.
@@ -232,22 +301,185 @@ const pair = (command, repo, extra = []) => {
     : command === "send"
       ? pairSendTimeoutMs
       : defaultCommandTimeoutMs;
-  const result = run(process.execPath, [pairScript, command, "--repo", repo, ...extra], { timeout });
-  if (result.status !== 0) {
-    let detail = (result.stderr || result.stdout || "").trim();
-    try { detail = JSON.parse(result.stdout).reason ?? detail; } catch {}
-    throw new Error(`pair ${command} failed: ${detail || `exit ${result.status}`}`);
-  }
-  return parseJson(result.stdout, `pair ${command}`);
+  const output = runPairHelper(
+    headlessPairScript,
+    command,
+    ["--repo", record.worktree, ...extra],
+    timeout,
+  );
+  return parseJson(output, `pair ${command}`);
 };
 
-const pairStatus = (worktree) => {
-  if (!worktree || !existsSync(worktree)) return { ok: false, reason: "worktree-missing" };
+const herdrCallerArguments = (record) => {
+  const caller = record.caller;
+  if (!caller) throw new Error(`unit ${record.unit_id} has no recorded Herdr caller identity`);
+  return [
+    "--pane", caller.pane,
+    "--workspace", caller.workspace,
+    "--tab-id", caller.tab_id,
+    "--as", caller.agent,
+    "--terminal-id", caller.terminal_id,
+    "--repo-root", caller.repo_root,
+  ];
+};
+
+const herdrPair = (command, record, extra = [], { json = true } = {}) => {
+  const timeout = ["spawn", "init"].includes(command)
+    ? longCommandTimeoutMs
+    : command === "send"
+      ? pairSendTimeoutMs
+      : defaultCommandTimeoutMs;
+  const output = runPairHelper(
+    herdrPairScript,
+    command,
+    [...herdrCallerArguments(record), ...extra],
+    timeout,
+  );
+  return json ? parseJson(output, `pair ${command}`) : output;
+};
+
+const herdrStatus = (record) => {
+  if (!record.pair?.sid) return { ok: false, reason: "no pair session recorded" };
+  const response = herdrPair("reconcile", record, ["--sid", record.pair.sid]);
+  const session = response.session;
+  if (!session?.sid) throw new Error("pair reconcile returned no session");
+  const partner = Object.keys(session.participants ?? {}).find(
+    (kind) => kind !== record.lead && partnerKinds.has(kind),
+  );
+  if (!partner) throw new Error("pair reconcile returned no partner participant");
+  const pending = Object.entries(session.delivery?.pending ?? {})
+    .filter(([, delivery]) => delivery)
+    .map(([agent, delivery]) => ({ agent, ...delivery }));
+  const outgoingSeq = session.delivery?.next?.[record.lead] ?? 0;
+  return {
+    ok: true,
+    backend: "herdr",
+    sid: session.sid,
+    partner,
+    role: session.role ?? null,
+    model: session.model ?? null,
+    effort: session.effort ?? null,
+    seq: outgoingSeq,
+    session_known: session.active === true,
+    in_flight: pending.length > 0 ? { deliveries: pending } : null,
+    latest_receipt: null,
+    delivery: session.delivery ?? null,
+    last_status: session.last_status ?? null,
+    completed_cycles: session.completed_cycles ?? 0,
+    partner_pane: session.participants[partner]?.pane_id ?? record.pair.partner_pane ?? null,
+    lineage: { current_sid: session.sid, forks: [] },
+  };
+};
+
+const pairStatus = (record) => {
+  if (!record.worktree || !existsSync(record.worktree)) {
+    return { ok: false, reason: "worktree-missing" };
+  }
   try {
-    return pair("status", worktree);
+    return backendOf(record) === "herdr"
+      ? herdrStatus(record)
+      : { ...headlessPair("status", record), backend: "headless" };
   } catch (error) {
     return { ok: false, reason: error.message };
   }
+};
+
+const transportCheckpoint = (status) => status.latest_receipt ?? (
+  status.backend === "herdr"
+    ? {
+        backend: "herdr",
+        delivery: status.delivery,
+        last_status: status.last_status,
+        completed_cycles: status.completed_cycles,
+      }
+    : null
+);
+
+const staffingArguments = (staffing, backend) => {
+  const args = [];
+  if (staffing.model) args.push("--model", staffing.model);
+  if (staffing.effort && !(backend === "herdr" && staffing.partner === "opencode")) {
+    args.push("--effort", staffing.effort);
+  }
+  return args;
+};
+
+const initializePair = (record, path, staffing) => {
+  if (backendOf(record) === "headless") {
+    return headlessPair("init", record, [
+      "--partner", staffing.partner,
+      "--role", "executor",
+      ...staffingArguments(staffing, "headless"),
+    ]);
+  }
+  const spawnArgs = [
+    "--partner", staffing.partner,
+    "--partner-repo-root", record.worktree,
+    "--autonomy", "full",
+    ...staffingArguments(staffing, "herdr"),
+  ];
+  if (record.pair?.partner_pane) {
+    spawnArgs.push("--partner-pane", record.pair.partner_pane);
+  }
+  const spawned = herdrPair("spawn", record, spawnArgs);
+  if (spawned.partner?.agent !== staffing.partner || !spawned.partner?.pane_id) {
+    throw new Error(`pair spawn did not return the requested ${staffing.partner} pane`);
+  }
+  if (record.pair?.partner_pane && record.pair.partner_pane !== spawned.partner.pane_id) {
+    throw new Error(`pair spawn replaced recorded pane ${record.pair.partner_pane}`);
+  }
+  record.pair = {
+    sid: null,
+    latest_seq: 0,
+    partner_pane: spawned.partner.pane_id,
+  };
+  writeRecord(path, record);
+  const session = herdrPair("init", record, [
+    "--partner-pane", spawned.partner.pane_id,
+    "--partner-repo-root", record.worktree,
+    "--role", "executor",
+    ...staffingArguments(staffing, "herdr"),
+  ]);
+  return {
+    ok: true,
+    backend: "herdr",
+    sid: session.sid,
+    partner: staffing.partner,
+    role: session.role ?? null,
+    model: session.model ?? null,
+    effort: session.effort ?? null,
+    seq: session.delivery?.next?.[record.lead] ?? 0,
+    partner_pane: spawned.partner.pane_id,
+  };
+};
+
+const sendPair = (record, bodyFile) => {
+  if (backendOf(record) === "headless") {
+    return headlessPair("send", record, [
+      "--kind", "task", "--body-file", bodyFile, "--background",
+    ]);
+  }
+  const output = herdrPair("send", record, [
+    "--sid", record.pair.sid,
+    "--kind", "task",
+    "--body-file", bodyFile,
+  ], { json: false });
+  const receipt = output.match(/\bseq=(\d+)\s+receipt=([^\s]+)/u);
+  if (!receipt) throw new Error(`pair send returned an unknown receipt: ${output}`);
+  return {
+    ok: true,
+    status: "running",
+    sid: record.pair.sid,
+    seq: Number(receipt[1]),
+    delivery_receipt: receipt[2],
+  };
+};
+
+const endPair = (record) => {
+  if (backendOf(record) === "headless") return headlessPair("end", record);
+  if (!record.pair?.sid) return { ok: true, status: "absent" };
+  const output = herdrPair("end", record, ["--sid", record.pair.sid], { json: false });
+  return { ok: true, status: "ended", output };
 };
 
 const lineageForks = (status) =>
@@ -323,7 +555,7 @@ const worktreeRows = (repo) => {
   return rows;
 };
 
-const describe = (place, record, observedPair = pairStatus(record.worktree)) => {
+const describe = (place, record, observedPair = pairStatus(record)) => {
   const worktree = worktreeRows(place.root).find((row) => row.path === record.worktree) ?? null;
   return {
     ...record,
@@ -394,7 +626,11 @@ const requestedStaffing = (options) => ({
   effort: options.effort ?? null,
   reason: options.reason,
 });
-const validateStaffing = (options, command, { allowLegacyCursor = false } = {}) => {
+const validateStaffing = (
+  options,
+  command,
+  { allowLegacyCursor = false, backend = "headless" } = {},
+) => {
   for (const key of ["lead", "partner", "reason"]) {
     if (!options[key]) fail(`${command} requires --${key}`, null, 2);
   }
@@ -411,6 +647,10 @@ const validateStaffing = (options, command, { allowLegacyCursor = false } = {}) 
     }
     if (options.effort && !legacy) {
       fail("cursor staffing carries effort in the live-catalog model name; omit --effort", null, 2);
+    }
+  } else if (options.partner === "opencode" && backend === "herdr") {
+    if (options.effort) {
+      fail("OpenCode's Herdr TUI has no effort variant; omit --effort", null, 2);
     }
   } else if (!options.effort) {
     fail(`${command} requires --effort for ${options.partner}`, null, 2);
@@ -473,7 +713,7 @@ const migrateLegacyCursorCreate = (record, options, task) => {
     options.effort ||
     !normalizedModel(options.model)
   ) return false;
-  const status = pairStatus(record.worktree);
+  const status = pairStatus(record);
   if (status.ok) {
     fail(`unit ${record.unit_id} cannot migrate Cursor staffing while its recorded pair is live`);
   }
@@ -531,11 +771,18 @@ const create = (options) => {
   return withRegistryLock(place, () => {
     mkdirSync(place.units, { recursive: true });
     const resumed = existsSync(path);
-    validateStaffing(options, "create", { allowLegacyCursor: resumed });
     let resumedFrom = null;
     let record;
     if (resumed) {
       record = readRecord(place, id).record;
+      const backend = ensureBackendOverride(record, options);
+      validateStaffing(options, "create", { allowLegacyCursor: resumed, backend });
+      if (backend === "herdr" && callerOptionNames.some((name) => options[name])) {
+        const caller = requestedCaller(options, place);
+        if (!callerMatches(record.caller, caller)) {
+          fail(`unit ${id} cannot resume: Herdr caller identity differs`);
+        }
+      }
       resumedFrom = record.lifecycle;
       if (!recoverableCreatePhases.has(resumedFrom)) {
         fail(`unit ${id} already exists in non-resumable phase ${resumedFrom}`);
@@ -544,6 +791,8 @@ const create = (options) => {
       ensureMatchingCreate(record, options, requestedTask);
       record.resources ??= {};
     } else {
+      const backend = selectedBackend(options);
+      validateStaffing(options, "create", { backend });
       if (!options["task-file"]) fail("a new unit requires --task-file", null, 2);
       if (existsSync(options.worktree)) fail(`worktree path already exists: ${options.worktree}`);
       const duplicate = listRecords(place).find(
@@ -562,7 +811,9 @@ const create = (options) => {
         branch: options.branch,
         base: options.base,
         lifecycle: "creating",
+        backend,
         lead: options.lead,
+        caller: backend === "herdr" ? requestedCaller(options, place) : null,
         task: requestedTask,
         task_file: join(place.registry, "tasks", `${id}.md`),
         scope: options.scope,
@@ -631,7 +882,7 @@ const create = (options) => {
         writeRecord(path, record);
       }
 
-      let currentPair = pairStatus(record.worktree);
+      let currentPair = pairStatus(record);
       if (currentPair.ok) {
         if (!resumed || ["creating", "setting-up"].includes(resumedFrom)) {
           throw new Error(`unit ${id} has an unexpected pair in phase ${resumedFrom ?? "creating"}`);
@@ -660,10 +911,7 @@ const create = (options) => {
         if (resumedFrom === "starting") {
           throw new Error(`unit ${id} recorded pair ${record.pair?.sid ?? "without a sid"} is absent in phase starting`);
         }
-        const initArgs = ["--partner", record.staffing.current.partner, "--role", "executor"];
-        if (record.staffing.current.effort) initArgs.push("--effort", record.staffing.current.effort);
-        if (record.staffing.current.model) initArgs.push("--model", record.staffing.current.model);
-        currentPair = pair("init", record.worktree, initArgs);
+        currentPair = initializePair(record, path, record.staffing.current);
         pairInitialized = true;
       }
       for (const [field, wanted] of [
@@ -677,18 +925,21 @@ const create = (options) => {
         }
       }
       record.resources.pair = true;
-      record.pair = { sid: currentPair.sid, latest_seq: currentPair.seq ?? 0 };
+      record.pair = {
+        ...record.pair,
+        sid: currentPair.sid,
+        latest_seq: currentPair.seq ?? 0,
+        ...(currentPair.partner_pane ? { partner_pane: currentPair.partner_pane } : {}),
+      };
       record.lifecycle = "starting";
       writeRecord(path, record);
 
-      currentPair = pairStatus(record.worktree);
+      currentPair = pairStatus(record);
       if (!currentPair.ok) throw new Error(`cannot prove initialized pair: ${currentPair.reason}`);
       const reconciled = reconcilePairHead(record, currentPair);
       if (reconciled.error) throw new Error(reconciled.error);
       if ((currentPair.seq ?? 0) === 0 && !currentPair.in_flight) {
-        const running = pair("send", record.worktree, [
-          "--kind", "task", "--body-file", taskFile, "--background",
-        ]);
+        const running = sendPair(record, taskFile);
         if (running.status !== "running") throw new Error(`pair send did not start: ${JSON.stringify(running)}`);
         record.pair.latest_seq = running.seq;
         record.pair.latest_receipt_file = running.receipt_file;
@@ -713,12 +964,21 @@ const create = (options) => {
         writeRecord(path, record);
         fail(error.message, { recovery_record: path, resumed_from: resumedFrom });
       }
+      if (backendOf(record) === "herdr" && record.pair?.partner_pane) {
+        record.error = error.message;
+        writeRecord(path, record);
+        fail(error.message, {
+          recovery_record: path,
+          partner_pane: record.pair.partner_pane,
+          pane_close: "manual",
+        });
+      }
       record.lifecycle = "create-failed";
       record.error = error.message;
       writeRecord(path, record);
       if (pairInitialized) {
         try {
-          pair("end", record.worktree);
+          endPair(record);
           rollback.push({ resource: "pair", ok: true });
           record.resources.pair = false;
         } catch (pairError) {
@@ -762,7 +1022,14 @@ const create = (options) => {
 
 const list = (options) => {
   const place = repository(options.repo);
-  return { ok: true, repository: place.root, units: listRecords(place).map((record) => describe(place, record)) };
+  return {
+    ok: true,
+    repository: place.root,
+    units: listRecords(place).map((record) => {
+      normalizeBackend(record);
+      return describe(place, record);
+    }),
+  };
 };
 
 const status = (options) => {
@@ -770,7 +1037,10 @@ const status = (options) => {
   const id = unitId(options.unit);
   return withRegistryLock(place, () => {
     const { path, record } = readRecord(place, id);
-    const observedPair = pairStatus(record.worktree);
+    const hadBackend = Boolean(record.backend);
+    ensureBackendOverride(record, options);
+    if (!hadBackend) writeRecord(path, record);
+    const observedPair = pairStatus(record);
     if (observedPair.ok && record.pair?.sid) {
       if (pairMatchesStaffing(observedPair, record.staffing.current)) {
         const reconciled = reconcilePairHead(record, observedPair);
@@ -812,10 +1082,14 @@ const restaffCheckpoint = (record) => record.staffing.history.at(-1)?.checkpoint
 const restaff = (options) => {
   const place = repository(options.repo);
   const id = unitId(options.unit);
-  validateStaffing(options, "restaff");
-  const requested = requestedStaffing(options);
   return withRegistryLock(place, () => {
     const { path, record } = readRecord(place, id);
+    const backend = ensureBackendOverride(record, options);
+    validateStaffing(options, "restaff", { backend });
+    if (options.lead !== record.lead) {
+      fail(`unit ${id} lead differs`, { recorded: record.lead, requested: options.lead });
+    }
+    const requested = requestedStaffing(options);
     if (!existsSync(record.worktree)) fail(`unit ${id} worktree is missing`);
     const resumed = recoverableRestaffPhases.has(record.lifecycle);
     const resumedFrom = resumed ? record.lifecycle : null;
@@ -843,7 +1117,7 @@ const restaff = (options) => {
       if (record.lifecycle !== "working") {
         fail(`unit ${id} cannot restaff from phase ${record.lifecycle}`);
       }
-      const currentStatus = pairStatus(record.worktree);
+      const currentStatus = pairStatus(record);
       if (!currentStatus.ok) fail(`cannot prove pair state for unit ${id}`, currentStatus);
       if (currentStatus.in_flight) fail(`unit ${id} has an in-flight turn`, currentStatus.in_flight);
       if (!pairMatchesStaffing(currentStatus, record.staffing.current)) {
@@ -858,7 +1132,7 @@ const restaff = (options) => {
         head: gitChecked(record.worktree, ["rev-parse", "HEAD"], "read unit HEAD").stdout.trim(),
         diff_stat: gitChecked(record.worktree, ["diff", "--stat"], "read unit diff").stdout.trim(),
         worktree_status: gitChecked(record.worktree, ["status", "--short"], "read unit worktree status").stdout.trim(),
-        receipt: currentStatus.latest_receipt ?? null,
+        receipt: transportCheckpoint(currentStatus),
         at: new Date().toISOString(),
       };
       const previous = { ...record.staffing.current, ended_at: checkpoint.at, checkpoint };
@@ -870,7 +1144,7 @@ const restaff = (options) => {
     }
 
     try {
-      let currentStatus = pairStatus(record.worktree);
+      let currentStatus = pairStatus(record);
       if (!record.restaff_phase) {
         if (!currentStatus.ok) {
           if (!pairIsAbsent(currentStatus)) {
@@ -902,19 +1176,20 @@ const restaff = (options) => {
           if (currentStatus.in_flight) throw new Error(`unit ${id} has an in-flight old pair turn`);
           const reconciled = reconcilePairHead(record, currentStatus);
           if (reconciled.error) throw new Error(reconciled.error);
-          pair("end", record.worktree);
+          endPair(record);
         } else if (!pairIsAbsent(currentStatus)) {
           throw new Error(`cannot prove old pair state while restaffing unit ${id}: ${currentStatus.reason}`);
         }
         record.resources.pair = false;
+        record.pair = null;
         record.restaff_phase = "initializing-target";
         writeRecord(path, record);
-        currentStatus = pairStatus(record.worktree);
+        currentStatus = pairStatus(record);
       }
 
       let initialized;
       if (record.restaff_phase === "initializing-target") {
-        currentStatus = pairStatus(record.worktree);
+        currentStatus = pairStatus(record);
         if (currentStatus.ok) {
           if (!pairMatchesStaffing(currentStatus, record.pending_staffing)) {
             throw new Error(`unit ${id} has an unexpected live pair during target initialization`);
@@ -927,16 +1202,18 @@ const restaff = (options) => {
           if (!pairIsAbsent(currentStatus)) {
             throw new Error(`cannot prove target pair state while restaffing unit ${id}: ${currentStatus.reason}`);
           }
-          const initArgs = ["--partner", record.pending_staffing.partner, "--role", "executor"];
-          if (record.pending_staffing.effort) initArgs.push("--effort", record.pending_staffing.effort);
-          if (record.pending_staffing.model) initArgs.push("--model", record.pending_staffing.model);
-          initialized = pair("init", record.worktree, initArgs);
+          initialized = initializePair(record, path, record.pending_staffing);
         }
         if (!pairMatchesStaffing(initialized, record.pending_staffing)) {
           throw new Error(`initialized pair does not match pending staffing for unit ${id}`);
         }
         record.resources.pair = true;
-        record.pair = { sid: initialized.sid, latest_seq: initialized.seq ?? 0 };
+        record.pair = {
+          ...record.pair,
+          sid: initialized.sid,
+          latest_seq: initialized.seq ?? 0,
+          ...(initialized.partner_pane ? { partner_pane: initialized.partner_pane } : {}),
+        };
         record.restaff_phase = "starting-target";
         writeRecord(path, record);
       }
@@ -944,7 +1221,7 @@ const restaff = (options) => {
       if (record.restaff_phase !== "starting-target") {
         throw new Error(`unit ${id} has unknown restaff phase ${record.restaff_phase}`);
       }
-      currentStatus = pairStatus(record.worktree);
+      currentStatus = pairStatus(record);
       if (!currentStatus.ok || !pairMatchesStaffing(currentStatus, record.pending_staffing)) {
         throw new Error(`cannot prove pending target pair for unit ${id}`);
       }
@@ -970,14 +1247,14 @@ const restaff = (options) => {
       let running = initialized;
       let sendError = null;
       try {
-        currentStatus = pairStatus(record.worktree);
+        currentStatus = pairStatus(record);
         if (!currentStatus.ok || !pairMatchesStaffing(currentStatus, record.pending_staffing)) {
           throw new Error(`cannot prove pending pair before restaff send for unit ${id}`);
         }
         const reconciledTarget = reconcilePairHead(record, currentStatus);
         if (reconciledTarget.error) throw new Error(reconciledTarget.error);
         if ((currentStatus.seq ?? 0) === 0 && !currentStatus.in_flight) {
-          running = pair("send", record.worktree, ["--kind", "task", "--body-file", checkpointPath, "--background"]);
+          running = sendPair(record, checkpointPath);
           if (running.status !== "running") {
             throw new Error(`pair send did not start: ${JSON.stringify(running)}`);
           }
@@ -1032,11 +1309,12 @@ const dismantle = (options) => {
   const id = unitId(options.unit);
   return withRegistryLock(place, () => {
     const { path, record } = readRecord(place, id);
+    ensureBackendOverride(record, options);
     record.resources ??= {};
     record.cleanup ??= [];
     const forced = options.force === id;
     if (options.force && !forced) fail(`--force must equal the exact unit id ${id}`, null, 2);
-    const currentStatus = pairStatus(record.worktree);
+    const currentStatus = pairStatus(record);
     const pairAlreadyEnded = record.resources.pair === false ||
       (record.lifecycle === "dismantling" && pairIsAbsent(currentStatus));
     if (existsSync(record.worktree) && !currentStatus.ok && !pairAlreadyEnded) {
@@ -1076,10 +1354,17 @@ const dismantle = (options) => {
       }
     };
 
-    if (existsSync(record.worktree) && !pairAlreadyEnded) {
+    if (!pairAlreadyEnded && (backendOf(record) === "herdr" || existsSync(record.worktree))) {
       step("pair", () => {
-        pair("end", record.worktree);
+        endPair(record);
         record.resources.pair = false;
+        if (backendOf(record) === "herdr") {
+          return {
+            backend: "herdr",
+            partner_pane: record.pair?.partner_pane ?? null,
+            pane_close: "manual",
+          };
+        }
       });
     }
     if (existsSync(record.worktree)) {

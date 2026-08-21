@@ -1,13 +1,13 @@
 ---
 name: orchestrate
-description: "Manual-only orchestration of an explicit task list through isolated worktrees, headless pairs, pull requests, verified merges, and cleanup."
+description: "Manual-only orchestration of an explicit task list through isolated worktrees, persistent pairs, pull requests, verified merges, and cleanup."
 disable-model-invocation: true
 ---
 
 # Orchestrate
 
 Run an explicit task list as independent work units. One **unit** owns one
-worktree, branch, headless pair, and pull request. The current agent is the
+worktree, branch, pair backend, and pull request. The current agent is the
 orchestrator and pair lead; each unit's partner is its executor. Work on one
 repository per invocation.
 
@@ -25,9 +25,15 @@ beside this one. Set these absolute paths:
 ```bash
 ORCHESTRATE_DIR=<this skill directory>
 UNIT="$ORCHESTRATE_DIR/scripts/unit.mjs"
-PAIR="$ORCHESTRATE_DIR/../pair/scripts/pair-headless.mjs"
+HEADLESS_PAIR="$ORCHESTRATE_DIR/../pair/scripts/pair-headless.mjs"
 REPO=$(git -C <task-repository> rev-parse --show-toplevel)
 ```
+
+Outside Herdr, new units use the `headless` backend. Inside `HERDR_ENV=1`, new
+units use the `herdr` backend. `--backend headless|herdr` overrides that choice
+at creation. The backend is then immutable and recorded. For a Herdr unit,
+read pair's [`herdr.md`](../pair/references/herdr.md) and complete its caller
+pane proof once. Keep the returned `CALLER_ID`; the create command consumes it.
 
 The unit registry is
 `<git-common-dir>/orchestrate/units/<unit-id>.json`. It is the durable recovery
@@ -37,7 +43,8 @@ source. Start every invocation, including a resumed one, with:
 node "$UNIT" list --repo "$REPO"
 ```
 
-Reconcile each record with its observed worktree, pair, newest receipt, and PR.
+Reconcile each record with its observed worktree, recorded pair backend,
+transport state, and PR.
 A `creating`, `restaff-failed`, or `dismantle-failed` record is a recovery task,
 not a new unit. Ignore unrelated worktrees and never adopt or remove an
 unrecorded resource. One orchestrator operates a repository at a time.
@@ -70,6 +77,7 @@ Create every unit before waiting on any of them:
 ```bash
 node "$UNIT" create --repo "$REPO" --unit <id> \
   --worktree <absolute-path> --branch <branch> --base <base> \
+  [--backend <headless|herdr>] \
   --lead <current-cli> --partner <other-cli> --model <name-or-CLI-default> \
   [--effort <level>] --reason <one-line-reason> --task-file <file> \
   --scope <scope-summary> --validation <validation-summary> \
@@ -77,11 +85,24 @@ node "$UNIT" create --repo "$REPO" --unit <id> \
 ```
 
 `create` journals the task before mutation, creates the worktree from the base,
-runs the project's setup hook, initializes an executor-role headless pair, and
-starts the first task with pair's `send --background`. It refuses an unrelated
-record, branch, worktree, or same-CLI partner. Use the repository's own
-worktree setup pipeline when one exists. Read every returned record and report
-its staffing reason to the user.
+runs the project's setup hook, initializes an executor-role pair, and starts
+the first task. It refuses an unrelated record, branch, worktree, or same-CLI
+partner. Use the repository's own worktree setup pipeline when one exists.
+Read every returned record and report its staffing reason to the user.
+
+For the Herdr backend, append `"${CALLER_ID[@]}"` to the create command. The
+helper records that exact caller identity, spawns one visible partner pane in
+the unit worktree, initializes its session, and sends through Herdr. It uses
+`--autonomy full`. Omit `--effort` for an OpenCode Herdr partner because its
+TUI has no variant flag. A CLI startup prompt can still stop the new pane.
+Read the exact recorded partner pane and answer its update or directory-trust
+prompt with keys, as `herdr.md` specifies. The unit owns the session; pane
+closure stays manual.
+
+The headless backend starts the task with pair's `send --background`. A failed
+Herdr spawn closes its new split and rolls back the unit journal. A failure
+after a pane is proved keeps the journal, worktree, and pane id for a matching
+create retry.
 
 The helper gives ordinary child commands two minutes, pair `send` five minutes,
 and setup or pair `init` 30 minutes. A timeout kills the complete child process
@@ -109,22 +130,32 @@ the exact recovery step.
 
 ## Monitor and recover
 
-Pair receipts and transcripts are the only unit transport. The partner cannot
-wake a yielded orchestrator and has no live pane for interjection. A user can
-tail the named transcript, but that is observation only.
-
-Run nonblocking status rounds across all units:
+The registry is the durable recovery source for both backends. Run nonblocking
+status rounds across all units:
 
 ```bash
 node "$UNIT" status --repo "$REPO" --unit <id>
-node "$PAIR" wait --repo <unit-worktree> --seq <seq> --timeout-min 1
 ```
 
-Launch or resume all units before waiting on one. Use bounded waits and rotate
-through the active units so a slow turn cannot hide a fast blocked or failed
-one. After compaction or a lead restart, `unit list` plus the receipt files is
-the complete recovery path. Never resend a turn whose terminal receipt is not
-yet known; inspect `in_flight`, transcript, and worktree first.
+For a headless unit, pair receipts and transcripts are the only transport. The
+partner cannot wake a yielded orchestrator and has no live pane for
+interjection. Use bounded waits and rotate through active units:
+
+```bash
+node "$HEADLESS_PAIR" wait --repo <unit-worktree> --seq <seq> --timeout-min 1
+```
+
+For a Herdr unit, do not use headless `wait` or receipt deadlines. `unit status`
+routes through the recorded Herdr pair and reconciles its sequence ACKs. Read
+`observed.pair.delivery`, `in_flight`, and the visible executor pane. Process
+inbound control lines and send replies only with the pair helper, as
+`herdr.md` specifies. If a CLI startup prompt blocks the executor, answer it
+with keys in that exact recorded pane.
+
+Launch or resume all units before waiting on one. After compaction or a lead
+restart, start from `unit list`, then use each record's backend state. Never
+resend a turn with unknown delivery state; inspect the transport state and
+worktree first.
 
 A refused or rate-limited partner is restaffed immediately. Normal scope
 feedback and one bounded correction stay on the current pair. A proved
@@ -137,8 +168,9 @@ node "$UNIT" restaff --repo "$REPO" --unit <id> \
 ```
 
 `restaff` refuses an in-flight turn, checkpoints the HEAD, worktree status and
-diff, and newest receipt, ends only that unit's pair, records staffing history,
-and starts the same task with the new executor. A matching retry resumes
+diff, and newest receipt or Herdr ACK state, ends only that unit's pair,
+records staffing history, and starts the same task with the new executor. A
+matching retry resumes
 `restaffing` or `restaff-failed`; any different target field refuses. Surface
 any failed checkpoint to the user.
 
@@ -169,8 +201,9 @@ Normal cleanup proves the unit PR is merged. It refuses an in-flight pair:
 node "$UNIT" dismantle --repo "$REPO" --unit <id>
 ```
 
-The helper ends the unit pair, removes its worktree, deletes the local and
-remote unit branches, and removes the manifest last. It journals each step, so
+The helper ends the unit pair session, removes its worktree, deletes the local
+and remote unit branches, and removes the manifest last. A Herdr executor pane
+stays open for the user to close manually. The helper journals each step, so
 a fresh session can continue a partial cleanup. For an abandoned unit, obtain
 an explicit user instruction and bind it to the exact unit id:
 

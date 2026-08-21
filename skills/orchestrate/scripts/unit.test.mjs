@@ -23,6 +23,9 @@ const repository = join(root, "repository");
 const remote = join(root, "remote.git");
 const bin = join(root, "bin");
 const pairScript = join(root, "fake-pair.mjs");
+const herdrPairScript = join(root, "fake-herdr-pair.mjs");
+const herdrStatePath = join(root, "fake-herdr-pair-state.json");
+const herdrLogPath = join(root, "fake-herdr-pair-log.jsonl");
 mkdirSync(repository);
 mkdirSync(bin);
 
@@ -108,6 +111,100 @@ if (command === "end") {
 emit({ok:false,reason:"unsupported " + command}, 2);
 `);
 
+writeFileSync(herdrPairScript, `
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+const [command, ...args] = process.argv.slice(2);
+const option = (name) => { const i = args.indexOf("--" + name); return i < 0 ? null : args[i + 1]; };
+const statePath = process.env.FAKE_HERDR_PAIR_STATE;
+const logPath = process.env.FAKE_HERDR_PAIR_LOG;
+const read = () => existsSync(statePath)
+  ? JSON.parse(readFileSync(statePath, "utf8"))
+  : {counter:0,panes:{},sessions:{}};
+const state = read();
+const save = () => writeFileSync(statePath, JSON.stringify(state));
+const emit = (value, code = 0) => { console.log(JSON.stringify(value)); process.exit(code); };
+appendFileSync(logPath, JSON.stringify({command,args}) + "\\n");
+if (command === "spawn") {
+  if (process.env.FAKE_HERDR_PAIR_FAIL_SPAWN === "1") {
+    console.error("forced Herdr spawn failure");
+    process.exit(1);
+  }
+  const partner = option("partner");
+  let pane = option("partner-pane");
+  if (!pane) {
+    state.counter += 1;
+    pane = "wH:p" + (state.counter + 1);
+  }
+  state.panes[pane] ??= {
+    partner,
+    repo_root:option("partner-repo-root"),
+    model:option("model"),
+    effort:option("effort"),
+  };
+  save();
+  emit({
+    self:{pane_id:option("pane"),agent:option("as")},
+    partner:{pane_id:pane,agent:state.panes[pane].partner},
+    partnerAgent:state.panes[pane].partner,
+    partnerRepoRoot:state.panes[pane].repo_root,
+  });
+}
+if (command === "init") {
+  const pane = option("partner-pane");
+  const info = state.panes[pane];
+  if (!info) emit({ok:false,reason:"unknown pane"}, 1);
+  let session = Object.values(state.sessions).find((candidate) => candidate.participants[info.partner].pane_id === pane);
+  if (!session) {
+    const lead = option("as");
+    const sid = "herdr-sid-" + pane;
+    session = {
+      sid,
+      active:true,
+      initiator:lead,
+      role:option("role"),
+      model:option("model"),
+      effort:option("effort"),
+      participants:{
+        [lead]:{pane_id:option("pane"),repo_root:option("repo-root")},
+        [info.partner]:{pane_id:pane,repo_root:option("partner-repo-root")},
+      },
+      delivery:{next:{[lead]:0,[info.partner]:0},submitted:{[lead]:0,[info.partner]:0},received:{[lead]:0,[info.partner]:0},pending:{[lead]:null,[info.partner]:null}},
+      last_status:{[lead]:null,[info.partner]:null},
+      completed_cycles:0,
+    };
+    state.sessions[sid] = session;
+    save();
+  }
+  emit(session);
+}
+if (command === "reconcile") {
+  const session = state.sessions[option("sid")];
+  if (!session) { console.error("no session with sid " + option("sid")); process.exit(1); }
+  emit({reconciled:[],cleared:null,session});
+}
+if (command === "send") {
+  const session = state.sessions[option("sid")];
+  if (!session) { console.error("no session"); process.exit(1); }
+  const lead = option("as");
+  session.delivery.next[lead] += 1;
+  session.delivery.submitted[lead] = session.delivery.next[lead];
+  session.delivery.received[lead] = session.delivery.next[lead];
+  save();
+  const partner = Object.keys(session.participants).find((kind) => kind !== lead);
+  console.log("[agent " + lead + " -> " + partner + " kind=" + option("kind") + " sid=" + session.sid + "] seq=" + session.delivery.next[lead] + " receipt=acknowledged");
+  process.exit(0);
+}
+if (command === "end") {
+  const sid = option("sid");
+  if (!state.sessions[sid]) { console.error("no session"); process.exit(1); }
+  delete state.sessions[sid];
+  save();
+  console.log("ended herdr-pair session " + sid);
+  process.exit(0);
+}
+emit({ok:false,reason:"unsupported " + command}, 2);
+`);
+
 writeFileSync(join(bin, "gh"), `#!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 const args = process.argv.slice(2);
@@ -127,8 +224,12 @@ execFileSync("chmod", ["+x", join(bin, "gh"), join(bin, "trash")]);
 
 const baseEnv = {
   ...process.env,
+  HERDR_ENV: "0",
   PATH: `${bin}:${process.env.PATH}`,
   ORCHESTRATE_PAIR_SCRIPT: pairScript,
+  ORCHESTRATE_HERDR_PAIR_SCRIPT: herdrPairScript,
+  FAKE_HERDR_PAIR_STATE: herdrStatePath,
+  FAKE_HERDR_PAIR_LOG: herdrLogPath,
 };
 const invoke = (args, env = {}) => {
   const result = spawnSync(process.execPath, [unitScript, ...args], {
@@ -176,6 +277,15 @@ const createArgs = (id, partner = "codex", setup = "true") => [
   "--validation", "test -f README.md",
   "--merge-policy", "auto",
   "--setup", setup,
+];
+const herdrCreateArgs = (id, partner = "grok") => [
+  ...createArgs(id, partner),
+  "--pane", "wH:p1",
+  "--workspace", "wH",
+  "--tab-id", "wH:t1",
+  "--as", "claude",
+  "--terminal-id", "term-herdr-lead",
+  "--repo-root", repository,
 ];
 const resumeArgs = (id, partner = "codex", setup = "true") => {
   const args = createArgs(id, partner, setup);
@@ -268,6 +378,95 @@ test("create journals a durable unit and starts an executor pair", () => {
   assert.match(created.output.unit.staffing.current.reason, /task difficulty/u);
   assert.equal(created.output.unit.pair.latest_seq, 1);
   assert.equal(created.output.unit.observed.latest_receipt.status, "replied");
+});
+
+test("Herdr backend is recorded and routes the unit through pinned pair commands", () => {
+  writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
+  writeFileSync(herdrLogPath, "");
+  const id = "herdr-route";
+  const created = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.backend, "herdr");
+  assert.equal(created.output.unit.caller.pane, "wH:p1");
+  assert.equal(created.output.unit.observed.pair.backend, "herdr");
+  assert.equal(created.output.unit.observed.pair.partner, "grok");
+  assert.match(created.output.unit.pair.partner_pane, /^wH:p/u);
+
+  const observed = invoke(
+    ["status", "--repo", repository, "--unit", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(observed.status, 0, observed.stderr || JSON.stringify(observed.output));
+  assert.equal(observed.output.unit.observed.pair.in_flight, null);
+
+  const restaffed = invoke(restaffArgs(id, "codex"), { HERDR_ENV: "1" });
+  assert.equal(restaffed.status, 0, restaffed.stderr || JSON.stringify(restaffed.output));
+  assert.equal(restaffed.output.unit.backend, "herdr");
+  assert.equal(restaffed.output.unit.staffing.current.partner, "codex");
+  assert.equal(
+    restaffed.output.unit.staffing.history[0].checkpoint.receipt.backend,
+    "herdr",
+  );
+
+  const dismantled = invoke(
+    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(dismantled.status, 0, dismantled.stderr || JSON.stringify(dismantled.output));
+  const pairCleanup = dismantled.output.done.find((entry) => entry.step === "pair");
+  assert.equal(pairCleanup.detail.backend, "herdr");
+  assert.equal(pairCleanup.detail.pane_close, "manual");
+
+  const calls = readFileSync(herdrLogPath, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(
+    [...new Set(calls.map((entry) => entry.command))].sort(),
+    ["end", "init", "reconcile", "send", "spawn"],
+  );
+  for (const call of calls) {
+    assert.equal(call.args[call.args.indexOf("--pane") + 1], "wH:p1");
+    assert.equal(call.args[call.args.indexOf("--workspace") + 1], "wH");
+    assert.equal(call.args[call.args.indexOf("--tab-id") + 1], "wH:t1");
+    assert.equal(call.args[call.args.indexOf("--terminal-id") + 1], "term-herdr-lead");
+    assert.equal(call.args[call.args.indexOf("--repo-root") + 1], repository);
+  }
+  const spawnCalls = calls.filter((entry) => entry.command === "spawn");
+  assert.equal(spawnCalls.length, 2);
+  assert.equal(
+    spawnCalls[0].args[spawnCalls[0].args.indexOf("--partner-repo-root") + 1],
+    join(root, `worktree-${id}`),
+  );
+  assert.equal(spawnCalls[0].args.includes("--autonomy"), true);
+  assert.equal(calls.find((entry) => entry.command === "send").args.includes("--background"), false);
+});
+
+test("an explicit backend overrides Herdr auto-detection", () => {
+  const id = "headless-override";
+  const args = [...createArgs(id, "grok"), "--backend", "headless"];
+  const created = invoke(args, { HERDR_ENV: "1" });
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.backend, "headless");
+  const cleaned = invoke(
+    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("a Herdr spawn failure rolls back the unit journal", () => {
+  const id = "herdr-spawn-fail";
+  const failed = invoke(herdrCreateArgs(id), {
+    HERDR_ENV: "1",
+    FAKE_HERDR_PAIR_FAIL_SPAWN: "1",
+  });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /spawn failure/u);
+  assert.equal(existsSync(join(root, `worktree-${id}`)), false);
+  assert.notEqual(
+    spawnSync("git", ["-C", repository, "show-ref", "--verify", "--quiet", `refs/heads/feat/${id}`]).status,
+    0,
+  );
+  const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  assert.equal(existsSync(join(common, "orchestrate", "units", `${id}.json`)), false);
 });
 
 test("fresh list and status reconstruct the unit from disk", () => {

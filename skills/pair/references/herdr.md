@@ -31,6 +31,8 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    `tab_id`, `pane_id`, agent kind, terminal identity, and repository. Never
    address a pane discovered only by workspace, focus, label, cwd, direction,
    session metadata, or pane number.
+   An orchestrated executor may use a different recorded repository root from
+   its lead. Keep each participant on its own exact root.
 2. Use `herdr-pair.mjs send` as the sole partner transport. Reserve normal
    assistant output for a header-free user handoff. `SendMessage`, subagent
    messaging, and direct pane writes are different channels.
@@ -54,6 +56,7 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
 
    ```bash
    node "$PAIR_SCRIPT" spawn "${CALLER_ID[@]}" --partner "$PARTNER" \
+     [--partner-repo-root <executor-worktree>] \
      [--model "$MODEL"] [--effort "$EFFORT"] [--autonomy full]
    ```
 
@@ -66,17 +69,25 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    permission switch. The spawn retries a still-starting shell and closes its
    own split pane on failure. Stop on spawn failure.
 
-   A new pane can pause at its CLI's own startup prompt. Observed prompts include
-   a Codex self-update restart and Codex or Cursor directory trust. Read that
-   exact pane and answer the prompt with keys, then continue after the CLI
-   reaches its agent session. Startup control is separate from partner traffic.
+   `--partner-repo-root` keeps the caller pinned to `CALLER_ID` while it starts
+   the executor in a different unit worktree. Omit it for an ordinary pair in
+   one repository.
+
+   A new pane can pause at its CLI's own startup prompt. Observed prompts
+   include a Codex self-update restart and Codex or Cursor directory trust.
+   Read that exact pane and answer the prompt with keys, then continue after
+   the CLI reaches its agent session. Startup control is separate from partner
+   traffic.
 
    One lead pane may hold several pairs at once — one session per partner pane.
    Spawn once per partner and record the pane id it prints; every later command
    names the pair it means.
 2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}"
-   [--partner-pane <pane_id>] [--role peer|executor]`. It creates a session for
-   that partner pane, or idempotently resumes the exact live one. Name
+   [--partner-pane <pane_id>] [--partner-repo-root <executor-worktree>]
+   [--model "$MODEL"] [--effort "$EFFORT"] [--role peer|executor]`. Pass the
+   same partner root, model, and effort that the spawn used. The session records
+   them. It creates a session for that partner pane, or idempotently resumes the
+   exact live one. Name
    `--partner-pane` for every pair after the first; with one unpaired candidate
    in the tab it is optional. Run init directly to resume — an established
    session resumes through its recorded panes, so a `discover` first is neither

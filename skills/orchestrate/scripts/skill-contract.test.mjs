@@ -10,15 +10,16 @@ const staffing = readFileSync(join(here, "../references/staffing.md"), "utf8");
 const delivery = readFileSync(join(here, "../references/delivery.md"), "utf8");
 const unit = readFileSync(join(here, "unit.mjs"), "utf8");
 
-test("orchestrate is manual-only and harness-agnostic", () => {
+test("orchestrate is manual-only and supports recorded pair backends", () => {
   assert.match(skill, /^name: orchestrate$/mu);
   assert.match(skill, /^disable-model-invocation: true$/mu);
-  assert.doesNotMatch(`${skill}\n${staffing}\n${delivery}\n${unit}`, /herdr (?:agent|pane|tab|workspace)/u);
-  assert.doesNotMatch(unit, /HERDR_/u);
+  assert.match(skill, /--backend headless\|herdr/u);
+  assert.match(unit, /HERDR_ENV/u);
+  assert.match(unit, /backend: "herdr"/u);
 });
 
 test("one durable record owns the complete unit atom", () => {
-  assert.match(skill, /one\s+worktree, branch, headless pair, and pull request/u);
+  assert.match(skill, /one\s+worktree, branch, pair backend, and pull request/u);
   assert.match(skill, /<git-common-dir>\/orchestrate\/units\/<unit-id>\.json/u);
   assert.match(unit, /git-common-dir/u);
   assert.match(unit, /lifecycle: "creating"/u);
@@ -40,8 +41,9 @@ test("the unit helper exposes one tested lifecycle surface", () => {
 });
 
 test("pair is the only unit transport", () => {
-  assert.match(skill, /Pair receipts and transcripts are the only unit transport/u);
+  assert.match(skill, /pair receipts and transcripts are the only transport/iu);
   assert.match(skill, /pair-headless\.mjs/u);
+  assert.match(skill, /reconciles its sequence ACKs/u);
   assert.match(skill, /--background/u);
   assert.match(skill, /--timeout-min 1/u);
   assert.doesNotMatch(skill, /report_pane|pane tokens|orphan adoption/u);
@@ -62,7 +64,7 @@ test("staffing matches difficulty and records its evidence", () => {
 });
 
 test("restaff preserves evidence and normal feedback stays bounded", () => {
-  assert.match(skill, /checkpoints the HEAD, worktree status and\s+diff, and newest receipt/u);
+  assert.match(skill, /checkpoints the HEAD, worktree status and\s+diff, and newest receipt or Herdr ACK state/u);
   assert.match(skill, /Normal scope\s+feedback and one bounded correction stay on the current pair/u);
   assert.match(skill, /matching retry resumes\s+`restaffing` or `restaff-failed`/u);
   assert.match(unit, /staffing\.history\.push/u);

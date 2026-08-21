@@ -676,6 +676,10 @@ try {
   }
   state.processes["w1:p2"][0].cwd = shellMetaRepo;
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  const movedSession = JSON.parse(readFileSync(sessionPath, "utf8"));
+  movedSession.participants.codex.repo_root = shellMetaRepo;
+  movedSession.participants.claude.repo_root = shellMetaRepo;
+  writeFileSync(sessionPath, `${JSON.stringify(movedSession, null, 2)}\n`);
   const sent = run(
     "send",
     "--sid",
@@ -739,6 +743,9 @@ try {
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
 
   let session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  session.participants.codex.repo_root = "/workspace";
+  session.participants.claude.repo_root = "/workspace";
+  writeFileSync(sessionPath, `${JSON.stringify(session, null, 2)}\n`);
   assert.equal(session.delivery.submitted.codex, 1);
   assert.equal(session.delivery.received.codex, 1);
   assert.equal(session.delivery.pending.codex, null);
@@ -1094,11 +1101,13 @@ try {
       pane_id: "w1:p1",
       terminal_id: "term-w1-p1",
       agent_session_id: "codex-session-w1-p1",
+      repo_root: "/workspace",
     },
     claude: {
       pane_id: "w1:p2",
       terminal_id: "term-w1-p2",
       agent_session_id: "claude-session-w1-p2",
+      repo_root: "/workspace",
     },
   });
   run("end", "--sid", migrated.sid);
@@ -1267,6 +1276,44 @@ try {
     const spawned = spawnedState.panes[`${paneId}s`];
     assert.equal(spawned.cwd, repoRoot);
     assert.equal(spawned.agent, partner, "the spawned pane must run the requested CLI");
+  }
+
+  // An orchestrator stays in the repository root while each executor pane is
+  // rooted in its unit worktree. The session pins both roots independently.
+  {
+    const separateRootState = JSON.parse(readFileSync(statePath, "utf8"));
+    separateRootState.panes = {
+      "wR:p1": {
+        agent: "claude", agent_session: { value: "session-wR" }, agent_status: "idle",
+        cwd: "/lead-repository", foreground_cwd: "/lead-repository", pane_id: "wR:p1",
+        tab_id: "wR:t1", terminal_id: "term-wR-p1", workspace_id: "wR",
+      },
+    };
+    separateRootState.processes = {
+      "wR:p1": [{ argv: ["claude"], cwd: "/lead-repository", name: "claude" }],
+    };
+    writeFileSync(statePath, `${JSON.stringify(separateRootState, null, 2)}\n`);
+    const leadPin = [
+      "--pane", "wR:p1", "--workspace", "wR", "--tab-id", "wR:t1",
+      "--as", "claude", "--terminal-id", "term-wR-p1", "--repo-root", "/lead-repository",
+    ];
+    const spawned = JSON.parse(runRaw(
+      "spawn", ...leadPin, "--partner", "codex",
+      "--partner-repo-root", "/unit-worktree", "--model", "gpt-5", "--effort", "high",
+    ));
+    assert.equal(spawned.partnerRepoRoot, "/unit-worktree");
+    const session = JSON.parse(runRaw(
+      "init", ...leadPin, "--partner-pane", spawned.partner.pane_id,
+      "--partner-repo-root", "/unit-worktree", "--role", "executor",
+      "--model", "gpt-5", "--effort", "high",
+    ));
+    assert.equal(session.model, "gpt-5");
+    assert.equal(session.effort, "high");
+    assert.equal(session.participants.claude.repo_root, "/lead-repository");
+    assert.equal(session.participants.codex.repo_root, "/unit-worktree");
+    const verified = JSON.parse(runRaw("verify", ...leadPin, "--sid", session.sid));
+    assert.equal(verified.session.sid, session.sid);
+    runRaw("end", ...leadPin, "--sid", session.sid);
   }
 
   // Model and effort reach the new pane as the partner CLI's own arguments,

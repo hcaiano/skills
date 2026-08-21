@@ -154,11 +154,12 @@ function currentPane() {
   return pane;
 }
 
-function participantRecord(pane) {
+function participantRecord(pane, repoRoot = null) {
   return {
     pane_id: pane.pane_id,
     terminal_id: pane.terminal_id ?? null,
     agent_session_id: pane.agent_session?.value ?? null,
+    repo_root: repoRoot,
   };
 }
 
@@ -341,14 +342,19 @@ function normalizeSession(session, live) {
       if (
         record?.pane_id === pane.pane_id &&
         ((record.terminal_id == null && pane.terminal_id) ||
-          (record.agent_session_id == null && pane.agent_session?.value))
+          (record.agent_session_id == null && pane.agent_session?.value) ||
+          record.repo_root == null)
       ) {
         normalized.participants[pane.agent] = {
-          ...participantRecord(pane),
+          ...participantRecord(
+            pane,
+            record.repo_root ?? callerContext.repoRoot,
+          ),
           ...record,
           terminal_id: record.terminal_id ?? pane.terminal_id ?? null,
           agent_session_id:
             record.agent_session_id ?? pane.agent_session?.value ?? null,
+          repo_root: record.repo_root ?? callerContext.repoRoot,
         };
         changed = true;
       }
@@ -490,13 +496,13 @@ function tabAgentPanes(self) {
 // caller's, which is what makes any supported kind pairable — and a pane of
 // the caller's own kind is refused rather than accepted: two panes of one CLI
 // echo each other instead of reviewing each other.
-function requireLivePartner(self, partner) {
+function requireLivePartner(self, partner, repoRoot = callerContext.repoRoot) {
   if (partner.agent === self.agent) {
     fail(
       `refusing to pair ${self.agent} with itself: pane ${partner.pane_id} runs the same CLI — the partner must be one of ${agentKinds.filter((kind) => kind !== self.agent).join(", ")}`,
     );
   }
-  requireForegroundProcess(partner.pane_id, partner.agent, callerContext.repoRoot);
+  requireForegroundProcess(partner.pane_id, partner.agent, repoRoot);
   return partner;
 }
 
@@ -506,7 +512,12 @@ function describePanes(panes) {
 
 // The pane a NEW pair forms with: an agent pane of this tab that no active
 // session already holds. Ambiguity is never guessed away — it is named.
-function choosePartnerPane(self, entries, requestedPane) {
+function choosePartnerPane(
+  self,
+  entries,
+  requestedPane,
+  partnerRepoRoot = callerContext.repoRoot,
+) {
   const paired = pairedPaneIds(entries);
   const candidates = tabAgentPanes(self).filter((pane) => !paired.has(pane.pane_id));
   if (requestedPane) {
@@ -516,7 +527,7 @@ function choosePartnerPane(self, entries, requestedPane) {
         `--partner-pane ${requestedPane} is not an unpaired agent pane in current tab ${self.tab_id}; candidates: ${describePanes(candidates)}`,
       );
     }
-    return requireLivePartner(self, chosen);
+    return requireLivePartner(self, chosen, partnerRepoRoot);
   }
   if (candidates.length === 0) {
     fail(
@@ -528,7 +539,7 @@ function choosePartnerPane(self, entries, requestedPane) {
       `current tab ${self.tab_id} holds ${candidates.length} unpaired agent panes; name one with --partner-pane — ${describePanes(candidates)}`,
     );
   }
-  return requireLivePartner(self, candidates[0]);
+  return requireLivePartner(self, candidates[0], partnerRepoRoot);
 }
 
 // `discover` is informational: it reports who the caller is, which panes it
@@ -657,6 +668,7 @@ function agentStartFailure(error, paneId) {
 async function spawn(args) {
   const options = parseOptions(args);
   const requestedPartner = options.partner ?? null;
+  const partnerRepoRoot = options["partner-repo-root"] ?? callerContext.repoRoot;
   if (requestedPartner && !agentKinds.includes(requestedPartner)) {
     fail(`unknown partner ${requestedPartner} — use one of ${kindList}`);
   }
@@ -669,9 +681,9 @@ async function spawn(args) {
     const existing = tabAgentPanes(self).find((pane) => pane.pane_id === requestedPane);
     if (existing && (!requestedPartner || existing.agent === requestedPartner)) {
       const live = processInfo(existing.pane_id);
-      if (matchingForegroundProcess(live, existing.agent, callerContext.repoRoot)) {
+      if (matchingForegroundProcess(live, existing.agent, partnerRepoRoot)) {
         process.stdout.write(
-          `${JSON.stringify({ self, partner: existing, partnerAgent: existing.agent }, null, 2)}\n`,
+          `${JSON.stringify({ self, partner: existing, partnerAgent: existing.agent, partnerRepoRoot }, null, 2)}\n`,
         );
         return;
       }
@@ -695,7 +707,7 @@ async function spawn(args) {
     "--direction",
     "right",
     "--cwd",
-    callerContext.repoRoot,
+    partnerRepoRoot,
     "--no-focus",
   ).pane;
   const name = pairAgentName(binding.partnerAgent, split.pane_id);
@@ -746,7 +758,7 @@ async function spawn(args) {
     throw error;
   }
   process.stdout.write(
-    `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent }, null, 2)}\n`,
+    `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent, partnerRepoRoot }, null, 2)}\n`,
   );
 }
 
@@ -919,6 +931,7 @@ async function acquireLock(lock, timeoutMs, label) {
 async function initSession(args) {
   const options = parseOptions(args);
   const role = options.role ?? "peer";
+  const partnerRepoRoot = options["partner-repo-root"] ?? callerContext.repoRoot;
   if (!roles.includes(role)) fail(`unknown role ${role} — use ${roles.join(" or ")}`);
   // Resolve the caller's own pane first. Partner discovery runs on the create
   // path alone: an established session resolves through its own recorded
@@ -966,13 +979,34 @@ async function initSession(args) {
       }
       await reconcileAcknowledged(resumed.path, resumed.session.sid);
       resumed.session = JSON.parse(readFileSync(resumed.path, "utf8"));
+      for (const [field, expected] of [
+        ["role", role],
+        ["model", options.model ?? null],
+        ["effort", options.effort ?? null],
+      ]) {
+        if (options[field] !== undefined && (resumed.session[field] ?? null) !== expected) {
+          fail(`cannot resume existing current-tab session: ${field} differs`);
+        }
+      }
+      const resumedPartner = Object.keys(resumed.session.participants ?? {}).find(
+        (kind) => kind !== self.agent && agentKinds.includes(kind),
+      );
+      if (
+        options["partner-repo-root"] !== undefined &&
+        resumed.session.participants?.[resumedPartner]?.repo_root !== partnerRepoRoot
+      ) {
+        fail("cannot resume existing current-tab session: partner repo root differs");
+      }
       process.stdout.write(
         `${JSON.stringify({ ...resumed.session, resumed: true }, null, 2)}\n`,
       );
       return;
     }
 
-    const binding = { self, partner: choosePartnerPane(self, entries, requestedPane) };
+    const binding = {
+      self,
+      partner: choosePartnerPane(self, entries, requestedPane, partnerRepoRoot),
+    };
     const path = sessionPathFor(self, binding.partner.pane_id);
     const session = {
       schema_version: schemaVersion,
@@ -981,10 +1015,12 @@ async function initSession(args) {
       tab_id: binding.self.tab_id,
       initiator: binding.self.agent,
       role,
+      model: options.model ?? null,
+      effort: options.effort ?? null,
       active: true,
       participants: {
-        [binding.self.agent]: participantRecord(binding.self),
-        [binding.partner.agent]: participantRecord(binding.partner),
+        [binding.self.agent]: participantRecord(binding.self, callerContext.repoRoot),
+        [binding.partner.agent]: participantRecord(binding.partner, partnerRepoRoot),
       },
       round: 0,
       last_status: byKind(null),
@@ -1050,9 +1086,14 @@ async function verifiedSessionAt(self, path) {
   );
   const selfRecord = session.participants?.[self.agent];
   const partnerRecord = partnerAgent ? session.participants[partnerAgent] : null;
-  if (!partnerRecord?.pane_id || !participantMatches(selfRecord, self)) {
+  if (
+    !partnerRecord?.pane_id ||
+    !participantMatches(selfRecord, self) ||
+    (selfRecord.repo_root && selfRecord.repo_root !== callerContext.repoRoot)
+  ) {
     fail("live panes do not match the participants recorded for this tab");
   }
+  const partnerRepoRoot = partnerRecord.repo_root ?? callerContext.repoRoot;
   let partnerPane;
   try {
     partnerPane = paneGet(partnerRecord.pane_id);
@@ -1068,7 +1109,7 @@ async function verifiedSessionAt(self, path) {
   ) {
     fail("recorded partner is no longer the partner agent in the caller's current tab");
   }
-  requireForegroundProcess(partnerPane.pane_id, partnerAgent, callerContext.repoRoot);
+  requireForegroundProcess(partnerPane.pane_id, partnerAgent, partnerRepoRoot);
   const live = { self, partner: partnerPane, partnerAgent };
 
   const normalized = normalizeSession(session, live);
@@ -1101,7 +1142,8 @@ async function verifiedSessionAt(self, path) {
   const normalizedPartner = session.participants[live.partner.agent];
   if (
     !participantMatches(normalizedSelf, live.self) ||
-    !participantMatches(normalizedPartner, live.partner)
+    !participantMatches(normalizedPartner, live.partner) ||
+    (normalizedSelf.repo_root && normalizedSelf.repo_root !== callerContext.repoRoot)
   ) {
     fail("live panes do not match the participants recorded for this tab");
   }
@@ -1115,6 +1157,11 @@ async function verifiedSessionAt(self, path) {
   ) {
     fail("recorded partner is no longer the partner agent in the caller's current tab");
   }
+  requireForegroundProcess(
+    partner.pane_id,
+    partner.agent,
+    normalizedPartner.repo_root ?? callerContext.repoRoot,
+  );
 
   return { ...live, partner, path, session };
 }
@@ -1627,11 +1674,12 @@ async function endSession(args) {
         // recovery — only a provably absent partner process is stale, an
         // unreadable one is unknown.
         const info = processInfo(pane.pane_id);
-        if (matchingForegroundProcess(info, partnerAgent, callerContext.repoRoot)) {
+        const partnerRepoRoot = record.repo_root ?? callerContext.repoRoot;
+        if (matchingForegroundProcess(info, partnerAgent, partnerRepoRoot)) {
           partner = pane;
         } else if (!allowStale) {
           fail(
-            `pane ${pane.pane_id} has no live foreground ${partnerAgent} process rooted at ${callerContext.repoRoot}`,
+            `pane ${pane.pane_id} has no live foreground ${partnerAgent} process rooted at ${partnerRepoRoot}`,
           );
         }
       }
@@ -1751,7 +1799,9 @@ async function send(args) {
     kind,
   );
   const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
-  const receiveCommand = `node ${shellQuote(scriptPath)} receive ${pinnedCliText(binding.partner, callerContext.repoRoot)} --sid ${shellQuote(binding.session.sid)} --from ${shellQuote(binding.self.agent)} --seq ${sequence}`;
+  const partnerRepoRoot = binding.session.participants?.[binding.partner.agent]?.repo_root ??
+    callerContext.repoRoot;
+  const receiveCommand = `node ${shellQuote(scriptPath)} receive ${pinnedCliText(binding.partner, partnerRepoRoot)} --sid ${shellQuote(binding.session.sid)} --from ${shellQuote(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
   const message = `${header}\n${control}\n\n${body}`;
   const deliveryProof = await promptReservedDelivery(
@@ -1881,7 +1931,7 @@ async function main() {
     await endSession(args);
   } else {
     fail(
-      `usage: herdr-pair.mjs COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--sid ID] [--partner ${kindList}] [--partner-pane ID] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
+      `usage: herdr-pair.mjs COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--sid ID] [--partner ${kindList}] [--partner-pane ID] [--partner-repo-root PATH] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
     );
   }
 }
