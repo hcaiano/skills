@@ -22,7 +22,7 @@ test("ship-it stays manual-only across model runtimes", () => {
   assert.match(openai, /^  allow_implicit_invocation: false$/mu);
   assert.match(
     delivery,
-    /explicitly tells\s+the executor to use the installed `ship-it` skill/u,
+    /explicitly\s+tells the executor to use the installed\s+`ship-it` skill/u,
   );
   assert.match(
     orchestrate,
@@ -79,7 +79,7 @@ test("ship-it keeps final validation after the gate", () => {
   );
   assert.match(
     delivery,
-    /run the proportional proof and graded review gate on the complete diff/u,
+    /run\s+the proportional proof and graded review gate on the complete diff/u,
   );
   assert.match(
     shipIt,
@@ -105,6 +105,17 @@ test("ship-it keeps final validation after the gate", () => {
     shipIt,
     /prove that this delivery intentionally produced every intervening\s+commit before entering step 4's post-gate mutation loop/u,
   );
+});
+
+test("review convergence stops unproved rounds after three", () => {
+  assert.match(shipIt, /Count every completed LLM review round for this\s+delivery/u);
+  assert.match(
+    shipIt,
+    /After three rounds, a further review needs a\s+regression that is traceable to the latest commit/u,
+  );
+  assert.match(shipIt, /All\s+other later findings become recorded residuals; they do not reopen review/u);
+  assert.match(shipIt, /`Review rounds:`[\s\S]*`Residual findings:`/u);
+  assert.match(shipIt, /two-round post-gate mutation cap in step 4 still applies/u);
 });
 
 test("every step cross-reference resolves after the renumbering", () => {

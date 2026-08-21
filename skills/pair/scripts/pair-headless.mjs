@@ -5,7 +5,7 @@
 // delivery receipt beyond the run receipt: a turn either produced a reply or it
 // did not, and the transcript is the evidence either way.
 //
-//   node pair-headless.mjs init   --repo <root> --partner claude|codex|cursor|grok
+//   node pair-headless.mjs init   --repo <root> --partner claude|codex|cursor|grok|opencode
 //                                 [--model <name>] [--effort <level>] [--role peer|executor]
 //   node pair-headless.mjs send   --repo <root> --kind <kind> --body-file <path> [--write|--read-only]
 //                                 [--background]
@@ -14,22 +14,24 @@
 //   node pair-headless.mjs status --repo <root>
 //   node pair-headless.mjs clear  --repo <root>
 //   node pair-headless.mjs end    --repo <root>
-//   [--idle-min 20] [--total-min 60] on init and send
+//   [--idle-min 20] [--total-min 60] on init and send; writable task turns
+//   default to 45 idle minutes
 //
-// State lives in `<git-dir>/pair/session.json`, so the session belongs to the
-// worktree the work happens in: one pair per worktree, and a linked worktree
-// gets its own. A turn holds `in-flight.json` beside it for as long as it runs,
-// because half-duplex means one resume of the CLI session at a time; a send
-// refuses over any existing marker and `clear` is the only remover. The
-// deadline mechanic (output-based liveness — stock macOS has no `timeout` — and
-// a kill of the PID itself, never the group) follows review-it's headless
-// wrappers; the receipt shape follows theirs too, so a caller reads one JSON
-// object per command and never a transcript to learn what happened.
+// Git worktree state lives in `<git-dir>/pair/session.json`. A plain directory
+// uses `${XDG_STATE_HOME:-~/.local/state}/pair/<basename>-<realpath-hash>/`
+// instead. A turn holds
+// `in-flight.json` beside it for as long as it runs, because half-duplex means
+// one resume of the CLI session at a time; a send refuses over any existing
+// marker and `clear` is the only remover. The deadline mechanic (output-based
+// liveness — stock macOS has no `timeout` — and a kill of the PID itself, never
+// the group) follows review-it's headless wrappers; the receipt shape follows
+// theirs too, so a caller reads one JSON object per command and never a
+// transcript to learn what happened.
 //
 // Exit 0: JSON receipt {ok: true, ...}. Exit 1: {ok: false, reason, ...}.
 // Exit 2: usage error.
 import { spawn, spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
@@ -38,6 +40,7 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -45,7 +48,8 @@ import {
   writeSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const POLL_MS = 2000;
 const WAIT_POLL_MS = 100;
@@ -98,7 +102,7 @@ const flag = (name) => argv.includes(`--${name}`);
 
 // --- identity ---------------------------------------------------------------
 
-export const AGENT_KINDS = ["claude", "codex", "cursor", "grok"];
+export const AGENT_KINDS = ["claude", "codex", "cursor", "grok", "opencode"];
 const kindList = AGENT_KINDS.join("|");
 
 // Which CLI is running this helper. Detection is best-effort — it only has the
@@ -106,6 +110,7 @@ const kindList = AGENT_KINDS.join("|");
 // decides the partner on its own: it exists to catch a same-CLI pairing, which
 // produces an echo rather than a peer.
 export const detectSelf = (env = process.env) => {
+  if (env.OPENCODE_CLIENT || env.OPENCODE_PID || env.OPENCODE_WORKSPACE_ID) return "opencode";
   if (env.CLAUDECODE || env.CLAUDE_CODE_ENTRYPOINT) return "claude";
   if (env.CODEX_SANDBOX || env.CODEX_THREAD_ID || env.CODEX_HOME) return "codex";
   if (env.CURSOR_AGENT || env.CURSOR_AGENT_CHAT_ID) return "cursor";
@@ -113,7 +118,7 @@ export const detectSelf = (env = process.env) => {
   return null;
 };
 
-// The partner is always chosen, never derived: with four CLIs there is no
+// The partner is always chosen, never derived: with several CLIs there is no
 // "opposite" to fall back on. The only rule is that it differs from the lead.
 export const resolvePartner = (requested, env = process.env) => {
   const self = detectSelf(env);
@@ -150,18 +155,57 @@ export const resolveWrite = (role, { write, readOnly }) => {
 const git = (repo, ...args) =>
   spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
 
-export const locate = (repo) => {
+export const locate = (
+  repo,
+  home = homedir(),
+  xdgStateHome = process.env.XDG_STATE_HOME,
+) => {
+  let directory;
+  try {
+    directory = realpathSync(repo);
+    if (!statSync(directory).isDirectory()) {
+      return { error: `not a directory: ${repo}` };
+    }
+  } catch (error) {
+    return { error: `cannot resolve task directory ${repo}: ${error.message}` };
+  }
+
   const top = git(repo, "rev-parse", "--show-toplevel");
   const dir = git(repo, "rev-parse", "--absolute-git-dir");
-  if (top.status !== 0 || dir.status !== 0) return { error: `not a git repository: ${repo} — the headless pair keeps its session in the repository's git directory` };
+  if (top.status !== 0 || dir.status !== 0) {
+    const hash = createHash("sha256").update(directory).digest("hex").slice(0, 12);
+    const stateHome = xdgStateHome?.trim()
+      ? resolve(xdgStateHome)
+      : join(home, ".local", "state");
+    const stateDir = join(stateHome, "pair", `${basename(directory) || "root"}-${hash}`);
+    return {
+      root: directory,
+      stateDir,
+      statePath: join(stateDir, "session.json"),
+      lockPath: join(stateDir, "in-flight.json"),
+      transcripts: join(stateDir, "transcripts"),
+      writableRoot: stateDir,
+    };
+  }
   const root = top.stdout.trim();
   const stateDir = join(dir.stdout.trim(), "pair");
+  const common = git(repo, "rev-parse", "--git-common-dir");
+  if (common.status !== 0) {
+    return { error: `cannot resolve the Git common directory for ${repo}` };
+  }
+  let writableRoot;
+  try {
+    writableRoot = realpathSync(resolve(directory, common.stdout.trim()));
+  } catch (error) {
+    return { error: `cannot resolve the Git common directory for ${repo}: ${error.message}` };
+  }
   return {
     root,
     stateDir,
     statePath: join(stateDir, "session.json"),
     lockPath: join(stateDir, "in-flight.json"),
     transcripts: join(stateDir, "transcripts"),
+    writableRoot,
   };
 };
 
@@ -332,6 +376,9 @@ export const sessionKnown = (partner, sid, root, env = process.env, home = homed
   if (partner === "cursor") {
     return storeHolds(join(home, ".cursor", "chats"), sid);
   }
+  // OpenCode stores sessions in a database. A filesystem walk cannot prove a
+  // session absent, so keep the recorded sid and let the next resume decide.
+  if (partner === "opencode") return true;
   const projects = join(home, ".claude", "projects");
   const project = join(projects, root.replace(/[^A-Za-z0-9]/gu, "-"));
   try {
@@ -358,9 +405,9 @@ export const sessionKnown = (partner, sid, root, env = process.env, home = homed
 // --- partner turns ----------------------------------------------------------
 
 // Reasoning effort reaches each CLI through a different door: Grok and Claude
-// take flags, Codex a config override, and Cursor a bracket suffix inside the
-// model name.
-export const EFFORT_SUPPORT = { claude: true, codex: true, cursor: true, grok: true };
+// take flags, Codex a config override, Cursor a bracket suffix inside the
+// model name, and OpenCode a model variant.
+export const EFFORT_SUPPORT = { claude: true, codex: true, cursor: true, grok: true, opencode: true };
 
 // Cursor parameterizes the model itself, so an effort with no model has nowhere
 // to go and the caller has to name one.
@@ -374,11 +421,23 @@ export const cursorModel = (model, effort) => {
 // arrives through the spawn and the sandbox through a config override — the
 // same split ask-peer measured. Model and effort are settings of the session,
 // so they are passed when it is created and never on a resume.
-export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, write, model, effort }) => {
+export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, writableRoot = root, write, model, effort }) => {
   if (partner === "codex") {
     const sandbox = write ? "workspace-write" : "read-only";
+    const writeConfig = write
+      ? [
+          "-c",
+          `sandbox_workspace_write.writable_roots=${JSON.stringify([writableRoot])}`,
+          "-c",
+          "sandbox_workspace_write.network_access=true",
+        ]
+      : [];
     if (resume) {
-      return { bin: "codex", args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, "--json", "-o", replyFile, "-"], promptVia: "stdin" };
+      return {
+        bin: "codex",
+        args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, ...writeConfig, "--json", "-o", replyFile, "-"],
+        promptVia: "stdin",
+      };
     }
     return {
       bin: "codex",
@@ -388,6 +447,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
         sandbox,
         "-C",
         root,
+        ...writeConfig,
         ...(model ? ["-m", model] : []),
         ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
         "--json",
@@ -435,6 +495,23 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
       promptVia: "stdin",
     };
   }
+  if (partner === "opencode") {
+    return {
+      bin: "opencode",
+      args: [
+        "run",
+        "--format",
+        "json",
+        "--dir",
+        root,
+        ...(resume ? ["--session", sid] : []),
+        ...(model && !resume ? ["-m", model] : []),
+        ...(effort ? ["--variant", effort] : []),
+        ...(write ? ["--auto"] : ["--agent", "plan"]),
+      ],
+      promptVia: "argv",
+    };
+  }
   // Grok takes the prompt from a file rather than stdin, and accepts the
   // session id for a NEW conversation — so the pair names the session itself
   // and never has to find it in the output.
@@ -468,6 +545,7 @@ export const parseSessionId = (partner, transcript) => {
     return typeof started?.thread_id === "string" ? started.thread_id : null;
   }
   if (partner === "cursor") return parseCursorSessionId(transcript);
+  if (partner === "opencode") return parseOpenCodeStream(transcript).sessionId;
   if (partner === "grok") return null; // pre-generated, never parsed
   return parseClaudeResult(transcript)?.session_id ?? null;
 };
@@ -546,6 +624,28 @@ export const parseGrokStream = (transcript) => {
   };
 };
 
+export const parseOpenCodeStream = (transcript) => {
+  const events = parseJsonObjects(transcript);
+  const reply = events
+    .filter(
+      (event) =>
+        event.type === "text"
+        && event.part?.type === "text"
+        && typeof event.part.text === "string",
+    )
+    .map((event) => event.part.text)
+    .join("");
+  const session = events.find(
+    (event) =>
+      typeof event.sessionID === "string"
+      || typeof event.part?.sessionID === "string",
+  );
+  return {
+    reply: reply.trim() || null,
+    sessionId: session?.sessionID ?? session?.part?.sessionID ?? null,
+  };
+};
+
 // The stream carries many objects and several of them hold a session_id — the
 // `system` init event does too — so the reply comes from the final
 // `type: "result"` event and nothing else. The session id falls back to any
@@ -573,7 +673,7 @@ export const parseClaudeResult = (transcript) => {
 };
 
 // Codex is the only partner that writes the reply itself (`-o`); for the other
-// three the reply has to be lifted out of the run's own output and put where
+// partners the reply has to be lifted out of the run's own output and put where
 // the caller was told to read it.
 export const extractReply = (partner, replyFile, transcript) => {
   if (partner === "codex") {
@@ -619,6 +719,7 @@ export const extractReply = (partner, replyFile, transcript) => {
       .join("");
     return text?.trim() || null;
   }
+  if (partner === "opencode") return parseOpenCodeStream(transcript).reply;
   return parseGrokStream(transcript).reply;
 };
 
@@ -715,6 +816,7 @@ export const bootstrapPrompt = ({ self, partner, root, role = "peer" }) =>
       ? "You are the executor: you hold the write leases by default and implement; the lead plans and reviews."
       : "You and the lead are peers: you split scopes as equals and review each other's work.",
     "This session persists: every later message resumes this exact session, so keep the task state you build here.",
+    "During long turns, keep tool output flowing so the idle watchdog can see progress.",
     "",
     "Protocol. Every message you receive starts with a header line",
     "`[agent <from> -> <to> kind=<kind> sid=<sid>]` followed by a blank line and the body.",
@@ -758,8 +860,14 @@ export const minutesToMs = (value, name) => {
   return { ms: minutes * 60000 };
 };
 
-const deadlines = () => {
-  const idle = minutesToMs(opt("idle-min", "20"), "idle-min");
+export const defaultIdleMinutes = ({ kind, write } = {}) =>
+  kind === "task" && write ? 45 : 20;
+
+const deadlines = ({ kind, write } = {}) => {
+  const idle = minutesToMs(
+    opt("idle-min", String(defaultIdleMinutes({ kind, write }))),
+    "idle-min",
+  );
   const total = minutesToMs(opt("total-min", "60"), "total-min");
   if (idle.error) fail(idle.error, 2);
   if (total.error) fail(total.error, 2);
@@ -818,6 +926,7 @@ const runInit = () => {
     replyFile,
     promptFile,
     root: place.root,
+    writableRoot: place.writableRoot,
     write: false,
     model,
     effort,
@@ -825,12 +934,13 @@ const runInit = () => {
   const { idleMs, totalMs } = deadlines();
   const prompt = bootstrapPrompt({ self, partner, root: place.root, role });
   if (promptVia === "file") writeFileSync(promptFile, `${prompt}\n`);
+  const invocationArgs = promptVia === "argv" ? [...args, prompt] : args;
 
   supervise({
     bin,
-    args,
+    args: invocationArgs,
     cwd: place.root,
-    prompt: promptVia === "file" ? "" : prompt,
+    prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath,
     idleMs,
     totalMs,
@@ -1042,9 +1152,12 @@ const runWorker = () => {
     replyFile: paths.replyFile,
     promptFile: paths.promptFile,
     root: place.root,
+    writableRoot: place.writableRoot,
     write,
-    effort: state.partner === "claude" ? state.effort : null,
+    effort: ["claude", "opencode"].includes(state.partner) ? state.effort : null,
   });
+  const prompt = readFileSync(paths.promptFile, "utf8");
+  const invocationArgs = promptVia === "argv" ? [...args, prompt] : args;
 
   const base = {
     seq,
@@ -1081,9 +1194,9 @@ const runWorker = () => {
 
   supervise({
     bin,
-    args,
+    args: invocationArgs,
     cwd: place.root,
-    prompt: promptVia === "file" ? "" : readFileSync(paths.promptFile, "utf8"),
+    prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath: paths.transcriptPath,
     idleMs,
     totalMs,
@@ -1180,7 +1293,7 @@ const runSend = () => {
   const body = readFileSync(bodyFile, "utf8");
   if (!body.trim()) fail("the body file is empty — a partner turn needs a message", 2);
   // Read before the marker is written, so a usage error never leaves one behind.
-  const { idleMs, totalMs } = deadlines();
+  const { idleMs, totalMs } = deadlines({ kind, write });
 
   // Half-duplex means one turn at a time: a second send would resume one CLI
   // session twice at once. The lock is taken before anything is spawned or the
@@ -1347,6 +1460,21 @@ const runStatus = () => {
   const place = requirePlace();
   const state = readState(place.statePath);
   if (!state?.sid) fail(`no pair session in ${place.statePath} — run init first`);
+  const latestReceiptFile = (state.seq ?? 0) > 0
+    ? findReceipt(place, state.seq)
+    : null;
+  let latestReceipt = null;
+  if (latestReceiptFile) {
+    try {
+      latestReceipt = {
+        ...JSON.parse(readFileSync(latestReceiptFile, "utf8")),
+        receipt_file: latestReceiptFile,
+      };
+    } catch {
+      latestReceipt = { unreadable: latestReceiptFile };
+    }
+  }
+  const forks = state.forked ?? [];
   emit(
     {
       ok: true,
@@ -1361,9 +1489,11 @@ const runStatus = () => {
       transcripts: state.transcripts ?? place.transcripts,
       session_known: sessionKnown(state.partner, state.sid, place.root),
       in_flight: readMarker(place.lockPath),
+      latest_receipt: latestReceipt,
       grok_cancelled_consecutive: state.grok_cancelled_consecutive ?? 0,
       pending_fork: state.pending_fork ?? null,
-      forked: state.forked ?? [],
+      forked: forks,
+      lineage: { current_sid: state.sid, forks },
     },
     0,
   );
@@ -1468,7 +1598,17 @@ const COMMANDS = {
   _worker: runWorker,
 };
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
+let invokedAsMain = false;
+try {
+  invokedAsMain = Boolean(
+    process.argv[1]
+      && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)),
+  );
+} catch {
+  // A missing or unreadable argv path cannot be this module's entry point.
+}
+
+if (invokedAsMain) {
   const run = COMMANDS[command];
   if (!run) {
     fail(

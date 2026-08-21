@@ -106,10 +106,11 @@ install `pair` as well.
 
 ## Dependencies
 
-- `orchestrate` requires `pair`, `git`, `gh`, and `trash`. Its units always use
-  pair's headless backend. `pair`'s Herdr backend requires the `herdr` CLI and
-  separate upstream `herdr` skill; its headless backend needs only the chosen
-  partner CLI (`claude`, `codex`, `cursor-agent`, or `grok`).
+- `orchestrate` requires `pair`, `git`, `gh`, and `trash`. It records a Herdr
+  backend inside Herdr and a headless backend outside Herdr; creation can
+  override this choice. The Herdr backend requires the `herdr` CLI and the
+  separate upstream `herdr` skill. The headless backend needs only the chosen
+  partner CLI (`claude`, `codex`, `cursor-agent`, `grok`, or `opencode`).
 - `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
   through Claude; Claude Code consults Codex.
 - `art-director` composes the external `imagegen` skill. It uses `brandkit`

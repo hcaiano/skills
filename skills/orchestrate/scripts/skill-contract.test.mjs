@@ -10,23 +10,35 @@ const staffing = readFileSync(join(here, "../references/staffing.md"), "utf8");
 const delivery = readFileSync(join(here, "../references/delivery.md"), "utf8");
 const unit = readFileSync(join(here, "unit.mjs"), "utf8");
 
-test("orchestrate is manual-only and harness-agnostic", () => {
+test("orchestrate is manual-only and supports recorded pair backends", () => {
   assert.match(skill, /^name: orchestrate$/mu);
   assert.match(skill, /^disable-model-invocation: true$/mu);
-  assert.doesNotMatch(`${skill}\n${staffing}\n${delivery}\n${unit}`, /herdr (?:agent|pane|tab|workspace)/u);
-  assert.doesNotMatch(unit, /HERDR_/u);
+  assert.match(skill, /--backend headless\|herdr/u);
+  assert.match(unit, /HERDR_ENV/u);
+  assert.match(unit, /backend: "herdr"/u);
 });
 
 test("one durable record owns the complete unit atom", () => {
-  assert.match(skill, /one\s+worktree, branch, headless pair, and pull request/u);
+  assert.match(skill, /one\s+worktree, branch, pair backend, and pull request/u);
   assert.match(skill, /<git-common-dir>\/orchestrate\/units\/<unit-id>\.json/u);
   assert.match(unit, /git-common-dir/u);
   assert.match(unit, /lifecycle: "creating"/u);
   assert.match(unit, /partner arena must differ from the orchestrator harness/u);
+  assert.match(skill, /orchestrator session must run rooted in `REPO`/u);
+  assert.match(skill, /caller\s+pane proof binds the live lead process to that repository/u);
   assert.match(skill, /manifest-owned task file is authoritative/u);
   assert.match(skill, /resumes `creating`, `setting-up`,\s+`initializing-pair`, or `starting`/u);
   assert.match(skill, /recoverable Cursor record that stores a separate effort/u);
+  assert.match(skill, /## Addendum — <UTC timestamp>/u);
+  assert.match(skill, /executor rereads the complete file[^]*again after every restaff/u);
   assert.match(unit, /resumed_from/u);
+});
+
+test("unit creation protects the PR body handoff", () => {
+  assert.match(skill, /adds `\/PR_BODY\.md` once to the repository's Git\s+exclude file/u);
+  assert.match(unit, /"rev-parse", "--git-path", "info\/exclude"/u);
+  assert.match(unit, /const pattern = "\/PR_BODY\.md"/u);
+  assert.match(unit, /delivery_setup\.pr_body_exclude/u);
 });
 
 test("the unit helper exposes one tested lifecycle surface", () => {
@@ -40,8 +52,9 @@ test("the unit helper exposes one tested lifecycle surface", () => {
 });
 
 test("pair is the only unit transport", () => {
-  assert.match(skill, /Pair receipts and transcripts are the only unit transport/u);
+  assert.match(skill, /pair receipts and transcripts are the only transport/iu);
   assert.match(skill, /pair-headless\.mjs/u);
+  assert.match(skill, /reconciles its sequence ACKs/u);
   assert.match(skill, /--background/u);
   assert.match(skill, /--timeout-min 1/u);
   assert.doesNotMatch(skill, /report_pane|pane tokens|orphan adoption/u);
@@ -49,18 +62,28 @@ test("pair is the only unit transport", () => {
 
 test("staffing matches difficulty and records its evidence", () => {
   assert.match(staffing, /Match model intelligence to task difficulty/u);
+  assert.match(staffing, /models\.md[\s\S]*owns the model-choice rubric,\s+roster, live catalogs, costs, scores, and effort syntax/u);
+  assert.match(staffing, /This file owns arena\s+floors, capacity evidence, and the orchestration decision record/u);
+  assert.match(staffing, /Apply the roster before these\s+arena floors/u);
+  assert.match(staffing, /use its Taste score/u);
   assert.match(staffing, /pool headroom first and speed second/u);
   assert.match(staffing, /current orchestrator CLI is not a legal partner/u);
   assert.match(staffing, /Haiku; Fable is advisor-only/u);
   assert.match(staffing, /Luna/u);
+  assert.match(staffing, /OpenCode/u);
   assert.match(staffing, /one-line reason/u);
-  assert.match(staffing, /effort-specific name exactly as the live catalog prints/u);
-  assert.match(staffing, /omit `--effort`/u);
+  assert.match(staffing, /compared roster Taste scores when a score breaks the tie/u);
+  assert.doesNotMatch(staffing, /Quality evidence|x-preview-f-free|SWE-Pro|AA Coding Agent Index/u);
+  assert.match(
+    staffing,
+    /headless `cursor-agent` run proves that shell commands are\s+rejected[^]*consult and read-only review arena/u,
+  );
+  assert.match(staffing, /Cursor pane on the Herdr backend keeps its own permission plumbing/u);
   assert.doesNotMatch(staffing, /frontier by default|least expensive/u);
 });
 
 test("restaff preserves evidence and normal feedback stays bounded", () => {
-  assert.match(skill, /checkpoints the HEAD, worktree status and\s+diff, and newest receipt/u);
+  assert.match(skill, /checkpoints the HEAD, worktree status and\s+diff, and newest receipt or Herdr ACK state/u);
   assert.match(skill, /Normal scope\s+feedback and one bounded correction stay on the current pair/u);
   assert.match(skill, /matching retry resumes\s+`restaffing` or `restaff-failed`/u);
   assert.match(unit, /staffing\.history\.push/u);
@@ -77,6 +100,19 @@ test("delivery keeps the exact-head chain of custody", () => {
   assert.match(delivery, /--match-head-commit <verified-head>/u);
   assert.match(delivery, /before and\s+after screenshots/u);
   assert.match(delivery, /merged, never rebased or force-pushed/u);
+});
+
+test("delivery owns review fan-out, Git mechanics, push auth, and literal holds", () => {
+  assert.match(delivery, /Use \*\*executor delivery\*\* by default/u);
+  assert.match(delivery, /Use \*\*orchestrator-owned Git mechanics\*\* only after the executor proves/u);
+  assert.match(delivery, /create a checkpoint commit without editing them/u);
+  assert.match(delivery, /CLI and model family must differ from the\s+executor's/u);
+  assert.match(delivery, /same single correction round/u);
+  assert.match(delivery, /Prefer an existing\s+SSH push URL or SSH remote/u);
+  assert.match(delivery, /gh auth refresh -s workflow/u);
+  assert.match(delivery, /A held PR stays open for Henrique's own review/u);
+  assert.match(delivery, /never merges it, including with admin rights/u);
+  assert.match(delivery, /Dependent units wait when this rule serializes them/u);
 });
 
 test("cleanup proves merge and binds force to one exact unit", () => {

@@ -39,22 +39,24 @@ test("the description carries every trigger", () => {
   ]) {
     assert.match(description, trigger);
   }
-  // The pair is no longer two fixed CLIs, and the description is where a
-  // cursor or grok user finds that out.
-  for (const kind of ["claude", "codex", "cursor", "grok"]) {
+  // The pair is no longer two fixed CLIs, and the description is where each
+  // supported harness finds that out.
+  for (const kind of ["claude", "codex", "cursor", "grok", "opencode"]) {
     assert.match(description, new RegExp(`\\b${kind}\\b`, "u"));
   }
   assert.doesNotMatch(description, /Claude-Codex/u);
 });
 
-test("the four kinds, the partner rule, and the roles are the same everywhere", () => {
-  const kinds = ["claude", "codex", "cursor", "grok"];
+test("the five kinds, the partner rule, and the roles are the same everywhere", () => {
+  const kinds = ["claude", "codex", "cursor", "grok", "opencode"];
   for (const kind of kinds) {
     assert.match(skill, new RegExp(`\`${kind}\``, "u"), `SKILL.md must name ${kind}`);
   }
   // Same CLI on both sides is the one combination that is refused, in prose
   // and in both helpers.
   assert.match(skill, /except the CLI you are\s+already running/u);
+  assert.match(skill, /refusal is based only on the CLI kind/u);
+  assert.match(skill, /same underlying model or provider/u);
   assert.match(helper, /refusing to pair \$\{self\.agent\} with itself/u);
   assert.match(headlessHelper, /refusing to pair \$\{self\} with itself/u);
   assert.deepEqual(
@@ -84,6 +86,7 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   // No hardcoded catalog: cursor's own list is the catalog.
   assert.match(skill, /cursor-agent --list-models/u);
   assert.match(skill, /grok models/u);
+  assert.match(skill, /opencode models/u);
   assert.match(skill, /`CLI default`/u);
   assert.match(skill, /references\/models\.md/u);
   assert.match(models, /Risk/u);
@@ -91,7 +94,7 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   assert.match(models, /Speed/u);
   assert.match(models, /Pool/u);
   assert.match(models, /`CLI default`/u);
-  assert.match(models, /Codex pair spawns set `low`, `high`, or `xhigh` explicitly/u);
+  assert.match(models, /A Codex pair spawn always sets effort\s+explicitly, including medium/u);
   assert.match(models, /SKILL_DIR[\s\S]*usage-state\.mjs/u);
   // Claude Code has an effort door; the backend and prose must carry it.
   assert.match(skill, /Claude Code\s+\(`--effort low\|medium\|high\|xhigh\|max`\)/u);
@@ -99,12 +102,69 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   assert.match(headlessBackend, /Claude receives\s+`--effort low\|medium\|high\|xhigh\|max`/u);
   assert.match(headlessHelper, /EFFORT_SUPPORT = \{ claude: true/u);
   assert.match(headlessBackend, /`\[effort=…\]` suffix inside `--model`/u);
+  assert.match(headlessBackend, /OpenCode\s+receives `--variant <effort>` on every invocation/u);
+  assert.match(models, /OpenCode[\s\S]*`--variant`/u);
 });
 
-test("cursor and grok delivery is documented as conservative, never as measured", () => {
+test("the roster is the single editable model preference source", () => {
+  const roster = models.slice(models.indexOf("## Roster"), models.indexOf("## Effort"));
+  const seats = [
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "grok-4.6",
+    "kimi-k3",
+    "composer-2.5",
+    "opencode/x-preview-f-free",
+  ];
+  assert.equal(roster.split("\n").filter((line) => /^\| `[^`]+`/u.test(line)).length, 11);
+  for (const seat of seats) assert.match(roster, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
+  assert.match(roster, /Staff only the latest generation of each model family/u);
+  assert.match(roster, /Taste scores rank models that already meet the task's risk and context bar/u);
+  assert.match(roster, /Henrique's editable seed values[\s\S]*`Updated` is the last update date/u);
+  assert.match(roster, /API-priced rows use `barato`, `médio`, or `caro`/u);
+  assert.match(roster, /subscription pools[\s\S]*`usage-state\.mjs`, not token prices/u);
+  assert.match(roster, /Claude, GPT, or Grok models that Cursor also lists[\s\S]*native\s+harness row/u);
+  assert.match(roster, /machine-specific[\s\S]*`staffing\.md`/u);
+  assert.match(roster, /free for one week from 2026-08-21/u);
+  assert.match(roster, /re-verify the ID with `opencode models --refresh`/u);
+  assert.match(roster, /malformed protocol headers[^|]*judge the receipt and diff, not the header/u);
+  assert.match(roster, /Promo IDs belong only in roster data, never in scripts/u);
+  assert.doesNotMatch(`${helper}\n${headlessHelper}`, /x-preview-f-free/u);
+  for (const excluded of [
+    "gpt-daybreak-blue-latest",
+    "claude-mythos-5",
+    "gpt-reserve",
+    "codex-auto-review",
+    "gemini-3.7-flash",
+    "gemini-3.1-pro",
+    "glm-5.2",
+    "cursor-grok-4.6",
+    "grok-build-0.1",
+  ]) {
+    assert.match(roster, new RegExp(excluded.replaceAll(".", "\\."), "u"));
+  }
+});
+
+test("each harness effort ladder matches its current control surface", () => {
+  assert.match(models, /Claude Code accepts\s+`--effort low\|medium\|high\|xhigh\|max`[\s\S]*model-independent/u);
+  assert.match(models, /Codex[\s\S]*`low\|medium\|high\|xhigh\|max`[\s\S]*Sol and Terra also support `ultra`/u);
+  assert.match(models, /Sol uses\s+low; Terra and Luna use medium/u);
+  assert.match(models, /A Codex pair spawn always sets effort\s+explicitly, including medium/u);
+  assert.match(models, /Cursor[\s\S]*effort is encoded in the model ID[\s\S]*`kimi-k3-high`/u);
+  assert.match(models, /`--model '<id>\[effort=…\]'`/u);
+  assert.match(models, /Grok 4\.6 accepts `low\|medium\|high\|xhigh`[\s\S]*defaults to high/u);
+  assert.match(models, /OpenCode[\s\S]*`--variant` on every `opencode run`[\s\S]*not a session flag/u);
+});
+
+test("cursor, grok, and OpenCode delivery is documented as conservative", () => {
   assert.match(
     herdrBackend,
-    /Cursor and Grok are unmeasured\s+here and take the conservative Codex-shaped path/u,
+    /Cursor, Grok, and OpenCode are\s+unmeasured here and take the conservative Codex-shaped path/u,
   );
 });
 
@@ -157,6 +217,10 @@ test("busy and idle partners keep distinct delivery proofs", () => {
     herdrBackend,
     /For an idle partner, the helper proves landing from the composer[\s\S]*sends Enter until the composer releases the\s+text, performs one full resend, and fails loudly/u,
   );
+  assert.match(
+    herdrBackend,
+    /pane registered in the last minute[\s\S]*TUI splash two seconds to settle[\s\S]*same\s+pending reservation stays active/u,
+  );
 });
 
 test("code and prose expose the same delivery receipts", () => {
@@ -202,12 +266,20 @@ test("the headless backend documents the helper's whole command surface", () => 
   assert.match(headlessBackend, /wait --repo[\s\S]*\[--seq/u);
   assert.match(headlessBackend, /default wait timeout is 65 minutes/u);
   assert.match(headlessHelper, /opt\("timeout-min", "65"\)/u);
+  assert.match(headlessBackend, /writable `kind=task` turn has a 45-minute default idle budget/u);
+  assert.match(headlessBackend, /explicit `--idle-min` replaces that default/u);
+  assert.match(headlessHelper, /kind === "task" && write \? 45 : 20/u);
+  assert.match(headlessHelper, /keep tool output flowing so the idle watchdog can see progress/u);
   assert.match(headlessBackend, /fork --repo[\s\S]*\[--retry\]/u);
   assert.match(headlessBackend, /fork-scheduled[\s\S]*fork runs on the next normal `send`/u);
   assert.match(headlessBackend, /scripts\/pair-headless\.mjs/u);
   assert.match(headlessBackend, /half-duplex/u);
   assert.match(headlessBackend, /`<git-dir>\/pair\/session\.json`/u);
-  assert.match(headlessBackend, /the helper refuses\s+to pair a model with itself/u);
+  assert.match(headlessBackend, /`\$XDG_STATE_HOME\/pair\/<basename>-<realpath-hash>\/`/u);
+  assert.match(headlessBackend, /defaults to `~\/\.local\/state\/pair\/<basename>-<realpath-hash>\/`/u);
+  assert.match(headlessBackend, /directory does not need to use Git/u);
+  assert.match(headlessBackend, /GitHub remote\s+is not a precondition/u);
+  assert.match(headlessBackend, /the helper refuses\s+to pair a CLI kind with itself/u);
 });
 
 test("the headless backend discloses supervisor, fork, and stream contracts", () => {
@@ -243,6 +315,12 @@ test("the headless backend states what each guarantee is actually worth", () => 
     headlessBackend,
     /Codex turn is held by a filesystem\s+sandbox[\s\S]*Claude turn is\s+held by a permission mode[\s\S]*without being an OS sandbox/u,
   );
+  assert.match(
+    headlessBackend,
+    /Every writable Codex turn resolves the Git common directory again[\s\S]*sandbox_workspace_write\.writable_roots=\["<git-common-dir>"\][\s\S]*sandbox_workspace_write\.network_access=true[\s\S]*resumed Codex sessions/u,
+  );
+  assert.match(headlessHelper, /sandbox_workspace_write\.writable_roots=/u);
+  assert.match(headlessHelper, /sandbox_workspace_write\.network_access=true/u);
   // Cursor writes by default in --print, which is the trap: its read-only turn
   // is the one that had to ask.
   assert.match(
@@ -252,7 +330,7 @@ test("the headless backend states what each guarantee is actually worth", () => 
   // An empty reply may still have consumed the prompt, so resending can duplicate work.
   assert.match(
     headlessBackend,
-    /`status=empty-reply`[\s\S]*Read\s+`transcript` first[\s\S]*may have consumed the prompt[\s\S]*inspect `git status` before resending/u,
+    /`status=empty-reply`[\s\S]*Read\s+`transcript` first[\s\S]*may have consumed the prompt[\s\S]*inspect the task directory and `git status` when Git is present/u,
   );
   // session_known is evidence of loss, never proof of health.
   assert.match(

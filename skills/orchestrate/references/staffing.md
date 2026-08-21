@@ -1,15 +1,17 @@
 # Staffing
 
 Read this reference before each unit wave and each restaff. Pair's
-[`models.md`](../../pair/references/models.md) owns the generic
-risk/context/speed/pool rubric and CLI effort syntax. This file owns the current
-orchestration roster and the decision record. Last calibrated 2026-08-19.
+[`models.md`](../../pair/references/models.md) owns the model-choice rubric,
+roster, live catalogs, costs, scores, and effort syntax. This file owns arena
+floors, capacity evidence, and the orchestration decision record. Last
+calibrated 2026-08-21.
 
 ## Decide
 
-Match model intelligence to task difficulty. When two legal choices meet the
-same bar, use pool headroom first and speed second. Choose effort separately on
-pair's per-CLI ladder. The current orchestrator CLI is not a legal partner;
+Match model intelligence to task difficulty. Apply the roster before these
+arena floors. When two legal choices meet the same bar, use its Taste score;
+when scores tie, use pool headroom first and speed second. Choose effort on the
+roster's per-CLI ladder. The current orchestrator CLI is not a legal partner;
 pair refuses same-CLI pairing.
 
 Direct unit partners have this floor:
@@ -20,15 +22,10 @@ Direct unit partners have this floor:
 | Codex | `gpt-5.6-terra` | `gpt-5.6-sol` | Luna |
 | Cursor | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
 | Grok | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
+| OpenCode | a supported live-catalog model with evidence for the task | the strongest supported live-catalog model justified by risk/context | undocumented names |
 
-Use `CLI default` when no named model has better evidence. Do not infer quality,
-speed, or safety from a vendor label. Run live catalogs once per wave when
-Cursor or Grok is a candidate:
-
-```bash
-cursor-agent --list-models
-grok models
-```
+Use the roster's current-seat rules and live-catalog commands. The floor table
+restricts orchestration roles; it does not create another roster.
 
 ## Read capacity
 
@@ -45,10 +42,15 @@ out of headroom. A stale snapshot is a floor, not a current reading. Pool
 headroom breaks a tie between models that both meet the task bar; it never
 changes the required intelligence or proof.
 
-Cursor and Grok have no usage-state source here. Their successful live catalog
-and CLI start are availability evidence; a refusal restaffs the unit.
-For Cursor, choose an effort-specific name exactly as the live catalog prints
-it and omit `--effort`; the name is the recorded effort control.
+Cursor, Grok, and OpenCode have no usage-state source here. Apply the roster's
+catalog refresh, then use a successful CLI start as availability evidence. A
+refusal restaffs the unit.
+
+On a machine where a headless `cursor-agent` run proves that shell commands are
+rejected, treat Cursor as a consult and read-only review arena. It cannot own a
+unit that must validate or commit. This limit is machine- and backend-specific:
+a Cursor pane on the Herdr backend keeps its own permission plumbing and is
+eligible for implementation when its live checks succeed.
 
 ## Record and restaff
 
@@ -57,8 +59,9 @@ and one-line reason. The reason states:
 
 1. task difficulty and context;
 2. why the model meets that bar;
-3. the pool or speed tie-break, if one decided the arena;
-4. the current-harness exclusion when it removed the preferred arena.
+3. the compared roster Taste scores when a score breaks the tie;
+4. the pool or speed tie-break, if one decided the arena;
+5. the current-harness exclusion when it removed the preferred arena.
 
 Restaff immediately on refusal or rate limit. Keep normal scope feedback and
 one bounded correction on the existing pair. Restaff after a proved capability

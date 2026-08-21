@@ -23,6 +23,9 @@ const repository = join(root, "repository");
 const remote = join(root, "remote.git");
 const bin = join(root, "bin");
 const pairScript = join(root, "fake-pair.mjs");
+const herdrPairScript = join(root, "fake-herdr-pair.mjs");
+const herdrStatePath = join(root, "fake-herdr-pair-state.json");
+const herdrLogPath = join(root, "fake-herdr-pair-log.jsonl");
 mkdirSync(repository);
 mkdirSync(bin);
 
@@ -52,6 +55,11 @@ const statePath = join(gitDir, "fake-pair.json");
 const counterPath = join(gitDir, "fake-pair-counter");
 const inFlight = join(gitDir, "fake-in-flight");
 const read = () => existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : null;
+const latestReceipt = (state) => {
+  if (!state || state.seq < 1) return null;
+  const receipt = join(gitDir, "pair", "transcripts", String(state.seq).padStart(4, "0") + "-task-receipt.json");
+  return existsSync(receipt) ? {...JSON.parse(readFileSync(receipt, "utf8")), receipt_file:receipt} : null;
+};
 const emit = (value, code = 0) => { console.log(JSON.stringify(value)); process.exit(code); };
 if (command === "init") {
   const current = read();
@@ -61,7 +69,7 @@ if (command === "init") {
   const count = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) + 1 : 1;
   writeFileSync(counterPath, String(count));
   const baseSid = "sid-" + partner + "-" + gitDir.split("/").at(-1);
-  const state = {ok:true,sid:baseSid + (count === 1 ? "" : "-" + count),partner,role:"executor",model:option("model"),effort:option("effort"),seq:0};
+  const state = {ok:true,sid:baseSid + (count === 1 ? "" : "-" + count),partner,role:"executor",model:option("model"),effort:option("effort"),seq:0,forked:[]};
   writeFileSync(statePath, JSON.stringify(state));
   if (process.env.FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER === partner) emit({...state,model:"forced-wrong-model"});
   emit(state);
@@ -83,13 +91,160 @@ if (command === "send") {
 if (command === "status") {
   const state = read();
   if (!state) emit({ok:false,reason:"no pair"}, 1);
-  emit({...state,session_known:true,in_flight:existsSync(inFlight) ? {seq:state.seq,pid:456} : null});
+  emit({...state,session_known:true,in_flight:existsSync(inFlight) ? {seq:state.seq,pid:456} : null,latest_receipt:latestReceipt(state),lineage:{current_sid:state.sid,forks:state.forked || []}});
+}
+if (command === "fork") {
+  const state = read();
+  if (!state) emit({ok:false,reason:"no pair"}, 1);
+  const successor = state.sid + "-fork";
+  state.forked = [...(state.forked || []), {sid:state.sid,forked_at:"2026-08-21T00:00:00.000Z",successor_sid:successor}];
+  state.sid = successor;
+  writeFileSync(statePath, JSON.stringify(state));
+  emit({...state,lineage:{current_sid:state.sid,forks:state.forked}});
 }
 if (command === "end") {
   if (existsSync(inFlight)) emit({ok:false,reason:"in flight"}, 1);
   if (existsSync(statePath)) unlinkSync(statePath);
   if (process.env.FAKE_PAIR_FAIL_AFTER_END === "1") emit({ok:false,reason:"forced failure after end"}, 1);
   emit({ok:true,status:"ended"});
+}
+emit({ok:false,reason:"unsupported " + command}, 2);
+`);
+
+writeFileSync(herdrPairScript, `
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+const [command, ...args] = process.argv.slice(2);
+const option = (name) => { const i = args.indexOf("--" + name); return i < 0 ? null : args[i + 1]; };
+const statePath = process.env.FAKE_HERDR_PAIR_STATE;
+const logPath = process.env.FAKE_HERDR_PAIR_LOG;
+const read = () => existsSync(statePath)
+  ? JSON.parse(readFileSync(statePath, "utf8"))
+  : {counter:0,panes:{},sessions:{}};
+const state = read();
+const save = () => writeFileSync(statePath, JSON.stringify(state));
+const emit = (value, code = 0) => { console.log(JSON.stringify(value)); process.exit(code); };
+appendFileSync(logPath, JSON.stringify({command,args}) + "\\n");
+if (command === "spawn") {
+  if (process.env.FAKE_HERDR_PAIR_FAIL_SPAWN === "1") {
+    console.error("forced Herdr spawn failure");
+    process.exit(1);
+  }
+  const partner = option("partner");
+  let pane = option("partner-pane");
+  if (!pane || process.env.FAKE_HERDR_PAIR_DEAD_PANE === pane) {
+    state.counter += 1;
+    pane = "wH:p" + (state.counter + 1);
+  }
+  state.panes[pane] ??= {
+    partner,
+    repo_root:option("partner-repo-root"),
+    model:option("model"),
+    effort:option("effort"),
+  };
+  save();
+  emit({
+    self:{pane_id:option("pane"),agent:option("as")},
+    partner:{pane_id:pane,agent:state.panes[pane].partner},
+    partnerAgent:state.panes[pane].partner,
+    partnerRepoRoot:state.panes[pane].repo_root,
+    partnerRegisteredAt:"2026-08-21T12:00:00.000Z",
+  });
+}
+if (command === "init") {
+  const pane = option("partner-pane");
+  const info = state.panes[pane];
+  if (!info) emit({ok:false,reason:"unknown pane"}, 1);
+  if (process.env.FAKE_HERDR_PAIR_FAIL_INIT === "1") {
+    console.error("forced Herdr init failure");
+    process.exit(1);
+  }
+  let session = Object.values(state.sessions).find((candidate) => candidate.participants[info.partner].pane_id === pane);
+  if (!session) {
+    const lead = option("as");
+    const sid = "herdr-sid-" + pane;
+    session = {
+      sid,
+      active:true,
+      initiator:lead,
+      role:option("role"),
+      model:option("model"),
+      effort:option("effort"),
+      participants:{
+        [lead]:{pane_id:option("pane"),terminal_id:option("terminal-id"),repo_root:option("repo-root")},
+        [info.partner]:{pane_id:pane,repo_root:option("partner-repo-root"),registered_at:option("partner-registered-at")},
+      },
+      delivery:{next:{[lead]:0,[info.partner]:0},submitted:{[lead]:0,[info.partner]:0},received:{[lead]:0,[info.partner]:0},pending:{[lead]:null,[info.partner]:null}},
+      last_status:{[lead]:null,[info.partner]:null},
+      completed_cycles:0,
+    };
+    state.sessions[sid] = session;
+    save();
+  }
+  emit(session);
+}
+if (command === "reconcile") {
+  const session = state.sessions[option("sid")];
+  if (!session) { console.error("no session with sid " + option("sid")); process.exit(1); }
+  const partner = Object.keys(session.participants).find((kind) => kind !== option("as"));
+  if (process.env.FAKE_HERDR_PAIR_DEAD_PANE === session.participants[partner].pane_id) {
+    console.error("recorded partner pane " + session.participants[partner].pane_id + " is gone");
+    process.exit(1);
+  }
+  emit({reconciled:[],cleared:null,session});
+}
+if (command === "send") {
+  const session = state.sessions[option("sid")];
+  if (!session) { console.error("no session"); process.exit(1); }
+  const lead = option("as");
+  session.delivery.next[lead] += 1;
+  session.delivery.submitted[lead] = session.delivery.next[lead];
+  const receipt = process.env.FAKE_HERDR_PAIR_RECEIPT || "acknowledged";
+  const reservation = {
+    seq:session.delivery.next[lead],
+    kind:option("kind"),
+    reserved_at:"2026-08-21T00:00:00.000Z",
+    submitted_at:"2026-08-21T00:00:01.000Z",
+  };
+  if (receipt === "acknowledged") {
+    session.delivery.received[lead] = session.delivery.next[lead];
+    session.delivery.pending[lead] = null;
+  } else {
+    session.delivery.pending[lead] = reservation;
+  }
+  save();
+  const partner = Object.keys(session.participants).find((kind) => kind !== lead);
+  if (option("format") === "json") {
+    emit({ok:true,sid:session.sid,from:lead,to:partner,kind:option("kind"),seq:session.delivery.next[lead],receipt,acknowledged:receipt === "acknowledged",reservation:session.delivery.pending[lead],submitted:session.delivery.submitted[lead],received:session.delivery.received[lead]});
+  }
+  console.log("[agent " + lead + " -> " + partner + " kind=" + option("kind") + " sid=" + session.sid + "] seq=" + session.delivery.next[lead] + " receipt=" + receipt);
+  process.exit(0);
+}
+if (command === "repin") {
+  const session = state.sessions[option("sid")];
+  if (!session) { console.error("no session with sid " + option("sid")); process.exit(1); }
+  const lead = option("as");
+  const previous = session.participants[lead];
+  if (previous.pane_id !== option("previous-pane") || previous.terminal_id !== option("previous-terminal-id")) {
+    console.error("repin previous identity differs");
+    process.exit(1);
+  }
+  session.participants[lead] = {pane_id:option("pane"),terminal_id:option("terminal-id"),repo_root:option("repo-root")};
+  save();
+  emit({ok:true,sid:session.sid,agent:lead,changed:true,previous,participant:session.participants[lead]});
+}
+if (command === "end") {
+  const sid = option("sid");
+  if (!state.sessions[sid]) { console.error("no session"); process.exit(1); }
+  const session = state.sessions[sid];
+  const partner = Object.keys(session.participants).find((kind) => kind !== option("as"));
+  if (process.env.FAKE_HERDR_PAIR_DEAD_PANE === session.participants[partner].pane_id && option("stale") !== "true") {
+    console.error("recorded partner pane " + session.participants[partner].pane_id + " is gone");
+    process.exit(1);
+  }
+  delete state.sessions[sid];
+  save();
+  console.log("ended herdr-pair session " + sid);
+  process.exit(0);
 }
 emit({ok:false,reason:"unsupported " + command}, 2);
 `);
@@ -113,8 +268,12 @@ execFileSync("chmod", ["+x", join(bin, "gh"), join(bin, "trash")]);
 
 const baseEnv = {
   ...process.env,
+  HERDR_ENV: "0",
   PATH: `${bin}:${process.env.PATH}`,
   ORCHESTRATE_PAIR_SCRIPT: pairScript,
+  ORCHESTRATE_HERDR_PAIR_SCRIPT: herdrPairScript,
+  FAKE_HERDR_PAIR_STATE: herdrStatePath,
+  FAKE_HERDR_PAIR_LOG: herdrLogPath,
 };
 const invoke = (args, env = {}) => {
   const result = spawnSync(process.execPath, [unitScript, ...args], {
@@ -141,6 +300,13 @@ const invokeAsync = (args, env = {}) => new Promise((resolve) => {
     resolve({ status, stdout, stderr, output });
   });
 });
+const unitRecordPath = (id) => join(
+  git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+  "orchestrate",
+  "units",
+  `${id}.json`,
+);
+const readHerdrState = () => JSON.parse(readFileSync(herdrStatePath, "utf8"));
 const taskFile = (name) => {
   const path = join(root, `${name}.md`);
   writeFileSync(path, `Implement ${name} and reply ready.\n`);
@@ -162,6 +328,15 @@ const createArgs = (id, partner = "codex", setup = "true") => [
   "--validation", "test -f README.md",
   "--merge-policy", "auto",
   "--setup", setup,
+];
+const herdrCreateArgs = (id, partner = "grok") => [
+  ...createArgs(id, partner),
+  "--pane", "wH:p1",
+  "--workspace", "wH",
+  "--tab-id", "wH:t1",
+  "--as", "claude",
+  "--terminal-id", "term-herdr-lead",
+  "--repo-root", repository,
 ];
 const resumeArgs = (id, partner = "codex", setup = "true") => {
   const args = createArgs(id, partner, setup);
@@ -254,6 +429,282 @@ test("create journals a durable unit and starts an executor pair", () => {
   assert.match(created.output.unit.staffing.current.reason, /task difficulty/u);
   assert.equal(created.output.unit.pair.latest_seq, 1);
   assert.equal(created.output.unit.observed.latest_receipt.status, "replied");
+  const exclude = created.output.unit.delivery_setup.pr_body_exclude;
+  assert.equal(exclude.pattern, "/PR_BODY.md");
+  assert.equal(exclude.added_by_unit, true);
+  assert.equal(
+    readFileSync(exclude.path, "utf8").split(/\r?\n/u).filter((line) => line === "/PR_BODY.md").length,
+    1,
+  );
+});
+
+test("Herdr backend is recorded and routes the unit through pinned pair commands", () => {
+  writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
+  writeFileSync(herdrLogPath, "");
+  const id = "herdr-route";
+  const created = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.backend, "herdr");
+  assert.equal(created.output.unit.caller.pane, "wH:p1");
+  assert.equal(created.output.unit.observed.pair.backend, "herdr");
+  assert.equal(created.output.unit.observed.pair.partner, "grok");
+  assert.equal(created.output.unit.observed.pair.seq, 1);
+  assert.equal(created.output.unit.observed.pair.acknowledged_seq, 1);
+  assert.equal(created.output.unit.observed.pair.session_active, true);
+  assert.equal(created.output.unit.pair.delivery_receipt, "acknowledged");
+  assert.match(created.output.unit.pair.partner_pane, /^wH:p/u);
+
+  const observed = invoke(
+    ["status", "--repo", repository, "--unit", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(observed.status, 0, observed.stderr || JSON.stringify(observed.output));
+  assert.equal(observed.output.unit.observed.pair.in_flight, null);
+
+  const restaffed = invoke(restaffArgs(id, "codex"), { HERDR_ENV: "1" });
+  assert.equal(restaffed.status, 0, restaffed.stderr || JSON.stringify(restaffed.output));
+  assert.equal(restaffed.output.unit.backend, "herdr");
+  assert.equal(restaffed.output.unit.staffing.current.partner, "codex");
+  assert.equal(
+    restaffed.output.unit.staffing.history[0].checkpoint.receipt.backend,
+    "herdr",
+  );
+
+  const dismantled = invoke(
+    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(dismantled.status, 0, dismantled.stderr || JSON.stringify(dismantled.output));
+  const pairCleanup = dismantled.output.done.find((entry) => entry.step === "pair");
+  assert.equal(pairCleanup.detail.backend, "herdr");
+  assert.equal(pairCleanup.detail.pane_close, "manual");
+
+  const calls = readFileSync(herdrLogPath, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(
+    [...new Set(calls.map((entry) => entry.command))].sort(),
+    ["end", "init", "reconcile", "send", "spawn"],
+  );
+  for (const call of calls) {
+    assert.equal(call.args[call.args.indexOf("--pane") + 1], "wH:p1");
+    assert.equal(call.args[call.args.indexOf("--workspace") + 1], "wH");
+    assert.equal(call.args[call.args.indexOf("--tab-id") + 1], "wH:t1");
+    assert.equal(call.args[call.args.indexOf("--terminal-id") + 1], "term-herdr-lead");
+    assert.equal(call.args[call.args.indexOf("--repo-root") + 1], repository);
+  }
+  const spawnCalls = calls.filter((entry) => entry.command === "spawn");
+  assert.equal(spawnCalls.length, 2);
+  assert.equal(
+    spawnCalls[0].args[spawnCalls[0].args.indexOf("--partner-repo-root") + 1],
+    join(root, `worktree-${id}`),
+  );
+  assert.equal(spawnCalls[0].args.includes("--autonomy"), true);
+  const initCall = calls.find((entry) => entry.command === "init");
+  assert.equal(
+    initCall.args[initCall.args.indexOf("--partner-registered-at") + 1],
+    "2026-08-21T12:00:00.000Z",
+  );
+  const sendCall = calls.find((entry) => entry.command === "send");
+  assert.equal(sendCall.args.includes("--background"), false);
+  assert.equal(sendCall.args[sendCall.args.indexOf("--format") + 1], "json");
+});
+
+test("create falls back to a local base when origin lacks that branch", () => {
+  git(repository, "branch", "local-only-base", "main");
+  const id = "local-only-base";
+  const args = createArgs(id);
+  args[args.indexOf("--base") + 1] = "local-only-base";
+
+  const created = invoke(args);
+
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(
+    git(join(root, `worktree-${id}`), "rev-parse", "HEAD"),
+    git(repository, "rev-parse", "local-only-base"),
+  );
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+  git(repository, "branch", "-D", "local-only-base");
+
+  const missingId = "missing-base";
+  const missingArgs = createArgs(missingId);
+  missingArgs[missingArgs.indexOf("--base") + 1] = "missing-locally-and-remotely";
+  const missing = invoke(missingArgs);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.output.reason, /does not exist at origin or locally/u);
+});
+
+test("forced dismantle skips the remote branch when origin is absent", () => {
+  const localRepository = join(root, "repository-without-origin");
+  mkdirSync(localRepository);
+  execFileSync("git", ["init", "-b", "main", localRepository]);
+  git(localRepository, "config", "user.name", "Orchestrate Test");
+  git(localRepository, "config", "user.email", "orchestrate@example.test");
+  writeFileSync(join(localRepository, "README.md"), "# local only\n");
+  git(localRepository, "add", "README.md");
+  git(localRepository, "commit", "-m", "initial");
+
+  const id = "no-origin-cleanup";
+  const args = createArgs(id);
+  args[args.indexOf("--repo") + 1] = localRepository;
+  const created = invoke(args);
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+
+  const cleaned = invoke([
+    "dismantle", "--repo", localRepository, "--unit", id, "--force", id,
+  ]);
+
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+  const remoteBranch = cleaned.output.done.find((entry) => entry.step === "remote-branch");
+  assert.equal(remoteBranch.ok, true);
+  assert.equal(remoteBranch.detail.skipped, "origin remote is not configured");
+});
+
+test("an explicit backend overrides Herdr auto-detection", () => {
+  const id = "headless-override";
+  const args = [...createArgs(id, "grok"), "--backend", "headless"];
+  const created = invoke(args, { HERDR_ENV: "1" });
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.backend, "headless");
+  const cleaned = invoke(
+    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("a Herdr spawn failure rolls back the unit journal", () => {
+  const id = "herdr-spawn-fail";
+  const failed = invoke(herdrCreateArgs(id), {
+    HERDR_ENV: "1",
+    FAKE_HERDR_PAIR_FAIL_SPAWN: "1",
+  });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /spawn failure/u);
+  assert.equal(existsSync(join(root, `worktree-${id}`)), false);
+  assert.notEqual(
+    spawnSync("git", ["-C", repository, "show-ref", "--verify", "--quiet", `refs/heads/feat/${id}`]).status,
+    0,
+  );
+  const common = git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir");
+  assert.equal(existsSync(join(common, "orchestrate", "units", `${id}.json`)), false);
+});
+
+test("a non-acknowledged Herdr send stays starting with its reservation journaled", () => {
+  writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
+  writeFileSync(herdrLogPath, "");
+  const id = "herdr-lost-send";
+  const failed = invoke(herdrCreateArgs(id), {
+    HERDR_ENV: "1",
+    FAKE_HERDR_PAIR_RECEIPT: "lost-partner-idle-inspect-that-pane-then-reconcile",
+  });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /not acknowledged/u);
+  assert.match(failed.output.reason, /lost-partner-idle/u);
+  const record = JSON.parse(readFileSync(unitRecordPath(id), "utf8"));
+  assert.equal(record.lifecycle, "starting");
+  assert.equal(record.pair.latest_seq, 1);
+  assert.equal(record.pair.delivery_receipt, "lost-partner-idle-inspect-that-pane-then-reconcile");
+  assert.equal(record.pair.delivery_reservation.seq, 1);
+  assert.equal(Object.hasOwn(record.pair, "latest_receipt_file"), false);
+
+  const state = readHerdrState();
+  const session = Object.values(state.sessions)[0];
+  session.delivery.pending.claude = null;
+  writeFileSync(herdrStatePath, JSON.stringify(state));
+  const resumed = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(resumed.output.unit.lifecycle, "working");
+  assert.equal(resumed.output.unit.pair.latest_seq, 2);
+  const cleaned = invoke(
+    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("a Herdr spawn followed by init failure keeps the pane for forced dismantle", () => {
+  writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
+  writeFileSync(herdrLogPath, "");
+  const id = "herdr-init-fail";
+  const failed = invoke(herdrCreateArgs(id), {
+    HERDR_ENV: "1",
+    FAKE_HERDR_PAIR_FAIL_INIT: "1",
+  });
+  assert.notEqual(failed.status, 0);
+  assert.match(failed.output.reason, /init failure/u);
+  const record = JSON.parse(readFileSync(unitRecordPath(id), "utf8"));
+  assert.equal(record.resources.pair, false);
+  assert.match(record.pair.partner_pane, /^wH:p/u);
+
+  const cleaned = invoke(
+    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+  const pairCleanup = cleaned.output.done.find((entry) => entry.step === "pair");
+  assert.equal(pairCleanup.detail.session, "not-initialized");
+  assert.equal(pairCleanup.detail.partner_pane, record.pair.partner_pane);
+});
+
+test("restaff and forced dismantle recover stale Herdr sessions", () => {
+  for (const action of ["restaff", "dismantle"]) {
+    writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
+    writeFileSync(herdrLogPath, "");
+    const id = `herdr-stale-${action}`;
+    const created = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+    assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+    const deadPane = created.output.unit.pair.partner_pane;
+    if (action === "restaff") {
+      const restaffed = invoke(restaffArgs(id, "codex"), {
+        HERDR_ENV: "1",
+        FAKE_HERDR_PAIR_DEAD_PANE: deadPane,
+      });
+      assert.equal(restaffed.status, 0, restaffed.stderr || JSON.stringify(restaffed.output));
+      assert.equal(restaffed.output.unit.staffing.current.partner, "codex");
+      assert.equal(restaffed.output.unit.transport_recovery.at(-1).status, "ended-stale");
+      const cleaned = invoke(
+        ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+        { HERDR_ENV: "1" },
+      );
+      assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+    } else {
+      const cleaned = invoke(
+        ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+        { HERDR_ENV: "1", FAKE_HERDR_PAIR_DEAD_PANE: deadPane },
+      );
+      assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+      const pairCleanup = cleaned.output.done.find((entry) => entry.step === "pair");
+      assert.equal(pairCleanup.detail.recovery.status, "ended-stale");
+    }
+    const calls = readFileSync(herdrLogPath, "utf8").trim().split("\n").map(JSON.parse);
+    const staleEnd = calls.find(
+      (entry) => entry.command === "end" && entry.args.includes("--stale"),
+    );
+    assert.equal(staleEnd.args[staleEnd.args.indexOf("--stale") + 1], "true");
+  }
+});
+
+test("repin journals a fresh Herdr caller identity", () => {
+  writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
+  writeFileSync(herdrLogPath, "");
+  const id = "herdr-repin";
+  const created = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const repinned = invoke([
+    "repin", "--repo", repository, "--unit", id,
+    "--pane", "wH:p1", "--workspace", "wH", "--tab-id", "wH:t1",
+    "--as", "claude", "--terminal-id", "term-herdr-lead-2",
+    "--repo-root", repository,
+  ], { HERDR_ENV: "1" });
+  assert.equal(repinned.status, 0, repinned.stderr || JSON.stringify(repinned.output));
+  assert.equal(repinned.output.unit.caller.terminal_id, "term-herdr-lead-2");
+  assert.equal(repinned.output.unit.caller_history.at(-1).status, "repinned");
+  assert.equal(repinned.output.transport.changed, true);
+  const cleaned = invoke(
+    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
+    { HERDR_ENV: "1" },
+  );
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
 });
 
 test("fresh list and status reconstruct the unit from disk", () => {
@@ -266,6 +717,64 @@ test("fresh list and status reconstruct the unit from disk", () => {
   assert.equal(status.output.unit.observed.pair.session_known, true);
 });
 
+test("status advances a recorded pair sid through public fork lineage", () => {
+  const id = "fork-status";
+  const created = invoke(createArgs(id, "grok"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const oldSid = created.output.unit.pair.sid;
+  const worktree = join(root, `worktree-${id}`);
+  const forked = spawnSync(process.execPath, [pairScript, "fork", "--repo", worktree], {
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(forked.status, 0, forked.stderr);
+  const successor = JSON.parse(forked.stdout).sid;
+  assert.notEqual(successor, oldSid);
+
+  const status = invoke(["status", "--repo", repository, "--unit", id]);
+  assert.equal(status.status, 0, status.stderr || JSON.stringify(status.output));
+  assert.equal(status.output.unit.pair.sid, successor);
+  assert.equal(status.output.unit.observed.pair.sid, successor);
+});
+
+test("restaff ends the reachable head of a forked pair", () => {
+  const id = "fork-restaff";
+  const created = invoke(createArgs(id, "grok"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const worktree = join(root, `worktree-${id}`);
+  const forked = spawnSync(process.execPath, [pairScript, "fork", "--repo", worktree], {
+    encoding: "utf8",
+    env: baseEnv,
+  });
+  assert.equal(forked.status, 0, forked.stderr);
+  const successor = JSON.parse(forked.stdout).sid;
+
+  const restaffed = invoke(restaffArgs(id, "codex"));
+  assert.equal(restaffed.status, 0, restaffed.stderr || JSON.stringify(restaffed.output));
+  assert.equal(restaffed.output.unit.staffing.current.partner, "codex");
+  assert.equal(restaffed.output.unit.staffing.history[0].checkpoint.pair_sid, successor);
+});
+
+test("an unrelated live pair sid is refused by status and restaff", () => {
+  const id = "unrelated-sid";
+  const created = invoke(createArgs(id));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const worktree = join(root, `worktree-${id}`);
+  const gitDir = git(worktree, "rev-parse", "--absolute-git-dir");
+  const fakeStatePath = join(gitDir, "fake-pair.json");
+  const state = JSON.parse(readFileSync(fakeStatePath, "utf8"));
+  state.sid = "sid-from-an-unrelated-session";
+  state.forked = [];
+  writeFileSync(fakeStatePath, JSON.stringify(state));
+
+  const status = invoke(["status", "--repo", repository, "--unit", id]);
+  assert.notEqual(status.status, 0);
+  assert.match(status.output.reason, /pair sid differs/u);
+  const restaffed = invoke(restaffArgs(id));
+  assert.notEqual(restaffed.status, 0);
+  assert.match(restaffed.output.reason, /pair sid differs/u);
+});
+
 test("create refuses duplicate unit, branch, worktree, and same-harness partner", () => {
   const duplicate = invoke(createArgs("one"));
   assert.notEqual(duplicate.status, 0);
@@ -274,6 +783,19 @@ test("create refuses duplicate unit, branch, worktree, and same-harness partner"
   const refused = invoke(sameHarness);
   assert.equal(refused.status, 2);
   assert.match(refused.output.reason, /differ from the orchestrator/u);
+
+  const sameOpenCode = createArgs("same-opencode", "opencode");
+  sameOpenCode[sameOpenCode.indexOf("--lead") + 1] = "opencode";
+  const refusedOpenCode = invoke(sameOpenCode);
+  assert.equal(refusedOpenCode.status, 2);
+  assert.match(refusedOpenCode.output.reason, /differ from the orchestrator/u);
+});
+
+test("OpenCode is a legal executor for a different harness", () => {
+  const created = invoke(createArgs("opencode-executor", "opencode"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.staffing.current.partner, "opencode");
+  assert.equal(created.output.unit.staffing.current.effort, "high");
 });
 
 test("cursor staffing uses the effort-specific live-catalog model without a separate effort", () => {
@@ -372,6 +894,26 @@ test("create recovery keeps a manifest mismatch as one JSON document", () => {
     "dismantle", "--repo", repository, "--unit", "recover-task-mismatch",
     "--force", "recover-task-mismatch",
   ]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("create preserves marked task addenda and keeps PR_BODY excluded once", () => {
+  const id = "recover-addendum";
+  const record = writeRecoveryRecord(id, "setting-up", { withWorktree: true });
+  mkdirSync(dirname(record.task_file), { recursive: true });
+  const addendum = `${record.task}\n\n## Addendum — 2026-08-21T12:00:00Z\nReread this recovery constraint.\n`;
+  writeFileSync(record.task_file, addendum);
+
+  const resumed = invoke(resumeArgs(id));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(readFileSync(record.task_file, "utf8"), addendum);
+  const exclude = resumed.output.unit.delivery_setup.pr_body_exclude;
+  assert.equal(
+    readFileSync(exclude.path, "utf8").split(/\r?\n/u).filter((line) => line === "/PR_BODY.md").length,
+    1,
+  );
+
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
 });
 
@@ -518,7 +1060,7 @@ test("restaff resumes after the first replacement send started", () => {
   assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
   const failed = invoke(restaffArgs("restaff-after-send"), { FAKE_PAIR_BAD_SEND_AFTER_START: "grok" });
   assert.notEqual(failed.status, 0);
-  assert.match(failed.output.reason, /pair send did not start/u);
+  assert.match(failed.output.reason, /pair send was not acknowledged/u);
   const stranded = invoke(["status", "--repo", repository, "--unit", "restaff-after-send"]);
   assert.equal(stranded.output.unit.observed.pair.seq, 1);
 
@@ -569,10 +1111,10 @@ test("restaff recovery claims the first target for a legacy failed record", () =
 
 test("legacy restaff recovery adopts a live target with a stale recorded sid", () => {
   const cases = [
-    ["restaff-legacy-live-zero", { FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER: "grok" }, 0],
-    ["restaff-legacy-live-one", { FAKE_PAIR_BAD_SEND_AFTER_START: "grok" }, 1],
+    ["restaff-legacy-live-zero", { FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER: "grok" }],
+    ["restaff-legacy-live-one", { FAKE_PAIR_BAD_SEND_AFTER_START: "grok" }],
   ];
-  for (const [id, environment, expectedSeq] of cases) {
+  for (const [id, environment] of cases) {
     const created = invoke(createArgs(id));
     assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
     const oldSid = created.output.unit.pair.sid;
@@ -589,9 +1131,8 @@ test("legacy restaff recovery adopts a live target with a stale recorded sid", (
     writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
 
     const before = invoke(["status", "--repo", repository, "--unit", id]);
-    assert.equal(before.output.unit.observed.pair.partner, "grok");
-    assert.equal(before.output.unit.observed.pair.seq, expectedSeq);
-    assert.notEqual(before.output.unit.observed.pair.sid, oldSid);
+    assert.notEqual(before.status, 0);
+    assert.match(before.output.reason, /pair (sid|staffing) differs/u);
 
     const resumed = invoke(restaffArgs(id));
     assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));

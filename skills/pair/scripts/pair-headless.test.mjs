@@ -2,6 +2,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -11,6 +12,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -25,6 +27,7 @@ import {
   bootstrapPrompt,
   clearMarker,
   cursorModel,
+  defaultIdleMinutes,
   detectSelf,
   extractReply,
   locate,
@@ -35,6 +38,7 @@ import {
   parseClaudeResult,
   parseCursorSessionId,
   parseGrokStream,
+  parseOpenCodeStream,
   parseSessionId,
   parseTextReply,
   processAlive,
@@ -57,6 +61,7 @@ mkdirSync(bin, { recursive: true });
 const CODEX_SID = "11111111-2222-3333-4444-555555555555";
 const CLAUDE_SID = "claude-session-abc";
 const CURSOR_SID = "cursor-chat-7f3a";
+const OPENCODE_SID = "ses_0123456789abcdef";
 const log = join(root, "invocations.jsonl");
 
 // Every fake CLI records the in-flight marker it can see while it runs — the
@@ -167,6 +172,28 @@ process.stdout.write(JSON.stringify({ type: "end", stopReason: mode === "cancel"
 process.exit(0);
 `,
 );
+writeFileSync(
+  join(bin, "opencode"),
+  `#!/usr/bin/env node
+const fs = require("node:fs");
+const argv = process.argv.slice(2);
+const mode = process.env.FAKE_MODE || "ok";
+const stdin = fs.readFileSync(0, "utf8");
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "opencode", argv, stdin, cwd: process.cwd() }) + "\\n");
+if (mode === "fail") { process.stderr.write("opencode rate limit\\n"); process.exit(1); }
+const sid = argv.includes("--session") ? argv[argv.indexOf("--session") + 1] : "${OPENCODE_SID}";
+process.stdout.write(JSON.stringify({ type: "step_start", sessionID: sid, part: { type: "step-start", sessionID: sid } }) + "\\n");
+if (mode !== "empty") {
+  process.stdout.write(JSON.stringify({
+    type: "text",
+    sessionID: sid,
+    part: { type: "text", sessionID: sid, text: "[agent opencode -> claude kind=ready sid=" + sid + "]\\n\\nopencode reviewed" },
+  }) + "\\n");
+}
+process.stdout.write(JSON.stringify({ type: "step_finish", sessionID: sid, part: { type: "step-finish", sessionID: sid, reason: "stop" } }) + "\\n");
+process.exit(0);
+`,
+);
 // A stand-in for `trash`: it moves the directory aside instead of deleting it,
 // which is exactly the property the real command guarantees.
 writeFileSync(
@@ -176,13 +203,27 @@ const fs = require("node:fs");
 fs.renameSync(process.argv[2], process.argv[2] + ".trashed");
 `,
 );
-for (const name of ["codex", "claude", "cursor-agent", "grok", "trash"]) chmodSync(join(bin, name), 0o755);
+for (const name of ["codex", "claude", "cursor-agent", "grok", "opencode", "trash"]) chmodSync(join(bin, name), 0o755);
 
 const newRepo = (name) => {
   const repo = join(root, name);
   mkdirSync(repo, { recursive: true });
   spawnSync("git", ["-C", repo, "init", "-q"], { encoding: "utf8" });
   return repo;
+};
+
+const newLinkedWorktree = (name) => {
+  const repo = newRepo(`${name}-main`);
+  const commit = spawnSync(
+    "git",
+    ["-C", repo, "-c", "user.name=Pair Tests", "-c", "user.email=pair@example.test", "commit", "--allow-empty", "-q", "-m", "init"],
+    { encoding: "utf8" },
+  );
+  assert.equal(commit.status, 0, commit.stderr);
+  const worktree = join(root, `${name}-linked`);
+  const added = spawnSync("git", ["-C", repo, "worktree", "add", "-q", "-b", `${name}-branch`, worktree], { encoding: "utf8" });
+  assert.equal(added.status, 0, added.stderr);
+  return { repo, worktree };
 };
 
 const env = (mode, self = "claude") => ({
@@ -201,15 +242,18 @@ const env = (mode, self = "claude") => ({
   GROK_SESSION_ID: self === "grok" ? "grok-lead" : "",
   GROK_AGENT: "",
   GROK_HOME: "",
+  OPENCODE_CLIENT: self === "opencode" ? "cli" : "",
+  OPENCODE_PID: "",
+  OPENCODE_WORKSPACE_ID: "",
 });
 
-const run = (mode, self, ...args) => {
+const runThrough = (entry, mode, self, ...args) => {
   writeFileSync(log, "");
   try {
     return {
       ok: true,
       receipt: JSON.parse(
-        execFileSync(process.execPath, [helper, ...args], {
+        execFileSync(process.execPath, [entry, ...args], {
           encoding: "utf8",
           env: env(mode, self),
           stdio: ["ignore", "pipe", "pipe"],
@@ -221,6 +265,7 @@ const run = (mode, self, ...args) => {
     return { ok: false, receipt: JSON.parse(error.stdout) };
   }
 };
+const run = (mode, self, ...args) => runThrough(helper, mode, self, ...args);
 const invocations = () =>
   readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line));
 
@@ -235,13 +280,20 @@ test("the partner is chosen, and never the CLI the lead is already running", () 
   assert.equal(detectSelf({ CODEX_SANDBOX: "seatbelt" }), "codex");
   assert.equal(detectSelf({ CURSOR_AGENT: "1" }), "cursor");
   assert.equal(detectSelf({ GROK_SESSION_ID: "s" }), "grok");
+  assert.equal(detectSelf({ OPENCODE_CLIENT: "cli" }), "opencode");
   assert.equal(detectSelf({}), null);
   assert.deepEqual(resolvePartner("grok", { CLAUDECODE: "1" }), { partner: "grok", self: "claude" });
   assert.deepEqual(resolvePartner("cursor", { CODEX_THREAD_ID: "t" }), { partner: "cursor", self: "codex" });
   // An undetectable harness still pairs: the choice is explicit either way.
   assert.deepEqual(resolvePartner("codex", {}), { partner: "codex", self: "lead" });
   for (const self of AGENT_KINDS) {
-    const env = { claude: { CLAUDECODE: "1" }, codex: { CODEX_SANDBOX: "s" }, cursor: { CURSOR_AGENT: "1" }, grok: { GROK_SESSION_ID: "s" } }[self];
+    const env = {
+      claude: { CLAUDECODE: "1" },
+      codex: { CODEX_SANDBOX: "s" },
+      cursor: { CURSOR_AGENT: "1" },
+      grok: { GROK_SESSION_ID: "s" },
+      opencode: { OPENCODE_CLIENT: "cli" },
+    }[self];
     assert.match(resolvePartner(self, env).error, new RegExp(`refusing to pair ${self} with itself`, "u"));
   }
   assert.match(resolvePartner("gemini", {}).error, /unknown partner gemini/u);
@@ -256,15 +308,102 @@ test("the role sets the default lease and any turn may override it", () => {
   assert.match(resolveWrite("peer", { write: true, readOnly: true }).error, /contradict/u);
 });
 
-test("a headless pair requires a git repository", () => {
+test("the command dispatcher runs when the helper is invoked through a symlink", () => {
+  const linkedHelper = join(root, "pair-headless-linked.mjs");
+  symlinkSync(helper, linkedHelper);
+  const repo = newRepo("symlink-dispatch");
+
+  const created = runThrough(linkedHelper, "ok", "claude", "init", "--repo", repo, "--partner", "codex");
+  assert.equal(created.receipt.status, "created");
+  const sent = runThrough(
+    linkedHelper,
+    "ok",
+    "claude",
+    "send",
+    "--repo",
+    repo,
+    "--kind",
+    "task",
+    "--body-file",
+    bodyFile("run through the link"),
+  );
+  assert.equal(sent.receipt.status, "replied");
+});
+
+test("git worktrees and plain directories get stable, separate state locations", () => {
   const plain = join(root, "not-a-repo");
   mkdirSync(plain, { recursive: true });
-  assert.match(locate(plain).error, /not a git repository/u);
+  const plainPlace = locate(plain, root, "");
+  const plainHash = createHash("sha256").update(realpathSync(plain)).digest("hex").slice(0, 12);
+  assert.equal(
+    plainPlace.statePath,
+    join(root, ".local", "state", "pair", `not-a-repo-${plainHash}`, "session.json"),
+  );
+  assert.equal(plainPlace.root, realpathSync(plain));
   const repo = newRepo("located");
   const place = locate(repo);
   assert.equal(place.error, undefined);
   assert.match(place.statePath, /\.git\/pair\/session\.json$/u);
   assert.match(place.transcripts, /\.git\/pair\/transcripts$/u);
+});
+
+test("a plain directory honors XDG_STATE_HOME", () => {
+  const plain = join(root, "xdg-state-directory");
+  const stateHome = join(root, "redirected-state");
+  mkdirSync(plain, { recursive: true });
+  const plainHash = createHash("sha256").update(realpathSync(plain)).digest("hex").slice(0, 12);
+
+  const place = locate(plain, join(root, "unused-home"), stateHome);
+
+  assert.equal(
+    place.statePath,
+    join(stateHome, "pair", `xdg-state-directory-${plainHash}`, "session.json"),
+  );
+
+  const created = JSON.parse(execFileSync(
+    process.execPath,
+    [helper, "init", "--repo", plain, "--partner", "codex"],
+    {
+      encoding: "utf8",
+      env: { ...env("ok", "claude"), XDG_STATE_HOME: stateHome },
+    },
+  ));
+  assert.equal(created.state_file, place.statePath);
+  const ended = JSON.parse(execFileSync(
+    process.execPath,
+    [helper, "end", "--repo", plain],
+    {
+      encoding: "utf8",
+      env: { ...env("ok", "claude"), XDG_STATE_HOME: stateHome },
+    },
+  ));
+  assert.equal(ended.status, "ended");
+});
+
+test("a plain directory supports the full headless pair lifecycle", () => {
+  const plain = join(root, "plain-lifecycle");
+  mkdirSync(plain, { recursive: true });
+  const expectedPlace = locate(plain, root, "");
+
+  const created = run("ok", "claude", "init", "--repo", plain, "--partner", "codex");
+  assert.equal(created.receipt.status, "created");
+  assert.equal(created.receipt.state_file, expectedPlace.statePath);
+  const sent = run("ok", "claude", "send", "--repo", plain, "--kind", "task", "--body-file", bodyFile("plain task"), "--write");
+  assert.equal(sent.receipt.status, "replied");
+  assert.equal(sent.receipt.seq, 1);
+  assert.ok(
+    invocations()[0].argv.includes(
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([expectedPlace.stateDir])}`,
+    ),
+  );
+  const status = run("ok", "claude", "status", "--repo", plain).receipt;
+  assert.equal(status.sid, CODEX_SID);
+  assert.equal(status.seq, 1);
+  assert.equal(status.state_file, expectedPlace.statePath);
+  const ended = run("ok", "claude", "end", "--repo", plain).receipt;
+  assert.equal(ended.status, "ended");
+  assert.equal(existsSync(expectedPlace.stateDir), false);
+  assert.equal(existsSync(`${expectedPlace.stateDir}.trashed`), true);
 });
 
 test("each turn's command matches the flags the installed CLIs accept", () => {
@@ -282,7 +421,21 @@ test("each turn's command matches the flags the installed CLIs accept", () => {
   const resume = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true });
   // `codex exec resume` accepts neither -C nor -s, so the sandbox arrives as a
   // config override and the directory through the spawn's cwd.
-  assert.deepEqual(resume.args, ["exec", "resume", "S", "-c", 'sandbox_mode="workspace-write"', "--json", "-o", "/r", "-"]);
+  assert.deepEqual(resume.args, [
+    "exec",
+    "resume",
+    "S",
+    "-c",
+    'sandbox_mode="workspace-write"',
+    "-c",
+    'sandbox_workspace_write.writable_roots=["/repo"]',
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+    "--json",
+    "-o",
+    "/r",
+    "-",
+  ]);
   const claudeCreate = turnCommand({ partner: "claude", sid: null, resume: false, replyFile: "/r", root: "/repo", write: false });
   // stream-json, not json: a `json` run stays silent until it finishes, which
   // would make the idle deadline kill a long working turn.
@@ -294,7 +447,7 @@ test("each turn's command matches the flags the installed CLIs accept", () => {
   assert.equal(claudeResume.args.at(-1), "acceptEdits");
 });
 
-test("cursor and grok turns carry each CLI's own read-only and resume flags", () => {
+test("cursor, grok, and OpenCode turns carry each CLI's own mode and resume flags", () => {
   // `-p` writes by default, so read-only is the mode that has to be asked for.
   assert.deepEqual(
     turnCommand({ partner: "cursor", sid: null, resume: false, write: false, model: "claude-opus-4-8", effort: "high" }),
@@ -328,14 +481,49 @@ test("cursor and grok turns carry each CLI's own read-only and resume flags", ()
     turnCommand({ partner: "grok", sid: "u-1", resume: true, promptFile: "/p", write: true }).args,
     ["--prompt-file", "/p", "--output-format", "streaming-json", "--resume", "u-1", "--permission-mode", "acceptEdits"],
   );
+
+  // OpenCode takes the prompt as the final argv item, which the runner adds
+  // after these flags. Its JSON events carry the session id and text reply.
+  assert.deepEqual(
+    turnCommand({
+      partner: "opencode",
+      sid: null,
+      resume: false,
+      root: "/repo",
+      write: false,
+      model: "provider/model",
+      effort: "high",
+    }),
+    {
+      bin: "opencode",
+      args: [
+        "run", "--format", "json", "--dir", "/repo", "-m", "provider/model",
+        "--variant", "high", "--agent", "plan",
+      ],
+      promptVia: "argv",
+    },
+  );
+  assert.deepEqual(
+    turnCommand({
+      partner: "opencode",
+      sid: "ses_1",
+      resume: true,
+      root: "/repo",
+      write: true,
+      model: "ignored/on-resume",
+      effort: "max",
+    }).args,
+    ["run", "--format", "json", "--dir", "/repo", "--session", "ses_1", "--variant", "max", "--auto"],
+  );
   assert.match(newSessionId("grok"), /^[0-9a-f-]{36}$/u);
-  for (const partner of ["claude", "codex", "cursor"]) assert.equal(newSessionId(partner), null);
+  for (const partner of ["claude", "codex", "cursor", "opencode"]) assert.equal(newSessionId(partner), null);
 });
 
-test("every flag the four CLIs are sent is one they accept", (t) => {
+test("every flag the five CLIs are sent is one they accept", (t) => {
   const surfaces = [
     ["cursor-agent", ["--help"], turnCommand({ partner: "cursor", sid: "S", resume: true, write: false }).args],
     ["grok", ["--help"], turnCommand({ partner: "grok", sid: "S", resume: true, promptFile: "/p", write: false }).args],
+    ["opencode", ["run", "--help"], turnCommand({ partner: "opencode", sid: "S", resume: true, root: "/repo", write: false, effort: "high" }).args],
   ];
   for (const [binary, helpArgs, args] of surfaces) {
     const help = spawnSync(binary, helpArgs, { encoding: "utf8" });
@@ -343,14 +531,15 @@ test("every flag the four CLIs are sent is one they accept", (t) => {
       t.diagnostic(`${binary} is not installed`);
       continue;
     }
-    const accepted = new Set(help.stdout.match(/--[a-z][a-z-]+/gu));
+    const helpText = `${help.stdout ?? ""}${help.stderr ?? ""}`;
+    const accepted = new Set(helpText.match(/--[a-z][a-z-]+/gu));
     accepted.add("-p");
     accepted.add("-m");
     for (const token of args.filter((part) => part.startsWith("-"))) {
       assert.ok(accepted.has(token), `${binary} does not accept ${token}`);
     }
-    const expectedFormat = binary === "grok" ? "streaming-json" : "stream-json";
-    assert.match(help.stdout, new RegExp(`\\b${expectedFormat}\\b`, "u"));
+    const expectedFormat = binary === "grok" ? "streaming-json" : binary === "opencode" ? "json" : "stream-json";
+    assert.match(helpText, new RegExp(`\\b${expectedFormat}\\b`, "u"));
   }
 });
 
@@ -384,6 +573,10 @@ test("session ids come out of each CLI's own report", () => {
   assert.equal(parseSessionId("codex", '{"type":"thread.started","thread_id":"abc-123"}'), "abc-123");
   assert.equal(parseSessionId("codex", "no id here"), null);
   assert.equal(parseSessionId("claude", `noise\n${JSON.stringify({ type: "result", session_id: "s1", result: "hi" })}`), "s1");
+  assert.equal(
+    parseSessionId("opencode", JSON.stringify({ type: "step_start", sessionID: "ses_1", part: { type: "step-start" } })),
+    "ses_1",
+  );
   assert.equal(parseClaudeResult("not json"), null);
 });
 
@@ -432,11 +625,19 @@ test("a deadline that is not a positive number is a usage error", () => {
   assert.equal(JSON.parse(readFileSync(join(realpathSync(repo), ".git", "pair", "session.json"), "utf8")).seq, 0);
 });
 
+test("writable task turns get a larger default idle budget", () => {
+  assert.equal(defaultIdleMinutes({ kind: "task", write: true }), 45);
+  assert.equal(defaultIdleMinutes({ kind: "task", write: false }), 20);
+  assert.equal(defaultIdleMinutes({ kind: "review", write: true }), 20);
+  assert.equal(defaultIdleMinutes(), 20);
+});
+
 test("the bootstrap and message prompts carry the protocol literally", () => {
   const boot = bootstrapPrompt({ self: "claude", partner: "codex", root: "/repo" });
   assert.match(boot, /\[agent <from> -> <to> kind=<kind> sid=<sid>\]/u);
   assert.match(boot, /half-duplex/u);
   assert.match(boot, /write lease/u);
+  assert.match(boot, /keep tool output flowing so the idle watchdog can see progress/u);
   for (const kind of ["task", "review", "question", "ready", "accepted", "blocked", "stalemate", "handoff"]) {
     assert.match(boot, new RegExp(`\\b${kind}\\b`, "u"));
   }
@@ -558,7 +759,29 @@ test("--write is the only thing that opens the sandbox for a turn", () => {
   const repo = newRepo("write-lease");
   run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("implement"), "--write");
-  assert.equal(invocations()[0].argv[4], 'sandbox_mode="workspace-write"');
+  assert.deepEqual(invocations()[0].argv.slice(3, 9), [
+    "-c",
+    'sandbox_mode="workspace-write"',
+    "-c",
+    `sandbox_workspace_write.writable_roots=${JSON.stringify([join(realpathSync(repo), ".git")])}`,
+    "-c",
+    "sandbox_workspace_write.network_access=true",
+  ]);
+});
+
+test("a Codex write turn opens the linked worktree's Git common directory", () => {
+  const { repo, worktree } = newLinkedWorktree("linked-sandbox");
+  run("ok", "claude", "init", "--repo", worktree, "--partner", "codex");
+  run("ok", "claude", "send", "--repo", worktree, "--kind", "task", "--body-file", bodyFile("commit from the worktree"), "--write");
+
+  const place = locate(worktree);
+  assert.equal(place.writableRoot, join(realpathSync(repo), ".git"));
+  assert.ok(
+    invocations()[0].argv.includes(
+      `sandbox_workspace_write.writable_roots=${JSON.stringify([place.writableRoot])}`,
+    ),
+  );
+  assert.ok(invocations()[0].argv.includes("sandbox_workspace_write.network_access=true"));
 });
 
 test("send refuses a body or kind the protocol does not define", () => {
@@ -767,6 +990,10 @@ test("a scheduled Grok fork commits only after the new session is proved", () =>
     forked_at: status.forked[0].forked_at,
     successor_sid: scheduled.pending_sid,
   });
+  assert.deepEqual(status.lineage, {
+    current_sid: scheduled.pending_sid,
+    forks: status.forked,
+  });
   const resumed = run("ok", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("again")).receipt;
   assert.equal(resumed.status, "replied");
   assert.ok(invocations()[0].argv.includes(scheduled.pending_sid));
@@ -856,6 +1083,61 @@ test("a grok partner is handed the session id it will resume, and reads its prom
   assert.equal(run("ok", "claude", "status", "--repo", repo).receipt.role, "executor");
 });
 
+test("an OpenCode partner captures its session and resumes with argv prompts", () => {
+  const repo = newRepo("opencode-partner");
+  const created = run(
+    "ok",
+    "claude",
+    "init",
+    "--repo",
+    repo,
+    "--partner",
+    "opencode",
+    "--model",
+    "provider/model",
+    "--effort",
+    "high",
+    "--role",
+    "executor",
+  ).receipt;
+  assert.equal(created.partner, "opencode");
+  assert.equal(created.sid, OPENCODE_SID);
+  const [boot] = invocations();
+  assert.deepEqual(boot.argv.slice(0, -1), [
+    "run", "--format", "json", "--dir", realpathSync(repo), "-m", "provider/model",
+    "--variant", "high", "--agent", "plan",
+  ]);
+  assert.match(boot.argv.at(-1), /You are the executor/u);
+  assert.equal(boot.stdin, "");
+
+  const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("implement")).receipt;
+  assert.equal(sent.status, "replied");
+  assert.equal(sent.write, true);
+  assert.match(sent.reply, /opencode reviewed/u);
+  const resumed = invocations()[0];
+  assert.deepEqual(resumed.argv.slice(0, -1), [
+    "run", "--format", "json", "--dir", realpathSync(repo), "--session", OPENCODE_SID,
+    "--variant", "high", "--auto",
+  ]);
+  assert.equal(resumed.argv.at(-1), `[agent claude -> opencode kind=task sid=${OPENCODE_SID}]\n\nimplement\n`);
+  assert.equal(resumed.stdin, "");
+
+  const reviewed = run(
+    "ok",
+    "claude",
+    "send",
+    "--repo",
+    repo,
+    "--kind",
+    "review",
+    "--body-file",
+    bodyFile("inspect"),
+    "--read-only",
+  ).receipt;
+  assert.equal(reviewed.write, false);
+  assert.deepEqual(invocations()[0].argv.slice(-5, -1), ["--variant", "high", "--agent", "plan"]);
+});
+
 test("init refuses a partner the lead is already running and invalid settings", () => {
   const repo = newRepo("same-cli");
   const refused = run("ok", "claude", "init", "--repo", repo, "--partner", "claude").receipt;
@@ -873,7 +1155,7 @@ test("init refuses a partner the lead is already running and invalid settings", 
   assert.match(badRole.reason, /unknown role boss/u);
 });
 
-test("cursor and grok replies are lifted out of the run's own output", () => {
+test("cursor, grok, and OpenCode replies are lifted out of the run's own output", () => {
   assert.equal(parseCursorSessionId('{"type":"result","chat_id":"c-1","result":"hi"}'), "c-1");
   assert.equal(parseCursorSessionId("no json here"), null);
   assert.equal(parseCursorSessionId('{"type":"result","session_id":"c-2","result":"ok"}'), "c-2");
@@ -883,6 +1165,14 @@ test("cursor and grok replies are lifted out of the run's own output", () => {
   assert.deepEqual(
     parseGrokStream('{"type":"thought","data":"hidden"}\n{"type":"text","data":"hello "}\n{"type":"text","data":"world"}\n{"type":"end","stopReason":"end_turn","sessionId":"g-1"}'),
     { reply: "hello world", stopReason: "end_turn", sessionId: "g-1" },
+  );
+  assert.deepEqual(
+    parseOpenCodeStream([
+      JSON.stringify({ type: "step_start", sessionID: "ses_1", part: { type: "step-start", sessionID: "ses_1" } }),
+      JSON.stringify({ type: "text", sessionID: "ses_1", part: { type: "text", sessionID: "ses_1", text: "hello " } }),
+      JSON.stringify({ type: "text", sessionID: "ses_1", part: { type: "text", sessionID: "ses_1", text: "world" } }),
+    ].join("\n")),
+    { reply: "hello world", sessionId: "ses_1" },
   );
   assert.equal(parseSessionId("grok", "anything at all"), null);
 });
@@ -902,6 +1192,12 @@ test("recorded live stream fixtures keep each parser on its partner's schema", (
   const cursor = readFileSync(join(fixtures, "cursor-stream.jsonl"), "utf8");
   assert.equal(parseCursorSessionId(cursor), "cursor-1");
   assert.match(parseTextReply(cursor), /done$/u);
+  const opencode = readFileSync(join(fixtures, "opencode-stream.jsonl"), "utf8");
+  assert.deepEqual(parseOpenCodeStream(opencode), {
+    reply: "[agent opencode -> claude kind=ready sid=ses_live_1]\n\ndone",
+    sessionId: "ses_live_1",
+  });
+  assert.equal(extractReply("opencode", join(root, "unused"), opencode), "[agent opencode -> claude kind=ready sid=ses_live_1]\n\ndone");
   const codex = readFileSync(join(fixtures, "codex-stream.jsonl"), "utf8");
   assert.equal(parseSessionId("codex", codex), "codex-1");
   assert.equal(extractReply("codex", join(root, "no-codex-reply"), codex), "done");
@@ -915,7 +1211,7 @@ test("recorded live stream fixtures keep each parser on its partner's schema", (
   );
 });
 
-test("the cursor and grok session stores answer the same positive-absence rule", () => {
+test("partner session stores answer the same positive-absence rule", () => {
   const home = join(root, "store-home");
   mkdirSync(join(home, ".cursor", "chats", "abc123", CURSOR_SID), { recursive: true });
   assert.equal(sessionKnown("cursor", CURSOR_SID, "/repo", {}, home), true);
@@ -929,6 +1225,7 @@ test("the cursor and grok session stores answer the same positive-absence rule",
   // A store that is not there at all cannot disprove anything.
   assert.equal(sessionKnown("grok", "other", "/repo", { GROK_HOME: join(root, "absent") }, home), true);
   assert.equal(sessionKnown("cursor", "other", "/repo", {}, join(root, "absent-home")), true);
+  assert.equal(sessionKnown("opencode", "ses_any", "/repo", {}, home), true);
 });
 
 test("the lock is published by a link, so a collision is decided by the kernel", () => {
@@ -1222,6 +1519,10 @@ test("status reports the session and end trashes it", () => {
   const status = run("ok", "claude", "status", "--repo", repo).receipt;
   assert.equal(status.sid, CODEX_SID);
   assert.equal(status.seq, 1);
+  assert.equal(status.latest_receipt.status, "replied");
+  assert.equal(status.latest_receipt.seq, 1);
+  assert.match(status.latest_receipt.receipt_file, /0001-task-receipt\.json$/u);
+  assert.deepEqual(status.lineage, { current_sid: CODEX_SID, forks: [] });
   assert.equal(status.partner, "codex");
   const ended = run("ok", "claude", "end", "--repo", repo).receipt;
   assert.equal(ended.ok, true);

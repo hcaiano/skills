@@ -17,21 +17,25 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { matchingForegroundProcess } from "./agent-process.mjs";
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 // Every agent kind `herdr agent start --kind` can bring up. A pair is always
 // exactly two of them, and never twice the same one: two panes of one CLI echo
 // each other instead of reviewing each other. One pane may hold several
 // concurrent pairs — one sid-scoped session file each.
-const agentKinds = ["claude", "codex", "cursor", "grok"];
+const agentKinds = ["claude", "codex", "cursor", "grok", "opencode"];
 const kindList = agentKinds.join("|");
 const roles = ["peer", "executor"];
-// Schema 3 keys participants by agent kind across four kinds and records the
-// role. There is no migration from the two-kind schemas: an old session names
-// panes a new one cannot place, so it is ended rather than rewritten.
+// Schema 3 keys participants by agent kind across all supported kinds and
+// records the role. There is no migration from the two-kind schemas: an old
+// session names panes a new one cannot place, so it is ended instead.
 const schemaVersion = 3;
 const staleLockMs = 60000;
 const pasteSettleMs = 400;
+const freshPaneWindowMs = 60000;
+const freshPaneSettleMs = 2000;
 const processStartFormat = "ps-lstart-c-utc-v1";
 let callerContext = null;
 
@@ -99,15 +103,6 @@ function processInfo(paneId) {
   return info;
 }
 
-function matchingForegroundProcess(info, agent, repoRoot) {
-  return info.foreground_processes.find((entry) => {
-    const executables = [entry.name, entry.argv0, entry.argv?.[0]]
-      .filter((value) => typeof value === "string")
-      .map((value) => basename(value).toLowerCase());
-    return executables.includes(agent) && entry.cwd === repoRoot;
-  });
-}
-
 function requireForegroundProcess(paneId, agent, repoRoot) {
   const info = processInfo(paneId);
   if (!matchingForegroundProcess(info, agent, repoRoot)) {
@@ -161,19 +156,22 @@ function currentPane() {
   return pane;
 }
 
-function participantRecord(pane) {
+function participantRecord(pane, repoRoot = null, registeredAt = null) {
   return {
     pane_id: pane.pane_id,
     terminal_id: pane.terminal_id ?? null,
     agent_session_id: pane.agent_session?.value ?? null,
+    repo_root: repoRoot,
+    ...(registeredAt ? { registered_at: registeredAt } : {}),
   };
 }
 
 // A pane id alone does not identify a conversation: the same pane can hold a
 // replacement agent session after the first one exits. terminal_id catches a
-// recycled terminal. For Claude, Cursor, and Grok, agent_session_id catches a
-// fresh conversation started in the SAME terminal, which would otherwise
-// inherit the pair and receive session-bound sends. Codex is different: Herdr
+// recycled terminal. For Claude, Cursor, Grok, and OpenCode,
+// agent_session_id catches a fresh conversation started in the SAME terminal,
+// which would otherwise inherit the pair and receive session-bound sends.
+// Codex is different: Herdr
 // reports a new thread id after compaction and can report a subagent thread id
 // while delegation runs, so its pane and terminal are the stable identity.
 // A null recorded id stays tolerant — normalizeSession backfills it on the
@@ -347,14 +345,19 @@ function normalizeSession(session, live) {
       if (
         record?.pane_id === pane.pane_id &&
         ((record.terminal_id == null && pane.terminal_id) ||
-          (record.agent_session_id == null && pane.agent_session?.value))
+          (record.agent_session_id == null && pane.agent_session?.value) ||
+          record.repo_root == null)
       ) {
         normalized.participants[pane.agent] = {
-          ...participantRecord(pane),
+          ...participantRecord(
+            pane,
+            record.repo_root ?? callerContext.repoRoot,
+          ),
           ...record,
           terminal_id: record.terminal_id ?? pane.terminal_id ?? null,
           agent_session_id:
             record.agent_session_id ?? pane.agent_session?.value ?? null,
+          repo_root: record.repo_root ?? callerContext.repoRoot,
         };
         changed = true;
       }
@@ -493,16 +496,16 @@ function tabAgentPanes(self) {
 }
 
 // A partner's kind is read off its own pane rather than derived from the
-// caller's, which is what makes any of the four kinds pairable — and a pane of
+// caller's, which is what makes any supported kind pairable — and a pane of
 // the caller's own kind is refused rather than accepted: two panes of one CLI
 // echo each other instead of reviewing each other.
-function requireLivePartner(self, partner) {
+function requireLivePartner(self, partner, repoRoot = callerContext.repoRoot) {
   if (partner.agent === self.agent) {
     fail(
       `refusing to pair ${self.agent} with itself: pane ${partner.pane_id} runs the same CLI — the partner must be one of ${agentKinds.filter((kind) => kind !== self.agent).join(", ")}`,
     );
   }
-  requireForegroundProcess(partner.pane_id, partner.agent, callerContext.repoRoot);
+  requireForegroundProcess(partner.pane_id, partner.agent, repoRoot);
   return partner;
 }
 
@@ -512,7 +515,12 @@ function describePanes(panes) {
 
 // The pane a NEW pair forms with: an agent pane of this tab that no active
 // session already holds. Ambiguity is never guessed away — it is named.
-function choosePartnerPane(self, entries, requestedPane) {
+function choosePartnerPane(
+  self,
+  entries,
+  requestedPane,
+  partnerRepoRoot = callerContext.repoRoot,
+) {
   const paired = pairedPaneIds(entries);
   const candidates = tabAgentPanes(self).filter((pane) => !paired.has(pane.pane_id));
   if (requestedPane) {
@@ -522,7 +530,7 @@ function choosePartnerPane(self, entries, requestedPane) {
         `--partner-pane ${requestedPane} is not an unpaired agent pane in current tab ${self.tab_id}; candidates: ${describePanes(candidates)}`,
       );
     }
-    return requireLivePartner(self, chosen);
+    return requireLivePartner(self, chosen, partnerRepoRoot);
   }
   if (candidates.length === 0) {
     fail(
@@ -534,7 +542,7 @@ function choosePartnerPane(self, entries, requestedPane) {
       `current tab ${self.tab_id} holds ${candidates.length} unpaired agent panes; name one with --partner-pane — ${describePanes(candidates)}`,
     );
   }
-  return requireLivePartner(self, candidates[0]);
+  return requireLivePartner(self, candidates[0], partnerRepoRoot);
 }
 
 // `discover` is informational: it reports who the caller is, which panes it
@@ -599,6 +607,7 @@ const autonomyArguments = {
   // this deliberately broad pane-only permission.
   codex: ["-a", "never", "-s", "danger-full-access"],
   cursor: ["--force"],
+  opencode: ["--auto"],
 };
 
 function agentStartArguments(partnerAgent, options) {
@@ -630,6 +639,15 @@ function agentStartArguments(partnerAgent, options) {
       ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
     ];
   }
+  if (partnerAgent === "opencode") {
+    if (effort) {
+      fail("OpenCode exposes --variant only on `opencode run`; its Herdr TUI cannot set --effort");
+    }
+    return [
+      ...autonomyArgs,
+      ...(model ? ["-m", model] : []),
+    ];
+  }
   return [
     ...autonomyArgs,
     ...(model ? ["-m", model] : []),
@@ -653,6 +671,7 @@ function agentStartFailure(error, paneId) {
 async function spawn(args) {
   const options = parseOptions(args);
   const requestedPartner = options.partner ?? null;
+  const partnerRepoRoot = options["partner-repo-root"] ?? callerContext.repoRoot;
   if (requestedPartner && !agentKinds.includes(requestedPartner)) {
     fail(`unknown partner ${requestedPartner} — use one of ${kindList}`);
   }
@@ -665,9 +684,9 @@ async function spawn(args) {
     const existing = tabAgentPanes(self).find((pane) => pane.pane_id === requestedPane);
     if (existing && (!requestedPartner || existing.agent === requestedPartner)) {
       const live = processInfo(existing.pane_id);
-      if (matchingForegroundProcess(live, existing.agent, callerContext.repoRoot)) {
+      if (matchingForegroundProcess(live, existing.agent, partnerRepoRoot)) {
         process.stdout.write(
-          `${JSON.stringify({ self, partner: existing, partnerAgent: existing.agent }, null, 2)}\n`,
+          `${JSON.stringify({ self, partner: existing, partnerAgent: existing.agent, partnerRepoRoot }, null, 2)}\n`,
         );
         return;
       }
@@ -691,11 +710,12 @@ async function spawn(args) {
     "--direction",
     "right",
     "--cwd",
-    callerContext.repoRoot,
+    partnerRepoRoot,
     "--no-focus",
   ).pane;
   const name = pairAgentName(binding.partnerAgent, split.pane_id);
   let pane;
+  let partnerRegisteredAt = null;
   try {
     // A fresh split can report agent_pane_busy while its shell is still
     // starting up — that is a readiness race, not a real occupant, so retry
@@ -715,6 +735,7 @@ async function spawn(args) {
           "60000",
           ...(agentArguments.length > 0 ? ["--", ...agentArguments] : []),
         );
+        partnerRegisteredAt = new Date().toISOString();
         break;
       } catch (error) {
         if (!error.message.includes("agent_pane_busy") || Date.now() >= busyDeadline) {
@@ -742,7 +763,7 @@ async function spawn(args) {
     throw error;
   }
   process.stdout.write(
-    `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent }, null, 2)}\n`,
+    `${JSON.stringify({ self: binding.self, partner: pane, partnerAgent: binding.partnerAgent, partnerRepoRoot, partnerRegisteredAt }, null, 2)}\n`,
   );
 }
 
@@ -915,6 +936,15 @@ async function acquireLock(lock, timeoutMs, label) {
 async function initSession(args) {
   const options = parseOptions(args);
   const role = options.role ?? "peer";
+  const partnerRepoRoot = options["partner-repo-root"] ?? callerContext.repoRoot;
+  const suppliedRegistration = options["partner-registered-at"] ?? null;
+  const registrationTime = suppliedRegistration === null
+    ? null
+    : new Date(suppliedRegistration);
+  if (registrationTime && Number.isNaN(registrationTime.getTime())) {
+    fail("--partner-registered-at must be an ISO timestamp returned by spawn");
+  }
+  const partnerRegisteredAt = registrationTime?.toISOString() ?? null;
   if (!roles.includes(role)) fail(`unknown role ${role} — use ${roles.join(" or ")}`);
   // Resolve the caller's own pane first. Partner discovery runs on the create
   // path alone: an established session resolves through its own recorded
@@ -962,13 +992,34 @@ async function initSession(args) {
       }
       await reconcileAcknowledged(resumed.path, resumed.session.sid);
       resumed.session = JSON.parse(readFileSync(resumed.path, "utf8"));
+      for (const [field, expected] of [
+        ["role", role],
+        ["model", options.model ?? null],
+        ["effort", options.effort ?? null],
+      ]) {
+        if (options[field] !== undefined && (resumed.session[field] ?? null) !== expected) {
+          fail(`cannot resume existing current-tab session: ${field} differs`);
+        }
+      }
+      const resumedPartner = Object.keys(resumed.session.participants ?? {}).find(
+        (kind) => kind !== self.agent && agentKinds.includes(kind),
+      );
+      if (
+        options["partner-repo-root"] !== undefined &&
+        resumed.session.participants?.[resumedPartner]?.repo_root !== partnerRepoRoot
+      ) {
+        fail("cannot resume existing current-tab session: partner repo root differs");
+      }
       process.stdout.write(
         `${JSON.stringify({ ...resumed.session, resumed: true }, null, 2)}\n`,
       );
       return;
     }
 
-    const binding = { self, partner: choosePartnerPane(self, entries, requestedPane) };
+    const binding = {
+      self,
+      partner: choosePartnerPane(self, entries, requestedPane, partnerRepoRoot),
+    };
     const path = sessionPathFor(self, binding.partner.pane_id);
     const session = {
       schema_version: schemaVersion,
@@ -977,10 +1028,16 @@ async function initSession(args) {
       tab_id: binding.self.tab_id,
       initiator: binding.self.agent,
       role,
+      model: options.model ?? null,
+      effort: options.effort ?? null,
       active: true,
       participants: {
-        [binding.self.agent]: participantRecord(binding.self),
-        [binding.partner.agent]: participantRecord(binding.partner),
+        [binding.self.agent]: participantRecord(binding.self, callerContext.repoRoot),
+        [binding.partner.agent]: participantRecord(
+          binding.partner,
+          partnerRepoRoot,
+          partnerRegisteredAt,
+        ),
       },
       round: 0,
       last_status: byKind(null),
@@ -1046,9 +1103,14 @@ async function verifiedSessionAt(self, path) {
   );
   const selfRecord = session.participants?.[self.agent];
   const partnerRecord = partnerAgent ? session.participants[partnerAgent] : null;
-  if (!partnerRecord?.pane_id || !participantMatches(selfRecord, self)) {
+  if (
+    !partnerRecord?.pane_id ||
+    !participantMatches(selfRecord, self) ||
+    (selfRecord.repo_root && selfRecord.repo_root !== callerContext.repoRoot)
+  ) {
     fail("live panes do not match the participants recorded for this tab");
   }
+  const partnerRepoRoot = partnerRecord.repo_root ?? callerContext.repoRoot;
   let partnerPane;
   try {
     partnerPane = paneGet(partnerRecord.pane_id);
@@ -1064,7 +1126,7 @@ async function verifiedSessionAt(self, path) {
   ) {
     fail("recorded partner is no longer the partner agent in the caller's current tab");
   }
-  requireForegroundProcess(partnerPane.pane_id, partnerAgent, callerContext.repoRoot);
+  requireForegroundProcess(partnerPane.pane_id, partnerAgent, partnerRepoRoot);
   const live = { self, partner: partnerPane, partnerAgent };
 
   const normalized = normalizeSession(session, live);
@@ -1097,7 +1159,8 @@ async function verifiedSessionAt(self, path) {
   const normalizedPartner = session.participants[live.partner.agent];
   if (
     !participantMatches(normalizedSelf, live.self) ||
-    !participantMatches(normalizedPartner, live.partner)
+    !participantMatches(normalizedPartner, live.partner) ||
+    (normalizedSelf.repo_root && normalizedSelf.repo_root !== callerContext.repoRoot)
   ) {
     fail("live panes do not match the participants recorded for this tab");
   }
@@ -1111,6 +1174,11 @@ async function verifiedSessionAt(self, path) {
   ) {
     fail("recorded partner is no longer the partner agent in the caller's current tab");
   }
+  requireForegroundProcess(
+    partner.pane_id,
+    partner.agent,
+    normalizedPartner.repo_root ?? callerContext.repoRoot,
+  );
 
   return { ...live, partner, path, session };
 }
@@ -1355,6 +1423,13 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
     const head = (message.split("\n").find((line) => line.trim()) ?? "").trim().slice(0, 40);
     const before = composerContent(paneId);
     const wasWorking = paneGet(paneId).agent_status === "working";
+    const partnerRecord = Object.values(session.participants ?? {}).find(
+      (record) => record?.pane_id === paneId,
+    );
+    const registeredAt = Date.parse(partnerRecord?.registered_at ?? "");
+    const registrationAge = Date.now() - registeredAt;
+    const recentlyRegistered = Number.isFinite(registeredAt) &&
+      registrationAge >= 0 && registrationAge <= freshPaneWindowMs;
     herdr("agent", "prompt", paneId, message);
     await sleep(pasteSettleMs);
     // A working target has no reliable visible arrival signal. Keep the
@@ -1377,6 +1452,10 @@ async function promptReservedDelivery(path, sid, agent, sequence, paneId, messag
 
     let arrived = await composerArrived(paneId, head, before);
     if (!arrived) {
+      // A newly registered TUI can still be drawing its splash after Herdr
+      // reports the agent. Let that exact first-turn race settle before the
+      // one full resend. The pending reservation stays unchanged throughout.
+      if (recentlyRegistered) await sleep(freshPaneSettleMs);
       herdr("agent", "prompt", paneId, message);
       await sleep(pasteSettleMs);
       arrived = await composerArrived(paneId, head, before);
@@ -1623,11 +1702,12 @@ async function endSession(args) {
         // recovery — only a provably absent partner process is stale, an
         // unreadable one is unknown.
         const info = processInfo(pane.pane_id);
-        if (matchingForegroundProcess(info, partnerAgent, callerContext.repoRoot)) {
+        const partnerRepoRoot = record.repo_root ?? callerContext.repoRoot;
+        if (matchingForegroundProcess(info, partnerAgent, partnerRepoRoot)) {
           partner = pane;
         } else if (!allowStale) {
           fail(
-            `pane ${pane.pane_id} has no live foreground ${partnerAgent} process rooted at ${callerContext.repoRoot}`,
+            `pane ${pane.pane_id} has no live foreground ${partnerAgent} process rooted at ${partnerRepoRoot}`,
           );
         }
       }
@@ -1700,6 +1780,71 @@ async function endSession(args) {
   process.stdout.write(`ended herdr-pair session ${session.sid} for tab ${binding.self.tab_id}\n`);
 }
 
+async function repinSession(args) {
+  const options = parseOptions(args);
+  if (!options.sid || !options["previous-pane"] || !options["previous-terminal-id"]) {
+    fail("repin requires --sid, --previous-pane, and --previous-terminal-id");
+  }
+  const self = currentPane();
+  const path = resolveSessionPath(self, options.sid);
+  let changed = false;
+  let previous = null;
+  await withSessionLock(path, (session) => {
+    requireLockedSession(session, options.sid, "repin");
+    validateSessionEnvelope(session, { self });
+    const recorded = session.participants?.[self.agent];
+    if (!recorded) fail(`session ${options.sid} has no ${self.agent} participant`);
+    const replacement = participantRecord(self, callerContext.repoRoot);
+    if (participantMatches(recorded, self) && recorded.repo_root === callerContext.repoRoot) {
+      return;
+    }
+    if (
+      recorded.pane_id !== options["previous-pane"] ||
+      recorded.terminal_id !== options["previous-terminal-id"]
+    ) {
+      fail(
+        `repin refused: recorded ${self.agent} participant is ${recorded.pane_id}/${recorded.terminal_id ?? "unknown"}, not the claimed previous identity`,
+      );
+    }
+    let oldPane = null;
+    try {
+      oldPane = paneGet(recorded.pane_id);
+    } catch {
+      oldPane = null;
+    }
+    if (
+      oldPane &&
+      participantMatches(recorded, oldPane) &&
+      matchingForegroundProcess(
+        processInfo(oldPane.pane_id),
+        self.agent,
+        recorded.repo_root ?? callerContext.repoRoot,
+      )
+    ) {
+      fail(`repin refused: previous ${self.agent} participant ${recorded.pane_id} is still live`);
+    }
+    previous = structuredClone(recorded);
+    session.participants[self.agent] = replacement;
+    session.participant_history ??= [];
+    session.participant_history.push({
+      agent: self.agent,
+      from: previous,
+      to: replacement,
+      repinned_at: new Date().toISOString(),
+    });
+    changed = true;
+  });
+  const session = JSON.parse(readFileSync(path, "utf8"));
+  process.stdout.write(`${JSON.stringify({
+    ok: true,
+    sid: session.sid,
+    agent: self.agent,
+    changed,
+    previous,
+    participant: session.participants[self.agent],
+  }, null, 2)}\n`);
+}
+
 async function send(args) {
   const options = parseOptions(args);
   const kind = options.kind;
@@ -1708,6 +1853,8 @@ async function send(args) {
   if (!kind || !bodyFile || !claimedSid) {
     fail("send requires --sid, --kind, and --body-file");
   }
+  const format = options.format ?? "text";
+  if (!["text", "json"].includes(format)) fail("--format must be text or json");
 
   let binding = await verifiedSession(claimedSid);
   if (binding.session.sid !== claimedSid) {
@@ -1747,7 +1894,9 @@ async function send(args) {
     kind,
   );
   const header = `[agent ${binding.self.agent} -> ${binding.partner.agent} kind=${kind} sid=${binding.session.sid}]`;
-  const receiveCommand = `node ${shellQuote(scriptPath)} receive ${pinnedCliText(binding.partner, callerContext.repoRoot)} --sid ${shellQuote(binding.session.sid)} --from ${shellQuote(binding.self.agent)} --seq ${sequence}`;
+  const partnerRepoRoot = binding.session.participants?.[binding.partner.agent]?.repo_root ??
+    callerContext.repoRoot;
+  const receiveCommand = `node ${shellQuote(scriptPath)} receive ${pinnedCliText(binding.partner, partnerRepoRoot)} --sid ${shellQuote(binding.session.sid)} --from ${shellQuote(binding.self.agent)} --seq ${sequence}`;
   const control = `[herdr-pair control seq=${sequence}: run ${receiveCommand} before doing work. This is partner transport: reply only through this helper's send command, never as visible text in this pane. Keep the pair active until the user closes the tab or explicitly ends it.]`;
   const message = `${header}\n${control}\n\n${body}`;
   const deliveryProof = await promptReservedDelivery(
@@ -1798,7 +1947,26 @@ async function send(args) {
           : deliveryReceipts.lost;
     }
   }
-  process.stdout.write(`${header} seq=${sequence} ${receipt}\n`);
+  if (format === "json") {
+    const session = JSON.parse(readFileSync(binding.path, "utf8"));
+    const receiptToken = receipt.slice("receipt=".length);
+    process.stdout.write(`${JSON.stringify({
+      ok: true,
+      sid: binding.session.sid,
+      from: binding.self.agent,
+      to: binding.partner.agent,
+      kind,
+      seq: sequence,
+      receipt: receiptToken,
+      acknowledged: receiptToken === "acknowledged",
+      delivery_proof: deliveryProof,
+      reservation: session.delivery?.pending?.[binding.self.agent] ?? null,
+      submitted: session.delivery?.submitted?.[binding.self.agent] ?? 0,
+      received: session.delivery?.received?.[binding.self.agent] ?? 0,
+    })}\n`);
+  } else {
+    process.stdout.write(`${header} seq=${sequence} ${receipt}\n`);
+  }
 }
 
 async function reconcileSession(args) {
@@ -1873,11 +2041,13 @@ async function main() {
     await resetSession(args);
   } else if (command === "reconcile") {
     await reconcileSession(args);
+  } else if (command === "repin") {
+    await repinSession(args);
   } else if (command === "end") {
     await endSession(args);
   } else {
     fail(
-      `usage: herdr-pair.mjs COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--sid ID] [--partner ${kindList}] [--partner-pane ID] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
+      `usage: herdr-pair.mjs COMMAND --pane ID --workspace ID --tab-id ID --as ${kindList} --terminal-id ID --repo-root PATH [--sid ID] [--partner ${kindList}] [--partner-pane ID] [--partner-repo-root PATH] [--model NAME] [--effort LEVEL] [--role peer|executor] [options]`,
     );
   }
 }

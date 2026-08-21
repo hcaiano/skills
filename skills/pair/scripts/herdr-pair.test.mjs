@@ -165,12 +165,15 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   const pane = state.panes[args[2]];
   const wasWorking = pane.agent_status === "working";
   const droppedWhileWorking = state.drop_paste_when_working === true && wasWorking;
+  state.prompt_attempts = (state.prompt_attempts ?? 0) + 1;
+  const droppedDuringFreshSplash =
+    state.drop_first_prompt_during_splash === true && state.prompt_attempts === 1;
   state.mutations.push({ command: "agent prompt", pane: args[2] });
   state.last_message = args[3];
   // Both harnesses collapse a large multi-line paste into a summary line, so
   // the composer never shows the message text itself. state.drop_paste models
   // the failure this fake used to hide: the paste silently never lands.
-  if (state.drop_paste !== true && !droppedWhileWorking && !(state.hide_composer_when_working === true && wasWorking)) {
+  if (state.drop_paste !== true && !droppedWhileWorking && !droppedDuringFreshSplash && !(state.hide_composer_when_working === true && wasWorking)) {
     const lines = args[3].split("\\n").length;
     state.composers = state.composers ?? {};
     state.composers[args[2]] = state.show_composer_when_working === true && wasWorking
@@ -184,9 +187,9 @@ else if (args[0] === "agent" && args[1] === "prompt") {
   // send time, provably idle by the time the receipt is chosen.
   if (state.idle_after_prompt === true) pane.agent_status = "idle";
   const control = state.last_message.match(/\\[herdr-pair control seq=(\\d+): run node .*? receive .*? --seq (\\d+)/);
-  const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok) ->/)?.[1];
+  const sender = state.last_message.match(/^\\[agent (claude|codex|cursor|grok|opencode) ->/)?.[1];
   const sid = state.last_message.match(/sid=([^\\]\\s]+)\\]/)?.[1];
-  if (control && sender && state.auto_ack !== false && !droppedWhileWorking) {
+  if (control && sender && state.auto_ack !== false && !droppedWhileWorking && !droppedDuringFreshSplash) {
     const sequence = Number(control[2]);
     const slug = pane.tab_id.replaceAll(":", "_");
     // One file per pair: acknowledge the session the message names, never
@@ -676,6 +679,10 @@ try {
   }
   state.processes["w1:p2"][0].cwd = shellMetaRepo;
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
+  const movedSession = JSON.parse(readFileSync(sessionPath, "utf8"));
+  movedSession.participants.codex.repo_root = shellMetaRepo;
+  movedSession.participants.claude.repo_root = shellMetaRepo;
+  writeFileSync(sessionPath, `${JSON.stringify(movedSession, null, 2)}\n`);
   const sent = run(
     "send",
     "--sid",
@@ -739,6 +746,9 @@ try {
   writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`);
 
   let session = JSON.parse(readFileSync(sessionPath, "utf8"));
+  session.participants.codex.repo_root = "/workspace";
+  session.participants.claude.repo_root = "/workspace";
+  writeFileSync(sessionPath, `${JSON.stringify(session, null, 2)}\n`);
   assert.equal(session.delivery.submitted.codex, 1);
   assert.equal(session.delivery.received.codex, 1);
   assert.equal(session.delivery.pending.codex, null);
@@ -924,6 +934,7 @@ try {
     codex: "accepted",
     cursor: null,
     grok: null,
+    opencode: null,
   });
   assert.equal(session.completed_cycles, 1);
   assert.equal(existsSync(sessionPath), true);
@@ -938,7 +949,7 @@ try {
   const reset = JSON.parse(run("reset"));
   assert.equal(reset.reset, true);
   assert.equal(reset.round, 0);
-  assert.deepEqual(reset.last_status, { claude: null, codex: null, cursor: null, grok: null });
+  assert.deepEqual(reset.last_status, { claude: null, codex: null, cursor: null, grok: null, opencode: null });
   assert.equal(reset.delivery.received.codex, 6);
 
   // A partner that never idles still gets the message: the send waits only a
@@ -1093,11 +1104,13 @@ try {
       pane_id: "w1:p1",
       terminal_id: "term-w1-p1",
       agent_session_id: "codex-session-w1-p1",
+      repo_root: "/workspace",
     },
     claude: {
       pane_id: "w1:p2",
       terminal_id: "term-w1-p2",
       agent_session_id: "claude-session-w1-p2",
+      repo_root: "/workspace",
     },
   });
   run("end", "--sid", migrated.sid);
@@ -1224,6 +1237,7 @@ try {
     ["wY:p1", "wY:t1", "wY", "pair-claude-wy_p1s", "/workspace", "/workspace", "claude"],
     [longSpawnPane, "w655f3dd90835016:t123", "w655f3dd90835016", longSpawnName, "/workspace", "/workspace", "cursor"],
     ["wZ:p1", "wZ:t1", "wZ", "pair-grok-wz_p1s", "/shell-home", "/workspace", "grok"],
+    ["wQ:p1", "wQ:t1", "wQ", "pair-opencode-wq_p1s", "/workspace", "/workspace", "opencode"],
   ]) {
     const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
     spawnState.panes = {
@@ -1267,6 +1281,50 @@ try {
     assert.equal(spawned.agent, partner, "the spawned pane must run the requested CLI");
   }
 
+  // An orchestrator stays in the repository root while each executor pane is
+  // rooted in its unit worktree. The session pins both roots independently.
+  {
+    const separateRootState = JSON.parse(readFileSync(statePath, "utf8"));
+    separateRootState.panes = {
+      "wR:p1": {
+        agent: "claude", agent_session: { value: "session-wR" }, agent_status: "idle",
+        cwd: "/lead-repository", foreground_cwd: "/lead-repository", pane_id: "wR:p1",
+        tab_id: "wR:t1", terminal_id: "term-wR-p1", workspace_id: "wR",
+      },
+    };
+    separateRootState.processes = {
+      "wR:p1": [{ argv: ["claude"], cwd: "/lead-repository", name: "claude" }],
+    };
+    writeFileSync(statePath, `${JSON.stringify(separateRootState, null, 2)}\n`);
+    const leadPin = [
+      "--pane", "wR:p1", "--workspace", "wR", "--tab-id", "wR:t1",
+      "--as", "claude", "--terminal-id", "term-wR-p1", "--repo-root", "/lead-repository",
+    ];
+    const spawned = JSON.parse(runRaw(
+      "spawn", ...leadPin, "--partner", "codex",
+      "--partner-repo-root", "/unit-worktree", "--model", "gpt-5", "--effort", "high",
+    ));
+    assert.equal(spawned.partnerRepoRoot, "/unit-worktree");
+    assert.equal(Number.isNaN(Date.parse(spawned.partnerRegisteredAt)), false);
+    const session = JSON.parse(runRaw(
+      "init", ...leadPin, "--partner-pane", spawned.partner.pane_id,
+      "--partner-repo-root", "/unit-worktree", "--role", "executor",
+      "--partner-registered-at", spawned.partnerRegisteredAt,
+      "--model", "gpt-5", "--effort", "high",
+    ));
+    assert.equal(session.model, "gpt-5");
+    assert.equal(session.effort, "high");
+    assert.equal(session.participants.claude.repo_root, "/lead-repository");
+    assert.equal(session.participants.codex.repo_root, "/unit-worktree");
+    assert.equal(
+      session.participants.codex.registered_at,
+      spawned.partnerRegisteredAt,
+    );
+    const verified = JSON.parse(runRaw("verify", ...leadPin, "--sid", session.sid));
+    assert.equal(verified.session.sid, session.sid);
+    runRaw("end", ...leadPin, "--sid", session.sid);
+  }
+
   // Model and effort reach the new pane as the partner CLI's own arguments,
   // after `--`, and each CLI takes them through its own door.
   for (const [partner, extra, expected] of [
@@ -1276,12 +1334,14 @@ try {
     ["claude", ["--model", "opus", "--effort", "xhigh"], ["--", "--effort", "xhigh", "--model", "opus"]],
     ["claude", ["--model", "opus"], ["--", "--model", "opus"]],
     ["claude", [], []],
+    ["opencode", ["--model", "provider/model"], ["--", "-m", "provider/model"]],
     // --autonomy full launches the partner past its permission prompts, each
     // CLI through its own verified flag.
     ["claude", ["--autonomy", "full"], ["--", "--permission-mode", "bypassPermissions"]],
     ["grok", ["--autonomy", "full", "--model", "grok-5"], ["--", "--always-approve", "-m", "grok-5"]],
     ["codex", ["--autonomy", "full"], ["--", "-a", "never", "-s", "danger-full-access"]],
     ["cursor", ["--autonomy", "full"], ["--", "--force"]],
+    ["opencode", ["--autonomy", "full"], ["--", "--auto"]],
   ]) {
     // The lead is any CLI other than the one being spawned.
     const lead = partner === "grok" ? "claude" : "grok";
@@ -1303,6 +1363,29 @@ try {
     );
     const argv = JSON.parse(readFileSync(statePath, "utf8")).last_agent_start_argv;
     assert.deepEqual(argv.slice(argv.indexOf("60000") + 1), expected, `${partner} agent arguments`);
+  }
+
+  // OpenCode documents --variant on `opencode run`, but Herdr starts its TUI.
+  // Refuse an effort instead of forwarding a flag that the TUI does not own.
+  {
+    const spawnState = JSON.parse(readFileSync(statePath, "utf8"));
+    spawnState.panes = {
+      "wV:p1": {
+        agent: "claude", agent_session: { value: "session-wV" }, agent_status: "idle",
+        cwd: "/workspace", foreground_cwd: "/workspace", pane_id: "wV:p1",
+        tab_id: "wV:t1", terminal_id: "term-wV-p1", workspace_id: "wV",
+      },
+    };
+    spawnState.processes = { "wV:p1": [{ argv: ["claude"], cwd: "/workspace", name: "claude" }] };
+    writeFileSync(statePath, `${JSON.stringify(spawnState, null, 2)}\n`);
+    assert.throws(
+      () => runRaw(
+        "spawn", "--pane", "wV:p1", "--workspace", "wV", "--tab-id", "wV:t1",
+        "--as", "claude", "--terminal-id", "term-wV-p1", "--repo-root", "/workspace",
+        "--partner", "opencode", "--effort", "high",
+      ),
+      /OpenCode exposes --variant only on `opencode run`/u,
+    );
   }
 
   // Keep the pane mappings pinned to the installed CLIs' help contracts. A
@@ -1328,6 +1411,7 @@ try {
       /danger-full-access/u,
     ]],
     ["cursor-agent", [/-f, --force/u]],
+    ["opencode", [/-m, --model/u, /--auto/u]],
   ]) {
     const help = installedCliHelp(command);
     if (help === null) continue;
@@ -1382,7 +1466,7 @@ try {
       },
     };
     mixedState.processes = {
-      "wX:p1": [{ argv: ["cursor-agent"], argv0: "cursor", cwd: "/workspace", name: "cursor" }],
+      "wX:p1": [{ argv: ["cursor"], argv0: "cursor", cwd: "/workspace", name: "cursor" }],
       "wX:p2": [{ argv: ["grok"], cwd: "/workspace", name: "grok" }],
     };
     mixedState.auto_ack = true;
@@ -1395,20 +1479,33 @@ try {
     assert.equal(mixed.role, "executor");
     assert.equal(mixed.initiator, "cursor");
     assert.deepEqual(Object.keys(mixed.participants).sort(), ["cursor", "grok"]);
+
+    const repinState = JSON.parse(readFileSync(statePath, "utf8"));
+    repinState.panes["wX:p1"].terminal_id = "term-wX-p1-2";
+    writeFileSync(statePath, `${JSON.stringify(repinState, null, 2)}\n`);
+    const repinnedCursorPin = cursorPin.with(9, "term-wX-p1-2");
+    const repinned = JSON.parse(runRaw(
+      "repin", ...repinnedCursorPin, "--sid", mixed.sid,
+      "--previous-pane", "wX:p1", "--previous-terminal-id", "term-wX-p1",
+    ));
+    assert.equal(repinned.changed, true);
+    assert.equal(repinned.participant.terminal_id, "term-wX-p1-2");
     const mixedBody = join(root, "mixed-body.txt");
     writeFileSync(mixedBody, "own the parser scope\n");
-    const mixedSent = runRaw(
-      "send", ...cursorPin,
+    const mixedSent = JSON.parse(runRaw(
+      "send", ...repinnedCursorPin,
       "--sid", mixed.sid, "--kind", "task", "--body-file", mixedBody,
-      "--ack-timeout-ms", "1000",
-    );
-    assert.match(mixedSent, /^\[agent cursor -> grok kind=task sid=/u);
-    assert.match(mixedSent, /receipt=acknowledged/u);
+      "--ack-timeout-ms", "1000", "--format", "json",
+    ));
+    assert.equal(mixedSent.receipt, "acknowledged");
+    assert.equal(mixedSent.acknowledged, true);
+    assert.equal(mixedSent.reservation, null);
     const mixedSession = JSON.parse(
       readFileSync(join(home, ".herdr-coworkers", "wX", "wX_t1", "pair-wX_p2.json"), "utf8"),
     );
     assert.equal(mixedSession.delivery.received.cursor, 1);
-    runRaw("end", ...cursorPin, "--sid", mixed.sid);
+    assert.equal(mixedSession.participant_history.at(-1).to.terminal_id, "term-wX-p1-2");
+    runRaw("end", ...repinnedCursorPin, "--sid", mixed.sid);
   }
 
   // A fresh split can report agent_pane_busy while its shell is still coming
@@ -1575,6 +1672,7 @@ try {
       runRaw("spawn", ...leadPin, "--partner", "grok", "--partner-pane", first.partner.pane_id),
     );
     assert.equal(reused.partner.pane_id, first.partner.pane_id);
+    assert.equal(reused.partnerRegisteredAt, undefined);
     assert.equal(
       Object.keys(JSON.parse(readFileSync(statePath, "utf8")).panes).length,
       paneCountBeforeReuse,
@@ -1707,7 +1805,12 @@ try {
     const startSession = (extra) => {
       writeDeliveryState(extra);
       rmSync(join(deliveryHome, ".herdr-coworkers"), { recursive: true, force: true });
-      return JSON.parse(deliveryRun("init", ...pin)).sid;
+      const registration = extra.partner_registered_at;
+      return JSON.parse(deliveryRun(
+        "init",
+        ...pin,
+        ...(registration ? ["--partner-registered-at", registration] : []),
+      )).sid;
     };
 
     // A collapsed paste still delivers. The composer shows a summary line, never
@@ -1725,6 +1828,29 @@ try {
       1,
       "an idle delivery that lands must not resend the full prompt",
     );
+
+    // Herdr can register a new agent before its TUI finishes drawing the
+    // splash. The first paste then disappears without changing the composer.
+    // A recent registration gets one settled retry under the same pending
+    // reservation, and the second paste must be proved before submission.
+    sid = startSession({
+      auto_ack: true,
+      drop_first_prompt_during_splash: true,
+      partner_registered_at: new Date().toISOString(),
+      working_on_prompt: false,
+    });
+    const settledFreshPane = deliveryRun(
+      "send", ...pin, "--sid", sid, "--kind", "task", "--body-file", deliveryBody,
+      "--ack-timeout-ms", "2000",
+    );
+    assert.match(settledFreshPane, /receipt=acknowledged/u);
+    const freshPane = JSON.parse(readFileSync(deliveryState, "utf8"));
+    assert.equal(
+      freshPane.mutations.filter((mutation) => mutation.command === "agent prompt").length,
+      2,
+      "a fresh pane retries the same reservation once after its splash settles",
+    );
+    assert.equal(freshPane.enter_keys, 1);
 
     // A prompt sent while the partner is already working enters Herdr's queue
     // without appearing in the composer. That unobservable queue must get one
