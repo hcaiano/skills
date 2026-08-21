@@ -94,7 +94,7 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   assert.match(models, /Speed/u);
   assert.match(models, /Pool/u);
   assert.match(models, /`CLI default`/u);
-  assert.match(models, /Codex pair spawns set `low`, `high`, or `xhigh` explicitly/u);
+  assert.match(models, /A Codex pair spawn always sets effort\s+explicitly, including medium/u);
   assert.match(models, /SKILL_DIR[\s\S]*usage-state\.mjs/u);
   // Claude Code has an effort door; the backend and prose must carry it.
   assert.match(skill, /Claude Code\s+\(`--effort low\|medium\|high\|xhigh\|max`\)/u);
@@ -104,6 +104,60 @@ test("an existing pair is resumed, never respawned to change its model", () => {
   assert.match(headlessBackend, /`\[effort=…\]` suffix inside `--model`/u);
   assert.match(headlessBackend, /OpenCode\s+receives `--variant <effort>` on every invocation/u);
   assert.match(models, /OpenCode[\s\S]*`--variant`/u);
+});
+
+test("the roster is the single editable model preference source", () => {
+  const roster = models.slice(models.indexOf("## Roster"), models.indexOf("## Effort"));
+  const seats = [
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "grok-4.6",
+    "kimi-k3",
+    "composer-2.5",
+    "opencode/x-preview-f-free",
+  ];
+  assert.equal(roster.split("\n").filter((line) => /^\| `[^`]+`/u.test(line)).length, 11);
+  for (const seat of seats) assert.match(roster, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
+  assert.match(roster, /Staff only the latest generation of each model family/u);
+  assert.match(roster, /Taste scores rank models that already meet the task's risk and context bar/u);
+  assert.match(roster, /Henrique's editable seed values[\s\S]*`Updated` is the last update date/u);
+  assert.match(roster, /API-priced rows use `barato`, `médio`, or `caro`/u);
+  assert.match(roster, /subscription pools[\s\S]*`usage-state\.mjs`, not token prices/u);
+  assert.match(roster, /Claude, GPT, or Grok models that Cursor also lists[\s\S]*native\s+harness row/u);
+  assert.match(roster, /machine-specific[\s\S]*`staffing\.md`/u);
+  assert.match(roster, /free for one week from 2026-08-21/u);
+  assert.match(roster, /re-verify the ID with `opencode models --refresh`/u);
+  assert.match(roster, /Promo IDs belong only in roster data, never in scripts/u);
+  assert.doesNotMatch(`${helper}\n${headlessHelper}`, /x-preview-f-free/u);
+  for (const excluded of [
+    "gpt-daybreak-blue-latest",
+    "claude-mythos-5",
+    "gpt-reserve",
+    "codex-auto-review",
+    "gemini-3.7-flash",
+    "gemini-3.1-pro",
+    "glm-5.2",
+    "cursor-grok-4.6",
+    "grok-build-0.1",
+  ]) {
+    assert.match(roster, new RegExp(excluded.replaceAll(".", "\\."), "u"));
+  }
+});
+
+test("each harness effort ladder matches its current control surface", () => {
+  assert.match(models, /Claude Code accepts\s+`--effort low\|medium\|high\|xhigh\|max`[\s\S]*model-independent/u);
+  assert.match(models, /Codex[\s\S]*`low\|medium\|high\|xhigh\|max`[\s\S]*Sol and Terra also support `ultra`/u);
+  assert.match(models, /Sol uses\s+low; Terra and Luna use medium/u);
+  assert.match(models, /A Codex pair spawn always sets effort\s+explicitly, including medium/u);
+  assert.match(models, /Cursor[\s\S]*effort is encoded in the model ID[\s\S]*`kimi-k3-high`/u);
+  assert.match(models, /`--model '<id>\[effort=…\]'`/u);
+  assert.match(models, /Grok 4\.6 accepts `low\|medium\|high\|xhigh`[\s\S]*defaults to high/u);
+  assert.match(models, /OpenCode[\s\S]*`--variant` on every `opencode run`[\s\S]*not a session flag/u);
 });
 
 test("cursor, grok, and OpenCode delivery is documented as conservative", () => {
