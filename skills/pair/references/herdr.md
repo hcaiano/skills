@@ -144,6 +144,10 @@ text, performs one full resend, and fails loudly if delivery still cannot be
 proved. The sequence ACK can recover an interruption immediately after
 submission on either path.
 
+Callers that need a structured receipt can add `--format json`. The JSON
+includes the receipt token, sequence, ACK state, and current delivery
+reservation. Only an `acknowledged` token proves delivery.
+
 - `receipt=acknowledged`: the partner ran `receive` for this message.
 - `receipt=pending-partner-may-be-busy-do-not-retry`: the message landed and the
   partner is working, so it is queued but not acknowledged yet. Do not resend.
@@ -192,7 +196,21 @@ Use `node "$PAIR_SCRIPT" reset "${CALLER_ID[@]}" --sid "$PAIR_SID"` only to clea
 counters/statuses in a verified live pair; it preserves identity and delivery
 history.
 
-End and trash the session only when the user explicitly asks to end the pair:
+If the caller terminal changes, run the caller pane proof again. A recorded
+orchestrate unit uses its `unit repin` command. A direct pair can update its
+own participant with the old identity as a compare-and-set guard:
+
+```bash
+node "$PAIR_SCRIPT" repin "${CALLER_ID[@]}" --sid "$PAIR_SID" \
+  --previous-pane <old-pane> --previous-terminal-id <old-terminal-id>
+```
+
+The command refuses if the old participant is still live. It journals the
+participant change in the session and does not change the partner.
+
+End and trash the session only when the user explicitly asks to end the pair,
+or when an orchestrate unit's recorded restaff or dismantle lifecycle owns the
+session end:
 
 ```bash
 node "$PAIR_SCRIPT" end "${CALLER_ID[@]}" --sid "<sid>"
@@ -202,8 +220,9 @@ The script verifies sid, workspace, tab, and participants itself, and
 refuses while delivery is pending (wait for the ACK or use the inspected
 clear path). If old pane IDs or a missing partner prevent resume, explain
 the mismatch and use `end "${CALLER_ID[@]}" --sid "<sid>" --stale true` only
-with explicit user approval — a stale end may discard pending state only
-when the partner pane is gone, its recorded binding is stale, or its
+with explicit user approval or the orchestrate lifecycle authority above. A
+stale end may discard pending state only when the partner pane is gone, its
+recorded binding is stale, or its
 foreground agent process/repository no longer matches. Closing the Herdr tab
 ends the panes naturally; stale state is never borrowed by another pair or
 tab. Ending one pair leaves the tab's other pairs running.

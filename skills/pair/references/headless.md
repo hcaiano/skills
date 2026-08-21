@@ -193,7 +193,9 @@ Every writable Codex turn resolves the Git common directory again and passes
 `sandbox_workspace_write.writable_roots=["<git-common-dir>"]` plus
 `sandbox_workspace_write.network_access=true`. A plain directory uses its
 fallback state directory as the writable root. These per-turn overrides also
-reach resumed Codex sessions.
+reach resumed Codex sessions. Network access is required because writable
+delivery turns can push and run `gh` from the sandboxed Codex executor. The
+2026-08-21 Mediavine delivery run proved this requirement.
 
 The transport is half-duplex, so one turn runs at a time. In a Git worktree, a
 send takes a lock by creating `<git-dir>/pair/in-flight.json`; in a plain

@@ -100,9 +100,12 @@ prompt with keys, as `herdr.md` specifies. The unit owns the session; pane
 closure stays manual.
 
 The headless backend starts the task with pair's `send --background`. A failed
-Herdr spawn closes its new split and rolls back the unit journal. A failure
-after a pane is proved keeps the journal, worktree, and pane id for a matching
-create retry.
+Herdr spawn closes its new split and rolls back the unit journal. After spawn
+returns a pane, the helper records that pane before it validates the response
+or starts the session. A later failure keeps the journal, worktree, and pane id
+for a matching create retry. If that recorded pane is no longer available,
+spawn can supply a replacement pane; the helper records the old and new pane
+ids before it continues.
 
 The helper gives ordinary child commands two minutes, pair `send` five minutes,
 and setup or pair `init` 30 minutes. A timeout kills the complete child process
@@ -147,15 +150,32 @@ node "$HEADLESS_PAIR" wait --repo <unit-worktree> --seq <seq> --timeout-min 1
 
 For a Herdr unit, do not use headless `wait` or receipt deadlines. `unit status`
 routes through the recorded Herdr pair and reconciles its sequence ACKs. Read
-`observed.pair.delivery`, `in_flight`, and the visible executor pane. Process
-inbound control lines and send replies only with the pair helper, as
-`herdr.md` specifies. If a CLI startup prompt blocks the executor, answer it
-with keys in that exact recorded pane.
+`observed.pair.delivery`, `session_active`, `in_flight`, `inbound_pending`, and
+the visible executor pane. `in_flight` is only the lead's outbound turn;
+`inbound_pending` lists messages that the lead must receive. `session_active`
+is the active flag from a verified Herdr session. It is not headless
+`session_known`. Process inbound control lines and send replies only with the
+pair helper, as `herdr.md` specifies. If a CLI startup prompt blocks the
+executor, answer it with keys in that exact recorded pane.
+
+A Herdr task advances to `working` only after `receipt=acknowledged`. A lost,
+pending, or unproved send keeps the unit in its recovery phase and records
+`delivery_receipt` and the delivery reservation. Inspect the exact pane. If
+the message is absent, use pair's explicit `reconcile --clear-pending true`
+path, then repeat the matching unit command.
 
 Launch or resume all units before waiting on one. After compaction or a lead
-restart, start from `unit list`, then use each record's backend state. Never
-resend a turn with unknown delivery state; inspect the transport state and
-worktree first.
+restart, start from `unit list`, then use each record's backend state. If a
+Herdr lead has a new terminal identity, run the caller pane proof again and
+re-pin the unit before status, restaff, or dismantle:
+
+```bash
+node "$UNIT" repin --repo "$REPO" --unit <id> "${CALLER_ID[@]}"
+```
+
+The command compares the previous identity, updates the pair session, and
+journals the change. Never resend a turn with unknown delivery state; inspect
+the transport state and worktree first.
 
 A refused or rate-limited partner is restaffed immediately. Normal scope
 feedback and one bounded correction stay on the current pair. A proved
@@ -172,7 +192,9 @@ diff, and newest receipt or Herdr ACK state, ends only that unit's pair,
 records staffing history, and starts the same task with the new executor. A
 matching retry resumes
 `restaffing` or `restaff-failed`; any different target field refuses. Surface
-any failed checkpoint to the user.
+any failed checkpoint to the user. For a recorded Herdr session whose partner
+pane is proved absent or stale, restaff uses pair's stale end and records the
+recovery before it starts the replacement.
 
 Done when each active unit has a terminal receipt that the orchestrator has
 handled, or one exact user decision is reported as blocked.
@@ -210,6 +232,11 @@ an explicit user instruction and bind it to the exact unit id:
 ```bash
 node "$UNIT" dismantle --repo "$REPO" --unit <id> --force <id>
 ```
+
+Forced Herdr cleanup records a proved missing session or uses pair's
+`--stale true` end for a dead partner pane. A pane recorded before session init
+is still an outstanding resource; cleanup reports its pane id and leaves pane
+closure to the user.
 
 Run `unit list` again. Done when it shows no live record for each completed
 unit and `git worktree list` matches the pre-run baseline.
