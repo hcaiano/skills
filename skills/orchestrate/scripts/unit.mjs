@@ -230,13 +230,37 @@ const withRegistryLock = (place, operation) => {
   } catch (error) {
     if (error?.code !== "EEXIST") fail(`cannot create orchestrate registry lock: ${error.message}`);
     let ownerRecord = null;
-    try { ownerRecord = JSON.parse(readFileSync(join(place.lock, "owner.json"), "utf8")); } catch {}
+    const staleOwnerPath = join(place.lock, "owner.json");
+    let staleOwnerText = null;
+    try {
+      staleOwnerText = readFileSync(staleOwnerPath, "utf8");
+      ownerRecord = JSON.parse(staleOwnerText);
+    } catch {}
     if (!Number.isInteger(ownerRecord?.pid) || ownerRecord.pid <= 0) {
       fail(`orchestrate registry is busy at ${place.lock}; its owner is not yet readable`);
     }
     let alive = true;
     try { process.kill(ownerRecord.pid, 0); } catch (killError) { alive = killError?.code === "EPERM"; }
     if (alive) fail(`orchestrate registry is busy at ${place.lock} (pid ${ownerRecord.pid})`);
+    const recoveryPath = join(place.lock, "recovery.json");
+    const recoveryToken = randomUUID();
+    try {
+      writeFileSync(
+        recoveryPath,
+        `${JSON.stringify({ pid: process.pid, token: recoveryToken, at: new Date().toISOString() })}\n`,
+        { flag: "wx" },
+      );
+      if (readFileSync(staleOwnerPath, "utf8") !== staleOwnerText) {
+        fail(`orchestrate registry lock changed while stale recovery was claimed at ${place.lock}`);
+      }
+    } catch (claimError) {
+      try {
+        const claim = JSON.parse(readFileSync(recoveryPath, "utf8"));
+        if (claim.pid === process.pid && claim.token === recoveryToken) unlinkSync(recoveryPath);
+      } catch {}
+      if (claimError instanceof CliExit) throw claimError;
+      fail(`orchestrate registry lock recovery is busy at ${place.lock}: ${claimError.message}`);
+    }
     staleClaim = `${place.lock}.stale-${process.pid}-${randomUUID()}`;
     try {
       renameSync(place.lock, staleClaim);
@@ -745,7 +769,9 @@ const ensureManifestTask = (place, record) => {
   const path = record.task_file ?? join(place.registry, "tasks", `${record.unit_id}.md`);
   const body = `${record.task.trim()}\n`;
   if (existsSync(path)) {
-    if (readFileSync(path, "utf8") !== body) {
+    const current = readFileSync(path, "utf8");
+    const hasMarkedAddenda = current.startsWith(`${body}\n## Addendum — `);
+    if (current !== body && !hasMarkedAddenda) {
       fail(`unit ${record.unit_id} manifest task differs at ${path}`);
     }
   } else {
@@ -754,6 +780,30 @@ const ensureManifestTask = (place, record) => {
   record.task_file = path;
   record.resources.task_file = true;
   return path;
+};
+const ensurePrBodyExclude = (record) => {
+  const rawPath = gitChecked(
+    record.worktree,
+    ["rev-parse", "--git-path", "info/exclude"],
+    "resolve worktree exclude file",
+  ).stdout.trim();
+  const path = isAbsolute(rawPath) ? rawPath : resolve(record.worktree, rawPath);
+  const pattern = "/PR_BODY.md";
+  const current = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const present = current.split(/\r?\n/u).includes(pattern);
+  if (!present) {
+    const separator = current.length > 0 && !current.endsWith("\n") ? "\n" : "";
+    atomicWriteText(path, `${current}${separator}${pattern}\n`);
+  }
+  const previous = record.delivery_setup?.pr_body_exclude ?? null;
+  record.delivery_setup ??= {};
+  record.delivery_setup.pr_body_exclude = {
+    path,
+    pattern,
+    added_by_unit: previous?.added_by_unit ?? !present,
+    first_ensured_at: previous?.first_ensured_at ?? new Date().toISOString(),
+    ensured_at: new Date().toISOString(),
+  };
 };
 const migrateLegacyCursorCreate = (record, options, task) => {
   if (
@@ -965,6 +1015,9 @@ const create = (options) => {
         record.lifecycle = "setting-up";
         writeRecord(path, record);
       }
+
+      ensurePrBodyExclude(record);
+      writeRecord(path, record);
 
       if (["creating", "setting-up"].includes(record.lifecycle)) {
         record.lifecycle = "setting-up";
@@ -1434,6 +1487,8 @@ const restaff = (options) => {
       const checkpointPath = join(place.registry, `restaff-${id}-${process.pid}.md`);
       writeFileSync(checkpointPath, [
         record.task,
+        "",
+        `Before you work, reread the complete manifest task file at ${record.task_file}.`,
         "",
         "Restaff checkpoint:",
         `- Previous HEAD: ${checkpoint.head}`,

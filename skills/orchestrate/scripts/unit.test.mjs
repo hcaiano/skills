@@ -428,6 +428,13 @@ test("create journals a durable unit and starts an executor pair", () => {
   assert.match(created.output.unit.staffing.current.reason, /task difficulty/u);
   assert.equal(created.output.unit.pair.latest_seq, 1);
   assert.equal(created.output.unit.observed.latest_receipt.status, "replied");
+  const exclude = created.output.unit.delivery_setup.pr_body_exclude;
+  assert.equal(exclude.pattern, "/PR_BODY.md");
+  assert.equal(exclude.added_by_unit, true);
+  assert.equal(
+    readFileSync(exclude.path, "utf8").split(/\r?\n/u).filter((line) => line === "/PR_BODY.md").length,
+    1,
+  );
 });
 
 test("Herdr backend is recorded and routes the unit through pinned pair commands", () => {
@@ -830,6 +837,26 @@ test("create recovery keeps a manifest mismatch as one JSON document", () => {
     "dismantle", "--repo", repository, "--unit", "recover-task-mismatch",
     "--force", "recover-task-mismatch",
   ]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+});
+
+test("create preserves marked task addenda and keeps PR_BODY excluded once", () => {
+  const id = "recover-addendum";
+  const record = writeRecoveryRecord(id, "setting-up", { withWorktree: true });
+  mkdirSync(dirname(record.task_file), { recursive: true });
+  const addendum = `${record.task}\n\n## Addendum — 2026-08-21T12:00:00Z\nReread this recovery constraint.\n`;
+  writeFileSync(record.task_file, addendum);
+
+  const resumed = invoke(resumeArgs(id));
+  assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
+  assert.equal(readFileSync(record.task_file, "utf8"), addendum);
+  const exclude = resumed.output.unit.delivery_setup.pr_body_exclude;
+  assert.equal(
+    readFileSync(exclude.path, "utf8").split(/\r?\n/u).filter((line) => line === "/PR_BODY.md").length,
+    1,
+  );
+
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
 });
 

@@ -85,10 +85,12 @@ node "$UNIT" create --repo "$REPO" --unit <id> \
 ```
 
 `create` journals the task before mutation, creates the worktree from the base,
-runs the project's setup hook, initializes an executor-role pair, and starts
-the first task. It refuses an unrelated record, branch, worktree, or same-CLI
-partner. Use the repository's own worktree setup pipeline when one exists.
-Read every returned record and report its staffing reason to the user.
+adds `/PR_BODY.md` once to the repository's Git exclude file, runs the project's
+setup hook, initializes an executor-role pair, and starts the first task. The
+unit record stores the exclude path, pattern, and first ensure result. It
+refuses an unrelated record, branch, worktree, or same-CLI partner. Use the
+repository's own worktree setup pipeline when one exists. Read every returned
+record and report its staffing reason to the user.
 
 For the Herdr backend, append `"${CALLER_ID[@]}"` to the create command. The
 helper records that exact caller identity, spawns one visible partner pane in
@@ -121,6 +123,20 @@ but omit `--task-file`; the manifest-owned task file is authoritative. Setup
 hooks must be safe to repeat because a death can occur after the hook runs but
 before its next journal write. A resumed receipt names `resumed_from`. Any
 different immutable option refuses and names the field.
+
+The orchestrator can append steering or recovery facts to that manifest. Keep
+the original task unchanged and append one blank line plus this exact section
+shape:
+
+```markdown
+## Addendum — <UTC timestamp>
+<new fact or instruction>
+```
+
+Send an addendum notice through the unit's pair transport and name the manifest
+path. The executor rereads the complete file before it acts on the notice and
+again after every restaff. The helper accepts only the original task or a file
+whose suffix starts with this marked addendum shape.
 
 For a recoverable Cursor record that stores a separate effort but has no live
 pair, select the current effort-specific catalog model and omit `--effort`.
