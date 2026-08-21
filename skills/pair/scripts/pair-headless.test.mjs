@@ -27,6 +27,7 @@ import {
   bootstrapPrompt,
   clearMarker,
   cursorModel,
+  defaultIdleMinutes,
   detectSelf,
   extractReply,
   locate,
@@ -517,11 +518,19 @@ test("a deadline that is not a positive number is a usage error", () => {
   assert.equal(JSON.parse(readFileSync(join(realpathSync(repo), ".git", "pair", "session.json"), "utf8")).seq, 0);
 });
 
+test("writable task turns get a larger default idle budget", () => {
+  assert.equal(defaultIdleMinutes({ kind: "task", write: true }), 45);
+  assert.equal(defaultIdleMinutes({ kind: "task", write: false }), 20);
+  assert.equal(defaultIdleMinutes({ kind: "review", write: true }), 20);
+  assert.equal(defaultIdleMinutes(), 20);
+});
+
 test("the bootstrap and message prompts carry the protocol literally", () => {
   const boot = bootstrapPrompt({ self: "claude", partner: "codex", root: "/repo" });
   assert.match(boot, /\[agent <from> -> <to> kind=<kind> sid=<sid>\]/u);
   assert.match(boot, /half-duplex/u);
   assert.match(boot, /write lease/u);
+  assert.match(boot, /keep tool output flowing so the idle watchdog can see progress/u);
   for (const kind of ["task", "review", "question", "ready", "accepted", "blocked", "stalemate", "handoff"]) {
     assert.match(boot, new RegExp(`\\b${kind}\\b`, "u"));
   }

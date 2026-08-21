@@ -14,7 +14,8 @@
 //   node pair-headless.mjs status --repo <root>
 //   node pair-headless.mjs clear  --repo <root>
 //   node pair-headless.mjs end    --repo <root>
-//   [--idle-min 20] [--total-min 60] on init and send
+//   [--idle-min 20] [--total-min 60] on init and send; writable task turns
+//   default to 45 idle minutes
 //
 // Git worktree state lives in `<git-dir>/pair/session.json`. A plain directory
 // uses `~/.local/state/pair/<basename>-<realpath-hash>/` instead. A turn holds
@@ -762,6 +763,7 @@ export const bootstrapPrompt = ({ self, partner, root, role = "peer" }) =>
       ? "You are the executor: you hold the write leases by default and implement; the lead plans and reviews."
       : "You and the lead are peers: you split scopes as equals and review each other's work.",
     "This session persists: every later message resumes this exact session, so keep the task state you build here.",
+    "During long turns, keep tool output flowing so the idle watchdog can see progress.",
     "",
     "Protocol. Every message you receive starts with a header line",
     "`[agent <from> -> <to> kind=<kind> sid=<sid>]` followed by a blank line and the body.",
@@ -805,8 +807,14 @@ export const minutesToMs = (value, name) => {
   return { ms: minutes * 60000 };
 };
 
-const deadlines = () => {
-  const idle = minutesToMs(opt("idle-min", "20"), "idle-min");
+export const defaultIdleMinutes = ({ kind, write } = {}) =>
+  kind === "task" && write ? 45 : 20;
+
+const deadlines = ({ kind, write } = {}) => {
+  const idle = minutesToMs(
+    opt("idle-min", String(defaultIdleMinutes({ kind, write }))),
+    "idle-min",
+  );
   const total = minutesToMs(opt("total-min", "60"), "total-min");
   if (idle.error) fail(idle.error, 2);
   if (total.error) fail(total.error, 2);
@@ -1229,7 +1237,7 @@ const runSend = () => {
   const body = readFileSync(bodyFile, "utf8");
   if (!body.trim()) fail("the body file is empty — a partner turn needs a message", 2);
   // Read before the marker is written, so a usage error never leaves one behind.
-  const { idleMs, totalMs } = deadlines();
+  const { idleMs, totalMs } = deadlines({ kind, write });
 
   // Half-duplex means one turn at a time: a second send would resume one CLI
   // session twice at once. The lock is taken before anything is spawned or the

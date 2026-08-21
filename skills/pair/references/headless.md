@@ -92,6 +92,11 @@ worktree that transcript path is `<git-dir>/pair/transcripts/`; for a plain
 directory it is under the fallback above. The worker releases the lock only
 after that rename. `wait` reads only a complete receipt:
 
+A writable `kind=task` turn has a 45-minute default idle budget; every other
+turn and `init` use 20 minutes. An explicit `--idle-min` replaces that default.
+The session preamble tells the partner to keep tool output flowing during long
+turns, so useful activity resets the watchdog.
+
 ```bash
 node "$PAIR_SCRIPT" wait --repo "$REPO_ROOT" [--seq "$SEQ"]
 ```

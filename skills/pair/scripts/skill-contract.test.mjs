@@ -202,6 +202,10 @@ test("the headless backend documents the helper's whole command surface", () => 
   assert.match(headlessBackend, /wait --repo[\s\S]*\[--seq/u);
   assert.match(headlessBackend, /default wait timeout is 65 minutes/u);
   assert.match(headlessHelper, /opt\("timeout-min", "65"\)/u);
+  assert.match(headlessBackend, /writable `kind=task` turn has a 45-minute default idle budget/u);
+  assert.match(headlessBackend, /explicit `--idle-min` replaces that default/u);
+  assert.match(headlessHelper, /kind === "task" && write \? 45 : 20/u);
+  assert.match(headlessHelper, /keep tool output flowing so the idle watchdog can see progress/u);
   assert.match(headlessBackend, /fork --repo[\s\S]*\[--retry\]/u);
   assert.match(headlessBackend, /fork-scheduled[\s\S]*fork runs on the next normal `send`/u);
   assert.match(headlessBackend, /scripts\/pair-headless\.mjs/u);
