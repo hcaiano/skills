@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -10,17 +10,18 @@ const script = join(new URL(".", import.meta.url).pathname, "run-transport.mjs")
 
 // HERDR_ENV leaks in from the surrounding session, so every case states the
 // value it is testing rather than inheriting one.
-const run = (env, ...args) =>
+const runAt = (cwd, env, ...args) =>
   execFileSync(process.execPath, [script, ...args], {
     encoding: "utf8",
-    cwd: root,
+    cwd,
     env: { ...process.env, HERDR_ENV: "", ...env },
   });
-const runFail = (env, ...args) => {
+const run = (env, ...args) => runAt(root, env, ...args);
+const runFailAt = (cwd, env, ...args) => {
   try {
     execFileSync(process.execPath, [script, ...args], {
       encoding: "utf8",
-      cwd: root,
+      cwd,
       env: { ...process.env, HERDR_ENV: "", ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -29,6 +30,7 @@ const runFail = (env, ...args) => {
   }
   throw new Error("expected nonzero exit");
 };
+const runFail = (env, ...args) => runFailAt(root, env, ...args);
 
 const PIN = [
   "--pane", "w1:p1",
@@ -101,6 +103,48 @@ test("inside Herdr an incomplete pin stops the gate instead of going invisible",
     "start", "--pane", "w1:p1", "--workspace", "w1", "--label", "l", "--", "true",
   );
   assert.match(partial.stderr, /missing --tab-id/u);
+});
+
+test("a no-TTY headless pair executor ignores inherited Herdr mode", () => {
+  const worktree = join(root, "headless-pair-worktree");
+  mkdirSync(worktree);
+  execFileSync("git", ["init", worktree]);
+  const gitDir = execFileSync(
+    "git",
+    ["-C", worktree, "rev-parse", "--absolute-git-dir"],
+    { encoding: "utf8" },
+  ).trim();
+  const pairState = join(gitDir, "pair");
+  mkdirSync(pairState);
+  writeFileSync(
+    join(pairState, "session.json"),
+    JSON.stringify({ sid: "headless-session", partner: "codex" }),
+  );
+  writeFileSync(
+    join(pairState, "in-flight.json"),
+    JSON.stringify({ partner_pid: process.pid, receipt_file: join(pairState, "receipt.json") }),
+  );
+
+  const started = JSON.parse(
+    runAt(
+      worktree,
+      { HERDR_ENV: "1" },
+      "start", "--label", "headless executor review", "--", "sh", "-c", "echo reviewed",
+    ),
+  );
+  assert.equal(started.transport, "local");
+  assert.equal(started.selection, "headless-pair-executor");
+  const done = JSON.parse(
+    runAt(worktree, { HERDR_ENV: "1" }, "wait", "--run-file", started.run_file, "--timeout-ms", "30000"),
+  );
+  assert.equal(done.ok, true);
+
+  const pinned = runFailAt(
+    worktree,
+    { HERDR_ENV: "1" },
+    "start", ...PIN, "--label", "l", "--", "true",
+  );
+  assert.match(pinned.stderr, /from a headless pair executor/u);
 });
 
 test("a pin outside Herdr is a mistake, not a silent local run", () => {

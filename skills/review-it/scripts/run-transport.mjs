@@ -19,8 +19,9 @@
 //           interjection — the transcript is a file to tail, not a pane to type
 //           into.
 //
-// Inside Herdr a missing or drifted pin is a hard stop, never a quiet demotion
-// to an invisible process: the user expects to see a gate that Herdr is hosting.
+// An interactive Herdr lead needs a complete pin. A no-TTY headless pair
+// executor can inherit HERDR_ENV from its launcher without owning a pane; its
+// active pair session and turn marker select the local transport instead.
 
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -60,6 +61,45 @@ const POLL_MS = 1000;
 const DEFAULT_TIMEOUT_MS = 3600000;
 
 const emit = (value) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`);
+
+const isHeadlessPairExecutor = () => {
+  if (process.stdin.isTTY || process.stdout.isTTY) return false;
+  const gitDir = spawnSync(
+    "git",
+    ["-C", process.cwd(), "rev-parse", "--absolute-git-dir"],
+    { encoding: "utf8" },
+  );
+  if (gitDir.status !== 0) return false;
+  const pairState = join(gitDir.stdout.trim(), "pair");
+  const session = join(pairState, "session.json");
+  const marker = join(pairState, "in-flight.json");
+  if (!existsSync(session) || !existsSync(marker)) return false;
+  let pair;
+  let holder;
+  try {
+    pair = JSON.parse(readFileSync(session, "utf8"));
+    holder = JSON.parse(readFileSync(marker, "utf8"));
+  } catch {
+    return false;
+  }
+  if (typeof pair.sid !== "string" || typeof pair.partner !== "string") return false;
+  const ownerPids = new Set(
+    [holder.partner_pid, holder.child_pid, holder.supervisor_pid]
+      .filter((pid) => Number.isInteger(pid) && pid > 0),
+  );
+  let pid = process.pid;
+  const seen = new Set();
+  while (pid > 1 && !seen.has(pid)) {
+    if (ownerPids.has(pid)) return true;
+    seen.add(pid);
+    const parent = spawnSync("/bin/ps", ["-o", "ppid=", "-p", String(pid)], {
+      encoding: "utf8",
+    });
+    if (parent.status !== 0) return false;
+    pid = Number(parent.stdout.trim());
+  }
+  return ownerPids.has(pid);
+};
 
 // Reads a completion receipt and proves it belongs to this launch. Shared by
 // both backends because both write the same shape — that sameness is what lets
@@ -149,8 +189,11 @@ if (mode === "exec") {
   const priorToken = take("prior-token", false);
   const command = commandAfterSeparator();
   const pinned = PIN_FLAGS.filter((name) => pin[name]);
+  const headlessPairExecutor =
+    process.env.HERDR_ENV === "1" && isHeadlessPairExecutor();
+  const interactiveHerdr = process.env.HERDR_ENV === "1" && !headlessPairExecutor;
 
-  if (process.env.HERDR_ENV === "1") {
+  if (interactiveHerdr) {
     if (pinned.length !== PIN_FLAGS.length) {
       const missing = PIN_FLAGS.filter((name) => !pin[name]);
       fail(
@@ -187,14 +230,21 @@ if (mode === "exec") {
       fail("herdr transport returned invalid JSON");
     }
     const runFile = join(tmpdir(), `ship-it-run-${started.token}.json`);
-    const descriptor = { transport: "herdr", pid: null, ...started, run_file: runFile };
+    const descriptor = {
+      transport: "herdr",
+      selection: "interactive-herdr",
+      pid: null,
+      ...started,
+      run_file: runFile,
+    };
     writeFileSync(runFile, `${JSON.stringify(descriptor, null, 2)}\n`);
     emit(descriptor);
   } else {
     if (pinned.length) {
       fail(
-        `caller pin passed (--${pinned.join(", --")}) without HERDR_ENV=1. ` +
-          "Start Herdr for a visible run, or drop the pin to run locally.",
+        headlessPairExecutor
+          ? `caller pin passed (--${pinned.join(", --")}) from a headless pair executor. Drop the pin because this run uses the local transport.`
+          : `caller pin passed (--${pinned.join(", --")}) without HERDR_ENV=1. Start Herdr for a visible run, or drop the pin to run locally.`,
       );
     }
     if (target) fail("--target-pane needs the herdr transport; the local transport has no panes", 2);
@@ -222,6 +272,7 @@ if (mode === "exec") {
     child.unref();
     const descriptor = {
       transport: "local",
+      selection: headlessPairExecutor ? "headless-pair-executor" : "outside-herdr",
       started: true,
       pane_id: null,
       pid: child.pid,

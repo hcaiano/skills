@@ -11,12 +11,20 @@ tail that file when needed.
 
 ## Select and launch
 
-Set `RUN_TRANSPORT` to this skill's `scripts/run-transport.mjs`. When
-`HERDR_ENV=1`, locate the `pair` skill installed beside this one,
-then read and execute its `references/caller-pane-resolution.md` proof for the
-task repository. Build the `CALLER_ID` argument array exactly as that reference
-derives it from the proof JSON. The proof's pane, workspace, tab, terminal,
-agent, and repository form one immutable pin, and its tab is the work unit.
+Set `RUN_TRANSPORT` to this skill's `scripts/run-transport.mjs`. It selects one
+of three contexts:
+
+- Outside `HERDR_ENV=1`, select `local` and omit `CALLER_ID`.
+- In a no-TTY headless pair executor that inherited `HERDR_ENV=1`, select
+  `local` and omit `CALLER_ID`. This branch requires the worktree's pair
+  `session.json` and active `in-flight.json`, and the current process ancestry
+  must include a PID that owns that turn. File presence alone is not proof.
+- In an interactive Herdr lead, select `herdr`. Locate the `pair` skill
+  installed beside this one, then read and execute its
+  `references/caller-pane-resolution.md` proof for the task repository. Build
+  the `CALLER_ID` argument array exactly as that reference derives it from the
+  proof JSON. The proof's pane, workspace, tab, terminal, agent, and repository
+  form one immutable pin, and its tab is the work unit.
 
 Start each command without moving the user's focus:
 
@@ -45,9 +53,9 @@ RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
 Those three flags belong to the Herdr backend alone; the local backend has no
 panes and rejects them.
 
-Outside Herdr, omit `CALLER_ID`; the helper selects `local`. With `HERDR_ENV=1`,
-the caller proof must be complete for `herdr` selection. An incomplete or
-drifted Herdr pin stops the gate instead of silently running invisibly.
+An incomplete or drifted interactive Herdr pin stops the gate instead of
+silently running invisibly. A headless executor records selection
+`headless-pair-executor`; an ordinary local run records `outside-herdr`.
 Retain the run file and its `transport`, `pane_id`, `pid`, `token`, `marker`,
 `receipt`, and `transcript` fields. Immediately tell the user the transport
 and label; for Herdr, also name the pane.

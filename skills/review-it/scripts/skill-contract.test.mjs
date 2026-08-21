@@ -175,7 +175,15 @@ test("external gate commands select and record an honest transport", () => {
   assert.match(processTransport, /scripts\/run-transport\.mjs/u);
   assert.match(
     processTransport,
-    /Outside Herdr, omit `CALLER_ID`; the helper selects `local`\. With `HERDR_ENV=1`,\s+the caller proof must be complete for `herdr` selection/u,
+    /Outside `HERDR_ENV=1`, select `local` and omit `CALLER_ID`/u,
+  );
+  assert.match(
+    processTransport,
+    /no-TTY headless pair executor that inherited `HERDR_ENV=1`[\s\S]*select\s+`local` and omit `CALLER_ID`/u,
+  );
+  assert.match(
+    processTransport,
+    /pair\s+`session\.json` and active `in-flight\.json`[\s\S]*process ancestry\s+must include a PID that owns that turn/u,
   );
   assert.match(
     processTransport,
@@ -266,23 +274,26 @@ test("the extracted gate stands on its own", () => {
   );
   assert.match(
     reviewIt,
-    /tell the user to install `pair`/u,
+    /Tell the interactive lead to install `pair`/u,
   );
   assert.match(
     processTransport,
-    /locate the `pair` skill installed beside this one,\s+then read and execute its `references\/caller-pane-resolution\.md` proof/u,
+    /locate the `pair` skill\s+installed beside this one, then read and execute its\s+`references\/caller-pane-resolution\.md` proof/iu,
   );
-  // The two environments resolve a missing proof differently, because
-  // run-transport.mjs hard-stops an incomplete pin under HERDR_ENV=1 rather
-  // than demoting a hosted run to an invisible one. A single "falls back to
-  // local" rule would promise a run that cannot start.
+  // An inherited environment variable does not turn a headless executor into
+  // a visible lead. The active pair turn proves that exception; an interactive
+  // Herdr lead still needs the exact caller proof.
   assert.match(
     reviewIt,
-    /Outside `HERDR_ENV=1` the\s+transport selects `local`/u,
+    /Outside `HERDR_ENV=1` it uses\s+`local`/u,
   );
   assert.match(
     reviewIt,
-    /Inside `HERDR_ENV=1` a missing\s+proof stops the gate/u,
+    /no-TTY headless pair executor can inherit `HERDR_ENV=1`[\s\S]*also uses `local`/u,
+  );
+  assert.match(
+    reviewIt,
+    /interactive Herdr lead uses the visible backend, and a missing caller proof\s+stops that gate/u,
   );
 });
 
