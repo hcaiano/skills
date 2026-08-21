@@ -147,6 +147,7 @@ if (command === "spawn") {
     partner:{pane_id:pane,agent:state.panes[pane].partner},
     partnerAgent:state.panes[pane].partner,
     partnerRepoRoot:state.panes[pane].repo_root,
+    partnerRegisteredAt:"2026-08-21T12:00:00.000Z",
   });
 }
 if (command === "init") {
@@ -170,7 +171,7 @@ if (command === "init") {
       effort:option("effort"),
       participants:{
         [lead]:{pane_id:option("pane"),terminal_id:option("terminal-id"),repo_root:option("repo-root")},
-        [info.partner]:{pane_id:pane,repo_root:option("partner-repo-root")},
+        [info.partner]:{pane_id:pane,repo_root:option("partner-repo-root"),registered_at:option("partner-registered-at")},
       },
       delivery:{next:{[lead]:0,[info.partner]:0},submitted:{[lead]:0,[info.partner]:0},received:{[lead]:0,[info.partner]:0},pending:{[lead]:null,[info.partner]:null}},
       last_status:{[lead]:null,[info.partner]:null},
@@ -497,9 +498,65 @@ test("Herdr backend is recorded and routes the unit through pinned pair commands
     join(root, `worktree-${id}`),
   );
   assert.equal(spawnCalls[0].args.includes("--autonomy"), true);
+  const initCall = calls.find((entry) => entry.command === "init");
+  assert.equal(
+    initCall.args[initCall.args.indexOf("--partner-registered-at") + 1],
+    "2026-08-21T12:00:00.000Z",
+  );
   const sendCall = calls.find((entry) => entry.command === "send");
   assert.equal(sendCall.args.includes("--background"), false);
   assert.equal(sendCall.args[sendCall.args.indexOf("--format") + 1], "json");
+});
+
+test("create falls back to a local base when origin lacks that branch", () => {
+  git(repository, "branch", "local-only-base", "main");
+  const id = "local-only-base";
+  const args = createArgs(id);
+  args[args.indexOf("--base") + 1] = "local-only-base";
+
+  const created = invoke(args);
+
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(
+    git(join(root, `worktree-${id}`), "rev-parse", "HEAD"),
+    git(repository, "rev-parse", "local-only-base"),
+  );
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+  git(repository, "branch", "-D", "local-only-base");
+
+  const missingId = "missing-base";
+  const missingArgs = createArgs(missingId);
+  missingArgs[missingArgs.indexOf("--base") + 1] = "missing-locally-and-remotely";
+  const missing = invoke(missingArgs);
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.output.reason, /does not exist at origin or locally/u);
+});
+
+test("forced dismantle skips the remote branch when origin is absent", () => {
+  const localRepository = join(root, "repository-without-origin");
+  mkdirSync(localRepository);
+  execFileSync("git", ["init", "-b", "main", localRepository]);
+  git(localRepository, "config", "user.name", "Orchestrate Test");
+  git(localRepository, "config", "user.email", "orchestrate@example.test");
+  writeFileSync(join(localRepository, "README.md"), "# local only\n");
+  git(localRepository, "add", "README.md");
+  git(localRepository, "commit", "-m", "initial");
+
+  const id = "no-origin-cleanup";
+  const args = createArgs(id);
+  args[args.indexOf("--repo") + 1] = localRepository;
+  const created = invoke(args);
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+
+  const cleaned = invoke([
+    "dismantle", "--repo", localRepository, "--unit", id, "--force", id,
+  ]);
+
+  assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
+  const remoteBranch = cleaned.output.done.find((entry) => entry.step === "remote-branch");
+  assert.equal(remoteBranch.ok, true);
+  assert.equal(remoteBranch.detail.skipped, "origin remote is not configured");
 });
 
 test("an explicit backend overrides Herdr auto-detection", () => {

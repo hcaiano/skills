@@ -476,6 +476,9 @@ const initializePair = (record, path, staffing) => {
     "--partner-pane", spawnedPane,
     "--partner-repo-root", record.worktree,
     "--role", "executor",
+    ...(spawned.partnerRegisteredAt
+      ? ["--partner-registered-at", spawned.partnerRegisteredAt]
+      : []),
     ...staffingArguments(staffing, "herdr"),
   ]);
   return {
@@ -677,6 +680,13 @@ const removeLocalBranch = (repo, branch) => {
 };
 
 const removeRemoteBranch = (repo, branch) => {
+  const remotes = git(repo, "remote");
+  if (remotes.status !== 0) {
+    throw new Error(commandError(remotes, "list Git remotes"));
+  }
+  if (!remotes.stdout.split(/\r?\n/u).includes("origin")) {
+    return { skipped: "origin remote is not configured" };
+  }
   const result = git(repo, "push", "origin", "--delete", branch);
   if (
     result.status !== 0 &&
@@ -684,6 +694,7 @@ const removeRemoteBranch = (repo, branch) => {
   ) {
     throw new Error(commandError(result, "delete remote branch"));
   }
+  return result.status === 0 ? null : { skipped: "remote branch does not exist" };
 };
 
 const recoverableCreatePhases = new Set([
@@ -1003,10 +1014,29 @@ const create = (options) => {
           throw new Error(`recorded worktree is missing but branch ${record.branch} exists at ${existingRef}`);
         }
         const hasOrigin = git(place.root, "remote", "get-url", "origin").status === 0;
+        let remoteBaseMissing = false;
         if (hasOrigin) {
-          gitChecked(place.root, ["fetch", "origin", record.base], "fetch unit base");
+          const fetched = git(place.root, "fetch", "origin", record.base);
+          if (fetched.status !== 0) {
+            if (/remote ref does not exist|couldn't find remote ref/u.test(fetched.stderr || "")) {
+              remoteBaseMissing = true;
+            } else {
+              throw new Error(commandError(fetched, "fetch unit base"));
+            }
+          }
         }
-        const remoteBase = git(place.root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${record.base}`).status === 0;
+        const remoteBase = hasOrigin && !remoteBaseMissing &&
+          git(place.root, "show-ref", "--verify", "--quiet", `refs/remotes/origin/${record.base}`).status === 0;
+        const localBase = git(
+          place.root,
+          "show-ref",
+          "--verify",
+          "--quiet",
+          `refs/heads/${record.base}`,
+        ).status === 0;
+        if (!remoteBase && !localBase) {
+          throw new Error(`unit base ${record.base} does not exist at origin or locally`);
+        }
         const startPoint = remoteBase ? `origin/${record.base}` : record.base;
         gitChecked(place.root, ["worktree", "add", "-b", record.branch, record.worktree, startPoint], "create worktree");
         record.worktree = gitChecked(record.worktree, ["rev-parse", "--show-toplevel"], "resolve worktree").stdout.trim();

@@ -29,6 +29,10 @@ HEADLESS_PAIR="$ORCHESTRATE_DIR/../pair/scripts/pair-headless.mjs"
 REPO=$(git -C <task-repository> rev-parse --show-toplevel)
 ```
 
+For a Herdr unit, the orchestrator session must run rooted in `REPO`. The caller
+pane proof binds the live lead process to that repository. `create` refuses a
+different root and rolls back resources that it created.
+
 Outside Herdr, new units use the `headless` backend. Inside `HERDR_ENV=1`, new
 units use the `herdr` backend. `--backend headless|herdr` overrides that choice
 at creation. The backend is then immutable and recorded. For a Herdr unit,

@@ -24,6 +24,8 @@ test("one durable record owns the complete unit atom", () => {
   assert.match(unit, /git-common-dir/u);
   assert.match(unit, /lifecycle: "creating"/u);
   assert.match(unit, /partner arena must differ from the orchestrator harness/u);
+  assert.match(skill, /orchestrator session must run rooted in `REPO`/u);
+  assert.match(skill, /caller\s+pane proof binds the live lead process to that repository/u);
   assert.match(skill, /manifest-owned task file is authoritative/u);
   assert.match(skill, /resumes `creating`, `setting-up`,\s+`initializing-pair`, or `starting`/u);
   assert.match(skill, /recoverable Cursor record that stores a separate effort/u);
