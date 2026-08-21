@@ -63,6 +63,11 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    permission switch. The spawn retries a still-starting shell and closes its
    own split pane on failure. Stop on spawn failure.
 
+   A new pane can pause at its CLI's own startup prompt. Observed prompts include
+   a Codex self-update restart and Codex or Cursor directory trust. Read that
+   exact pane and answer the prompt with keys, then continue after the CLI
+   reaches its agent session. Startup control is separate from partner traffic.
+
    One lead pane may hold several pairs at once — one session per partner pane.
    Spawn once per partner and record the pane id it prints; every later command
    names the pair it means.

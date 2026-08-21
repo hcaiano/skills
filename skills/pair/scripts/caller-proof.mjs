@@ -6,7 +6,8 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { basename } from "node:path";
+
+import { matchingForegroundProcess } from "./agent-process.mjs";
 
 class CliError extends Error {}
 
@@ -82,15 +83,6 @@ function processInfo(paneId) {
     }
   }
   return info;
-}
-
-function matchingForegroundProcess(info, agent, repoRoot) {
-  return info.foreground_processes.find((entry) => {
-    const executables = [entry.name, entry.argv0, entry.argv?.[0]]
-      .filter((value) => typeof value === "string")
-      .map((value) => basename(value).toLowerCase());
-    return executables.includes(agent) && entry.cwd === repoRoot;
-  });
 }
 
 function requireForegroundProcess(paneId, agent, repoRoot) {

@@ -1382,7 +1382,7 @@ try {
       },
     };
     mixedState.processes = {
-      "wX:p1": [{ argv: ["cursor-agent"], argv0: "cursor", cwd: "/workspace", name: "cursor" }],
+      "wX:p1": [{ argv: ["cursor-agent"], argv0: "cursor-agent", cwd: "/workspace", name: "cursor-agent" }],
       "wX:p2": [{ argv: ["grok"], cwd: "/workspace", name: "grok" }],
     };
     mixedState.auto_ack = true;

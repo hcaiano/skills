@@ -17,6 +17,8 @@ import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { matchingForegroundProcess } from "./agent-process.mjs";
+
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const scriptPath = fileURLToPath(import.meta.url);
 // Every agent kind `herdr agent start --kind` can bring up. A pair is always
@@ -97,15 +99,6 @@ function processInfo(paneId) {
     }
   }
   return info;
-}
-
-function matchingForegroundProcess(info, agent, repoRoot) {
-  return info.foreground_processes.find((entry) => {
-    const executables = [entry.name, entry.argv0, entry.argv?.[0]]
-      .filter((value) => typeof value === "string")
-      .map((value) => basename(value).toLowerCase());
-    return executables.includes(agent) && entry.cwd === repoRoot;
-  });
 }
 
 function requireForegroundProcess(paneId, agent, repoRoot) {
