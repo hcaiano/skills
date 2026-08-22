@@ -18,6 +18,14 @@ plain names, without a plugin namespace such as `hcaiano:`.
 
 Run the same command to update the installed copies after changing this repo.
 
+Stop Codex, Claude Code, Cursor, Grok, and other running skill loaders before
+any global `skills add` or `skills update`. Skills CLI 1.5.23 replaces each
+canonical `~/.agents/skills/<name>` directory by removing it and then copying
+the new files. A live loader can read during that gap and report a missing
+`SKILL.md`. Finish the CLI command before starting an agent again. After an
+interrupted update, verify the affected path is readable and rerun the same CLI
+command while the loaders are stopped.
+
 Adding never removes. When a skill is renamed or dropped here, the old copy
 stays installed and keeps answering under its old name, so remove it by name:
 
@@ -106,7 +114,7 @@ install `pair` as well.
 
 ## Dependencies
 
-- `orchestrate` requires `pair`, `git`, `gh`, and `trash`. It records a Herdr
+- `orchestrate` requires `pair`, `git`, and `gh`. It records a Herdr
   backend inside Herdr and a headless backend outside Herdr; creation can
   override this choice. The Herdr backend requires the `herdr` CLI and the
   separate upstream `herdr` skill. The headless backend needs only the chosen

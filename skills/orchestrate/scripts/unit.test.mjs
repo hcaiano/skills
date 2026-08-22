@@ -257,14 +257,7 @@ const merged = (process.env.FAKE_GH_MERGED || "").split(",").includes(branch);
 const head = spawnSync("git", ["rev-parse", "refs/heads/" + branch], {encoding:"utf8"}).stdout.trim();
 console.log(JSON.stringify(merged ? [{number:1,url:"https://example.test/pr/1",state:"MERGED",mergedAt:"2026-08-19T00:00:00Z",headRefOid:head,baseRefName:"main",isDraft:false}] : []));
 `);
-writeFileSync(join(bin, "trash"), `#!/usr/bin/env node
-import { existsSync, renameSync } from "node:fs";
-for (const path of process.argv.slice(2)) {
-  if (process.env.FAKE_TRASH_FAIL_MATCH && path.includes(process.env.FAKE_TRASH_FAIL_MATCH)) process.exit(9);
-  if (existsSync(path)) renameSync(path, path + ".trashed." + process.pid);
-}
-`);
-execFileSync("chmod", ["+x", join(bin, "gh"), join(bin, "trash")]);
+execFileSync("chmod", ["+x", join(bin, "gh")]);
 
 const baseEnv = {
   ...process.env,
@@ -1274,7 +1267,6 @@ test("a missing command reports ENOENT without signaling the caller group", () =
   mkdirSync(limitedBin);
   symlinkSync(process.execPath, join(limitedBin, "node"));
   symlinkSync("/usr/bin/git", join(limitedBin, "git"));
-  symlinkSync(join(bin, "trash"), join(limitedBin, "trash"));
   const failed = invoke(
     createArgs("missing-setup-command", "codex", "exit 7"),
     { PATH: limitedBin },
@@ -1285,7 +1277,7 @@ test("a missing command reports ENOENT without signaling the caller group", () =
   assert.equal(git(repository, "branch", "--list", "feat/missing-setup-command"), "");
 });
 
-test("restaff keeps the send error when checkpoint cleanup also fails", () => {
+test("restaff keeps the send error after checkpoint cleanup", () => {
   const created = invoke(createArgs("restaff-cleanup-error"));
   assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
   const args = [
@@ -1295,11 +1287,9 @@ test("restaff keeps the send error when checkpoint cleanup also fails", () => {
   ];
   const failed = invoke(args, {
     FAKE_PAIR_FAIL_SEND_PARTNER: "grok",
-    FAKE_TRASH_FAIL_MATCH: "restaff-restaff-cleanup-error",
   });
   assert.notEqual(failed.status, 0);
   assert.match(failed.output.reason, /pair send failed: forced send failure for grok/u);
-  assert.doesNotMatch(failed.output.reason, /trash/u);
   const registry = join(git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir"), "orchestrate");
   for (const name of readdirSync(registry)) {
     if (name.startsWith("restaff-restaff-cleanup-error-")) unlinkSync(join(registry, name));
@@ -1328,8 +1318,8 @@ test("registry locking refuses a live owner and recovers a dead owner", () => {
   const recovered = invoke(createArgs("dead-lock"));
   assert.equal(recovered.status, 0, recovered.stderr || JSON.stringify(recovered.output));
   assert.equal(
-    readdirSync(registry).some((name) => name.startsWith("registry.lock.stale-") && name.includes(".trashed.")),
-    true,
+    readdirSync(registry).some((name) => name.startsWith("registry.lock.stale-")),
+    false,
   );
   const cleaned = invoke(["dismantle", "--repo", repository, "--unit", "dead-lock", "--force", "dead-lock"]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));

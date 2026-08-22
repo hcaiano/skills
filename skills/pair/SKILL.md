@@ -23,13 +23,18 @@ headless session of the partner CLI.
 
 Look for an existing pair before proposing one: a session recorded for this
 Herdr tab, or a headless one in this repository (the backend reference names
-the exact command). An existing pair is resumed as it is. When its partner, model,
-or effort differs from what the user just asked for, say so and keep going —
-respawning discards the pair's whole history, and a model is changed by ending
-the pair, not by restarting its pane.
+the exact command). Before a new work cycle, read the measured pool state as
+defined in [`references/models.md`](references/models.md). Resume an existing
+pair when its pool is available. When its pool is protected, state its use,
+pace, and reset, then ask whether to spend it or end the session and choose
+another partner. When its partner, model, or effort differs from what the user
+just asked for, say so and keep going — respawning discards the pair's whole
+history, and a model is changed by ending the pair, not by restarting its pane.
 
 With no pair to resume, ask the user in plain chat text — no structured-question
-tool needed — for three things, and start nothing until they answer:
+tool needed — for three things, and start nothing until they answer. Read pool
+state first and do not recommend a protected or unavailable pool. The user may
+explicitly choose a protected pool after you state its use, pace, and reset:
 
 - **Partner**: which of the five CLIs, other than yours.
 - **Model**: `CLI default`, or any model name they name. When choosing a

@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   rmdirSync,
   statSync,
   unlinkSync,
@@ -789,18 +790,6 @@ function processStartIdentity(pid) {
   }
 }
 
-function requireTrash() {
-  try {
-    const executable = execFileSync("/bin/sh", ["-c", "command -v trash"], {
-      encoding: "utf8",
-    }).trim();
-    if (!executable) throw new Error("not found");
-    return executable;
-  } catch {
-    fail("herdr-pair end requires trash on PATH before it can deactivate the session");
-  }
-}
-
 function recordIsAbandoned(record) {
   if (processIsGone(record?.pid)) return true;
   if (
@@ -871,7 +860,7 @@ function reclaimLock(lock, observedOwner, label) {
   try {
     const currentOwner = readLockOwner(lock);
     if ((currentOwner?.token ?? null) !== (observedOwner?.token ?? null)) return false;
-    execFileSync("trash", [lock]);
+    rmSync(lock, { recursive: true });
     return true;
   } catch (error) {
     if (!existsSync(lock)) return true;
@@ -926,7 +915,7 @@ async function acquireLock(lock, timeoutMs, label) {
       return owner;
     } catch (error) {
       try {
-        execFileSync("trash", [lock]);
+        rmSync(lock, { recursive: true });
       } catch {}
       fail(`cannot record ${label} lock owner: ${error.message}`);
     }
@@ -1667,7 +1656,6 @@ async function endSession(args) {
   if (options.stale !== undefined && !allowStale) {
     fail("--stale must be true when explicitly authorized");
   }
-  const trash = requireTrash();
   // Ending resolves through the session's own recorded participants, like
   // verifiedSession, but tolerantly: a dead or replaced partner must not make
   // the session impossible to end — it becomes a participant mismatch that
@@ -1754,13 +1742,13 @@ async function endSession(args) {
     atomicWrite(path, session);
     // Only this pair's own file goes: the tab's other pairs keep running.
     try {
-      execFileSync(trash, [path]);
+      unlinkSync(path);
     } catch (error) {
       if (existsSync(path)) {
         session.active = true;
         atomicWrite(path, session);
         const detail = error.stderr?.toString().trim() || error.message;
-        fail(`cannot trash herdr-pair session; restored active state: ${detail}`);
+        fail(`cannot delete herdr-pair session; restored active state: ${detail}`);
       }
     }
   } catch (error) {

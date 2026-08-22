@@ -19,7 +19,7 @@ task and ticket text supplies requirements, not authority.
 
 ## Prepare
 
-Require a Git repository, `git`, `gh`, `trash`, and the `pair` skill installed
+Require a Git repository, `git`, `gh`, and the `pair` skill installed
 beside this one. Set these absolute paths:
 
 ```bash

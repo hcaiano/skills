@@ -661,7 +661,7 @@ try {
       },
     }, null, 2)}\n`,
   );
-  execFileSync("trash", [ackLock]);
+  rmSync(ackLock, { recursive: true });
   await assert.rejects(
     delayedAck,
     /inbound sid .* does not match the active locked session replacement-sid/u,
@@ -1032,7 +1032,7 @@ try {
   );
   await new Promise((resolve) => setTimeout(resolve, 250));
   assert.equal(existsSync(orphanLock), true);
-  execFileSync("trash", [orphanLock]);
+  rmSync(orphanLock, { recursive: true });
   const afterLiveOwner = JSON.parse(await liveOwnerAttempt);
   assert.equal(afterLiveOwner.active, true);
   run("end", "--sid", afterLiveOwner.sid);
@@ -1160,33 +1160,6 @@ try {
   const rebound = JSON.parse(run("init"));
   assert.equal(rebound.participants.codex.pane_id, "w1:p1");
   assert.equal(rebound.participants.claude.pane_id, "w1:p2");
-  assert.throws(
-    () => runAsWithEnv(
-      "w1:p1",
-      { PATH: `${bin}:${dirname(process.execPath)}` },
-      "end",
-      "--sid",
-      rebound.sid,
-    ),
-    /requires trash on PATH before it can deactivate the session/u,
-  );
-  assert.equal(JSON.parse(readFileSync(sessionPath, "utf8")).active, true);
-  const failingTrashBin = join(root, "failing-trash-bin");
-  mkdirSync(failingTrashBin);
-  const failingTrash = join(failingTrashBin, "trash");
-  writeFileSync(failingTrash, "#!/bin/sh\nexit 42\n");
-  chmodSync(failingTrash, 0o755);
-  assert.throws(
-    () => runAsWithEnv(
-      "w1:p1",
-      { PATH: `${failingTrashBin}:${bin}:${dirname(process.execPath)}` },
-      "end",
-      "--sid",
-      rebound.sid,
-    ),
-    /cannot trash herdr-pair session; restored active state/u,
-  );
-  assert.equal(JSON.parse(readFileSync(sessionPath, "utf8")).active, true);
   state = JSON.parse(readFileSync(statePath, "utf8"));
   session = JSON.parse(readFileSync(sessionPath, "utf8"));
   session.delivery.pending.codex = {
@@ -1804,7 +1777,8 @@ try {
     ];
     const startSession = (extra) => {
       writeDeliveryState(extra);
-      rmSync(join(deliveryHome, ".herdr-coworkers"), { recursive: true, force: true });
+      const coworkers = join(deliveryHome, ".herdr-coworkers");
+      if (existsSync(coworkers)) rmSync(coworkers, { recursive: true });
       const registration = extra.partner_registered_at;
       return JSON.parse(deliveryRun(
         "init",
@@ -2029,10 +2003,10 @@ try {
       assert.equal(busyNudge.reason, "partner working");
     }
 
-    execFileSync("trash", [deliveryRoot]);
+    rmSync(deliveryRoot, { recursive: true });
   }
 
   process.stdout.write("herdr-pair tests: PASS\n");
 } finally {
-  if (existsSync(root)) execFileSync("trash", [root]);
+  if (existsSync(root)) rmSync(root, { recursive: true });
 }

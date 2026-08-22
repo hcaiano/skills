@@ -67,8 +67,8 @@ backend. The local backend starts a detached child, tees its output to the
 transcript, and writes the completion receipt on exit. The local child writes
 only to its transcript;
 the transport owns observation: pane, marker, and receipt for Herdr; PID and
-receipt polling for local. The headless Claude and Codex wrappers
-own both backends' idle and total deadlines, PID-scoped termination, and content
+receipt polling for local. The headless Claude, Codex, and Cursor wrappers own
+both backends' idle and total deadlines, PID-scoped termination, and content
 validation.
 
 For a dual review, start both commands before waiting for either. A Herdr dual
@@ -89,8 +89,8 @@ node "$RUN_TRANSPORT" wait --run-file "$RUN_FILE"
 Require the completion receipt's token and `transport` to match the run file,
 require exit zero, and validate the transcript under the gate's step 4 content
 rules.
-For `headless-claude.mjs` or `headless-codex.mjs`, also require the separate
-wrapper receipt to contain `{ok: true}` and non-empty validated content. A
+For `headless-claude.mjs`, `headless-codex.mjs`, or `headless-cursor.mjs`, also
+require the separate wrapper receipt to contain `{ok: true}` and non-empty validated content. A
 refusal, rate-limit notice, or empty payload is failure even when the command
 exits zero.
 
