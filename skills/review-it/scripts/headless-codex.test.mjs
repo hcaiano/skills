@@ -38,7 +38,23 @@ chmodSync(join(bin, "codex"), 0o755);
 
 const here = new URL(".", import.meta.url).pathname;
 const script = join(here, "headless-codex.mjs");
-const repo = join(here, "..", "..", "..");
+// Every run gets a purpose-built git repo: resolving "three directories up"
+// only lands on a repository in the source checkout, and these tests must
+// pass wherever the skill is installed.
+const newScratchRepo = (name) => {
+  const dir = join(root, name);
+  mkdirSync(dir);
+  const git = (...args) =>
+    spawnSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t.test", ...args], { encoding: "utf8" });
+  git("init", "-q");
+  writeFileSync(join(dir, "tracked.txt"), "base\n");
+  git("add", ".");
+  git("commit", "-qm", "init");
+  writeFileSync(join(dir, "loose.txt"), "untracked\n");
+  symlinkSync("target-a", join(dir, "loose-link"));
+  return dir;
+};
+const repo = newScratchRepo("base");
 const argvLog = join(root, "argv.json");
 const env = (mode) => ({
   ...process.env,
@@ -64,21 +80,6 @@ const runFail = (mode, ...args) => {
 };
 const sentArgv = () => JSON.parse(readFileSync(argvLog, "utf8"));
 
-// Drift cases need their own repo: mutating the skills repo from a test would
-// be vandalism, and the fingerprint must see a quiet baseline.
-const newScratchRepo = (name) => {
-  const dir = join(root, name);
-  mkdirSync(dir);
-  const git = (...args) =>
-    spawnSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t.test", ...args], { encoding: "utf8" });
-  git("init", "-q");
-  writeFileSync(join(dir, "tracked.txt"), "base\n");
-  git("add", ".");
-  git("commit", "-qm", "init");
-  writeFileSync(join(dir, "loose.txt"), "untracked\n");
-  symlinkSync("target-a", join(dir, "loose-link"));
-  return dir;
-};
 const runFailIn = (dir, mode, ...args) => {
   try {
     execFileSync(process.execPath, [script, ...args, "--cwd", dir], {
