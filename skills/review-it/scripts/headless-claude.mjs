@@ -11,7 +11,7 @@
 // result is a FAILURE, not a pass.
 //
 //   node headless-claude.mjs "/code-review"                 # read-only (plan)
-//   node headless-claude.mjs "/simplify" --writable true    # acceptEdits
+//   node headless-claude.mjs "/simplify" --writable true    # bypassPermissions
 //   [--cwd <path>] [--model opus] [--idle-min 20] [--total-min 60]
 //
 // Exit 0: JSON receipt {ok: true, result: "<final result text>", ...}.
@@ -95,7 +95,11 @@ const finish = (outcome) => {
 
 const { startedAt } = supervise({
   bin: 'claude',
-  args: ['-p', '--model', model, '--permission-mode', writable ? 'acceptEdits' : 'plan', '--strict-mcp-config', '--no-chrome', '--output-format', 'stream-json', '--verbose', command],
+  // Writable runs bypass permissions (Henrique's 2026-08-22 decision for
+  // headless work): acceptEdits still gates every command behind an approval
+  // no headless run can give. The baseline patch and verified restore below
+  // are the restraint, not the permission mode.
+  args: ['-p', '--model', model, '--permission-mode', writable ? 'bypassPermissions' : 'plan', '--strict-mcp-config', '--no-chrome', '--output-format', 'stream-json', '--verbose', command],
   cwd,
   logFd,
   idleMs,

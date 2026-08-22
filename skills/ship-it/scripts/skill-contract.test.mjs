@@ -219,3 +219,17 @@ test("orchestrate keeps scope authority and delegates quality to ship-it", () =>
   assert.match(delivery, /embedded review-gate block/u);
   assert.match(delivery, /Required checks and every check delegated by the receipt are green/u);
 });
+
+test("merge authority is the user's alone — delegation never carries it", () => {
+  // The leak this closes: an executor reading orchestrate's delegation, or a
+  // recorded merge policy, as standing authorization to merge (2026-08-22).
+  assert.match(
+    shipIt,
+    /merge and deployment require the user's own\s+explicit authorization for this delivery/u,
+  );
+  assert.match(
+    shipIt,
+    /A delegating workflow, skill\s+invocation, or recorded merge policy never carries that authority/u,
+  );
+  assert.match(shipIt, /stops at merge-ready and returns the held PR to its\s+caller/u);
+});

@@ -115,9 +115,26 @@ test("delivery owns review fan-out, Git mechanics, push auth, and literal holds"
   assert.match(delivery, /same single correction round/u);
   assert.match(delivery, /Prefer an existing\s+SSH push URL or SSH remote/u);
   assert.match(delivery, /gh auth refresh -s workflow/u);
-  assert.match(delivery, /A held PR stays open for Henrique's own review/u);
-  assert.match(delivery, /never merges it, including with admin rights/u);
-  assert.match(delivery, /Dependent units wait when this rule serializes them/u);
+  // Every unit PR waits for Henrique's own review before merge (decision
+  // 2026-08-22) — a recorded `auto` policy no longer bypasses him.
+  assert.match(delivery, /Every unit PR is held for Henrique's own review before merge/u);
+  assert.match(delivery, /base is an epic branch/u);
+  assert.match(delivery, /a recorded `auto` merge policy waits for the same review/u);
+  assert.match(delivery, /never merges a\s+PR he has not reviewed, including with admin rights/u);
+  // The other half of the guarantee: delegation downward is not authority.
+  // The executor's ship-it run stops at merge-ready, and the ladder still
+  // runs the full delivery before the hold.
+  assert.match(delivery, /Ship-it delegation carries no merge authority[\s\S]*stops at merge-ready/u);
+  assert.match(delivery, /The hold\s+comes after all of it, never instead of it/u);
+  assert.match(delivery, /His feedback on the held PR returns to the executor\s+as a correction round/u);
+  assert.match(skill, /held for Henrique's review — or, only after his approval of that exact\s+head, merged/u);
+  // --merge-policy is removed: nothing on the create surface may reintroduce a
+  // pre-authorized merge.
+  assert.doesNotMatch(skill, /--merge-policy/u);
+  assert.match(unit, /--merge-policy is removed/u);
+  assert.match(delivery, /Dependent units wait when\s+this rule serializes them/u);
+  // The delivery task budget: local CI alone can eat the old 60-minute default.
+  assert.match(delivery, /Size that send's\s+`--total-min` to the repository's full local-CI entrypoint/u);
 });
 
 test("cleanup proves merge and binds force to one exact unit", () => {

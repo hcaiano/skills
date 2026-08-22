@@ -9,13 +9,13 @@
 //                                 [--model <name>] [--effort <level>] [--role peer|executor]
 //   node pair-headless.mjs send   --repo <root> --kind <kind> --body-file <path> [--write|--read-only]
 //                                 [--background]
-//   node pair-headless.mjs wait   --repo <root> [--seq N] [--timeout-min 65]
+//   node pair-headless.mjs wait   --repo <root> [--seq N] [--timeout-min 125]
 //   node pair-headless.mjs fork   --repo <root> [--retry]
 //   node pair-headless.mjs status --repo <root>
 //   node pair-headless.mjs clear  --repo <root>
 //   node pair-headless.mjs end    --repo <root>
 //   [--idle-min 20] [--total-min 60] on init and send; writable task turns
-//   default to 45 idle minutes
+//   default to 45 idle and 120 total minutes
 //
 // Git worktree state lives in `<git-dir>/pair/session.json`. A plain directory
 // uses `${XDG_STATE_HOME:-~/.local/state}/pair/<basename>-<realpath-hash>/`
@@ -184,28 +184,16 @@ export const locate = (
       statePath: join(stateDir, "session.json"),
       lockPath: join(stateDir, "in-flight.json"),
       transcripts: join(stateDir, "transcripts"),
-      writableRoot: stateDir,
     };
   }
   const root = top.stdout.trim();
   const stateDir = join(dir.stdout.trim(), "pair");
-  const common = git(repo, "rev-parse", "--git-common-dir");
-  if (common.status !== 0) {
-    return { error: `cannot resolve the Git common directory for ${repo}` };
-  }
-  let writableRoot;
-  try {
-    writableRoot = realpathSync(resolve(directory, common.stdout.trim()));
-  } catch (error) {
-    return { error: `cannot resolve the Git common directory for ${repo}: ${error.message}` };
-  }
   return {
     root,
     stateDir,
     statePath: join(stateDir, "session.json"),
     lockPath: join(stateDir, "in-flight.json"),
     transcripts: join(stateDir, "transcripts"),
-    writableRoot,
   };
 };
 
@@ -421,21 +409,26 @@ export const cursorModel = (model, effort) => {
 // arrives through the spawn and the sandbox through a config override — the
 // same split ask-peer measured. Model and effort are settings of the session,
 // so they are passed when it is created and never on a resume.
-export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, writableRoot = root, write, model, effort }) => {
+//
+// Writable turns run every partner with its full bypass, by Henrique's
+// standing decision (2026-08-22): these run on dedicated dev machines, a
+// headless turn has no approver to satisfy, and per-CLI half-measures kept
+// producing arena-specific stalls (Codex writable-roots resolution, Claude
+// commands denied, Grok self-cancelled calls). The write lease, scope
+// contract, and review gates are the restraint on a writable turn; read-only
+// turns keep each CLI's restraining mode.
+export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, write, model, effort }) => {
   if (partner === "codex") {
-    const sandbox = write ? "workspace-write" : "read-only";
-    const writeConfig = write
-      ? [
-          "-c",
-          `sandbox_workspace_write.writable_roots=${JSON.stringify([writableRoot])}`,
-          "-c",
-          "sandbox_workspace_write.network_access=true",
-        ]
-      : [];
+    const sandbox = write ? "danger-full-access" : "read-only";
+    // The sandbox and the approval policy are separate controls: a machine
+    // whose config keeps approvals on-request would still stall a headless
+    // writable turn, so the bypass forces both. Config form, because
+    // `codex exec resume` does not accept -a.
+    const approval = write ? ["-c", 'approval_policy="never"'] : [];
     if (resume) {
       return {
         bin: "codex",
-        args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, ...writeConfig, "--json", "-o", replyFile, "-"],
+        args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, ...approval, "--json", "-o", replyFile, "-"],
         promptVia: "stdin",
       };
     }
@@ -447,7 +440,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
         sandbox,
         "-C",
         root,
-        ...writeConfig,
+        ...approval,
         ...(model ? ["-m", model] : []),
         ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []),
         "--json",
@@ -463,6 +456,11 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
     // long silent turn would trip the idle deadline and be killed mid-work. The
     // streamed events are the liveness signal, and `--verbose` is what -p
     // requires to emit them.
+    //
+    // acceptEdits auto-accepts only file edits; every Bash call still asks for
+    // an approval no headless run can give, so the partner could edit but never
+    // validate (proved on mcp-901, 2026-08-22: bun, git, and gh all "requires
+    // approval"). Writable turns therefore run bypassPermissions.
     const tail = [
       "--output-format",
       "stream-json",
@@ -472,7 +470,7 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
       ...(model && !resume ? ["--model", model] : []),
       ...(effort ? ["--effort", effort] : []),
       "--permission-mode",
-      write ? "acceptEdits" : "plan",
+      write ? "bypassPermissions" : "plan",
     ];
     return { bin: "claude", args: ["-p", ...(resume ? ["--resume", sid] : []), ...tail], promptVia: "stdin" };
   }
@@ -490,7 +488,9 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
         "stream-json",
         ...(resume ? ["--resume", sid] : []),
         ...(named && !resume ? ["--model", named] : []),
-        ...(write ? [] : ["--mode", "plan"]),
+        // --force is cursor's bypass ("Run Everything"); without it a writable
+        // headless turn still stalls on command approvals.
+        ...(write ? ["--force"] : ["--mode", "plan"]),
       ],
       promptVia: "stdin",
     };
@@ -515,6 +515,12 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
   // Grok takes the prompt from a file rather than stdin, and accepts the
   // session id for a NEW conversation — so the pair names the session itself
   // and never has to find it in the output.
+  //
+  // Writable turns pass both bypassPermissions and --always-approve: under
+  // acceptEdits, grok 1.0.5 cancelled its own tool calls as "User cancelled"
+  // with no user present — three consecutive turns on wp-917 (2026-08-22),
+  // including a plain file edit on a fresh forked session — so the mode and
+  // the approval flag together close both of grok's asking paths.
   return {
     bin: "grok",
     args: [
@@ -527,8 +533,9 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
         : resume
           ? ["--resume", sid]
           : ["--session-id", sid]),
-      "--permission-mode",
-      write ? "acceptEdits" : "plan",
+      ...(write
+        ? ["--permission-mode", "bypassPermissions", "--always-approve"]
+        : ["--permission-mode", "plan"]),
       ...(model && !resume ? ["-m", model] : []),
       ...(effort && !resume ? ["--reasoning-effort", effort] : []),
     ],
@@ -783,10 +790,12 @@ const supervise = ({ bin, args, cwd, prompt, transcriptPath, idleMs, totalMs, on
     if (now - lastGrowth > idleMs || now - startedAt > totalMs) {
       killing = true;
       clearInterval(timer);
+      // The receipt is read mid-incident, so the reason names the flag that
+      // raises the budget it just enforced.
       const why =
         now - startedAt > totalMs
-          ? `total budget ${Math.round(totalMs / 60000)}m exceeded`
-          : `no output for ${Math.round(idleMs / 60000)}m`;
+          ? `total budget ${Math.round(totalMs / 60000)}m exceeded — raise it with send --total-min`
+          : `no output for ${Math.round(idleMs / 60000)}m — raise it with send --idle-min`;
       child.kill("SIGTERM"); // the PID itself, never the group
       setTimeout(() => {
         try {
@@ -828,7 +837,7 @@ export const bootstrapPrompt = ({ self, partner, root, role = "peer" }) =>
     "stalemate (the same judgment call twice with no movement), handoff (return control to the user).",
     "",
     "Write leases: one agent holds the write lease per file scope and the other stays read-only",
-    "on that scope until handoff. Turns where you hold the lease arrive in a writable sandbox;",
+    "on that scope until handoff. Turns where you hold the lease arrive with full write permissions;",
     "every other turn is read-only, so propose diffs instead of applying them.",
     "",
     "The exchange is half-duplex: your reply is this run's final message. There is no other channel back to the lead.",
@@ -863,12 +872,21 @@ export const minutesToMs = (value, name) => {
 export const defaultIdleMinutes = ({ kind, write } = {}) =>
   kind === "task" && write ? 45 : 20;
 
+// Writable task turns get 120: a delivery turn runs the repository's own CI,
+// which alone can take 40–60+ minutes, and the 2026-08-22 wave hang-killed two
+// legitimate ship-it turns at a universal 60.
+export const defaultTotalMinutes = ({ kind, write } = {}) =>
+  kind === "task" && write ? 120 : 60;
+
 const deadlines = ({ kind, write } = {}) => {
   const idle = minutesToMs(
     opt("idle-min", String(defaultIdleMinutes({ kind, write }))),
     "idle-min",
   );
-  const total = minutesToMs(opt("total-min", "60"), "total-min");
+  const total = minutesToMs(
+    opt("total-min", String(defaultTotalMinutes({ kind, write }))),
+    "total-min",
+  );
   if (idle.error) fail(idle.error, 2);
   if (total.error) fail(total.error, 2);
   return { idleMs: idle.ms, totalMs: total.ms };
@@ -926,7 +944,6 @@ const runInit = () => {
     replyFile,
     promptFile,
     root: place.root,
-    writableRoot: place.writableRoot,
     write: false,
     model,
     effort,
@@ -1082,7 +1099,7 @@ const waitForReceipt = (place, seq, timeoutMs) => {
   };
 };
 
-const updateTerminalState = (place, stateAtStart, { cancelled, forkSessionId }) => {
+const updateTerminalState = (place, stateAtStart, { cancelled, forkSessionId, replied = false }) => {
   const current = readState(place.statePath) ?? stateAtStart;
   const next = { ...current };
   next.grok_cancelled_consecutive = cancelled
@@ -1093,7 +1110,8 @@ const updateTerminalState = (place, stateAtStart, { cancelled, forkSessionId }) 
   // Grok creates the fork before it runs the turn. A final end event naming
   // the new sid proves that session exists even when the turn itself was
   // cancelled; keeping the old sid after that would split later history.
-  if (pending && forkSessionId === pending.new_sid) {
+  const forkCommitted = pending && forkSessionId === pending.new_sid;
+  if (forkCommitted) {
     next.sid = pending.new_sid;
     next.forked = [
       ...(Array.isArray(current.forked) ? current.forked : []),
@@ -1109,6 +1127,21 @@ const updateTerminalState = (place, stateAtStart, { cancelled, forkSessionId }) 
       ...pending,
       failed_at: new Date().toISOString(),
     };
+  }
+
+  // The ladder's terminal state: a fork is the cure for cancellations, so a
+  // cancellation on the proved fresh fork — or two more after any committed
+  // fork — is a proved capability miss. Recording it here is what stops the
+  // advice loop from scheduling forks forever. Only a successful replied turn
+  // is contrary evidence that clears it — a spawn error, nonzero exit, empty
+  // reply, or hang proves nothing about the cancellation behavior.
+  const forkHistory = Array.isArray(next.forked) ? next.forked : [];
+  if (replied) {
+    next.capability_miss = null;
+  } else if (cancelled && forkCommitted) {
+    next.capability_miss = "grok cancelled on the fresh forked session";
+  } else if (cancelled && forkHistory.length > 0 && next.grok_cancelled_consecutive >= 2) {
+    next.capability_miss = "grok cancelled twice after a session fork";
   }
   writeState(place.statePath, next);
   return next;
@@ -1152,7 +1185,6 @@ const runWorker = () => {
     replyFile: paths.replyFile,
     promptFile: paths.promptFile,
     root: place.root,
-    writableRoot: place.writableRoot,
     write,
     effort: ["claude", "opencode"].includes(state.partner) ? state.effort : null,
   });
@@ -1172,10 +1204,11 @@ const runWorker = () => {
     command: [bin, ...args],
   };
 
-  const finish = (extra, code, { cancelled = false, forkSessionId = null } = {}) => {
-    const terminalState = updateTerminalState(place, state, { cancelled, forkSessionId });
-    const advice =
-      cancelled && terminalState.grok_cancelled_consecutive >= 2
+  const finish = (extra, code, { cancelled = false, forkSessionId = null, replied = false } = {}) => {
+    const terminalState = updateTerminalState(place, state, { cancelled, forkSessionId, replied });
+    const advice = cancelled && terminalState.capability_miss
+      ? `${terminalState.capability_miss}: proved capability miss — restaff the unit, do not fork again`
+      : cancelled && terminalState.grok_cancelled_consecutive >= 2
         ? "two consecutive Grok cancellations: schedule a fresh session fork with the fork command"
         : null;
     let record = {
@@ -1249,7 +1282,7 @@ const runWorker = () => {
         finish({ ok: false, status: "empty-reply", reason: "the partner exited 0 with no reply — read the transcript before resending, the prompt may already be consumed", exit_code: exit, seconds }, 1, { forkSessionId });
         return;
       }
-      finish({ ok: true, status: "replied", exit_code: exit, seconds, reply }, 0, { forkSessionId });
+      finish({ ok: true, status: "replied", exit_code: exit, seconds, reply }, 0, { forkSessionId, replied: true });
     },
     onHang: ({ why, transcript, seconds }) => {
       const partial = writeReply(state.partner, paths.replyFile, transcript);
@@ -1421,7 +1454,9 @@ const runWait = () => {
   const rawSeq = opt("seq", String(state.seq ?? 0));
   const seq = Number(rawSeq);
   if (!Number.isInteger(seq) || seq < 1) fail(`--seq must be a positive integer, got ${rawSeq}`, 2);
-  const timeout = minutesToMs(opt("timeout-min", "65"), "timeout-min");
+  // 125 covers the largest default total budget (120m writable task) plus
+  // receipt-rename slack.
+  const timeout = minutesToMs(opt("timeout-min", "125"), "timeout-min");
   if (timeout.error) fail(timeout.error, 2);
   const receipt = waitForReceipt(place, seq, timeout.ms);
   emit(receipt, receipt.ok ? 0 : 1);
@@ -1432,6 +1467,9 @@ const runFork = () => {
   const state = readState(place.statePath);
   if (!state?.sid) fail(`no pair session in ${place.statePath} — run init first`);
   if (state.partner !== "grok") fail("fork is available only for a Grok partner");
+  if (state.capability_miss) {
+    fail(`${state.capability_miss} — proved capability miss; restaff the unit instead of forking again`);
+  }
   if (existsSync(place.lockPath)) fail("a turn is in flight — wait for its receipt before scheduling a fork");
   if (state.pending_fork && !flag("retry")) {
     fail(`a fork from ${state.pending_fork.old_sid} to ${state.pending_fork.new_sid} is already pending`);
@@ -1491,6 +1529,7 @@ const runStatus = () => {
       in_flight: readMarker(place.lockPath),
       latest_receipt: latestReceipt,
       grok_cancelled_consecutive: state.grok_cancelled_consecutive ?? 0,
+      capability_miss: state.capability_miss ?? null,
       pending_fork: state.pending_fork ?? null,
       forked: forks,
       lineage: { current_sid: state.sid, forks },

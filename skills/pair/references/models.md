@@ -48,9 +48,8 @@ remain authoritative for model IDs.
 |---|---|---|---|---|
 | Planear / orquestrar | `claude-fable-5` | claude | **medium** for normal work; **high** only on the opening planning prompt of a large orchestration; never max because short tasks show an overthinking regression | `gpt-5.6-sol` high |
 | Execução de alta qualidade (back-end e geral) | `gpt-5.6-sol` | codex | **high**; `ultra` is a subagent mode, not an effort value | `grok-4.6` high |
-| Execução rápida | `grok-4.6` | grok | **high** (CLI default) | `ox-alpha` high |
-| Execução barata em volume | `gpt-5.6-luna` | codex | **xhigh/max** with Sol planning and review; never for UI work; verbose at max | `ox-alpha` |
-| Executor grátis (enquanto durar) | `ox-alpha` (`opencode/x-preview-f-free`) | opencode | variant high | — expires ~2026-08-28 |
+| Execução rápida | `grok-4.6` | grok | **high** (CLI default) | `gpt-5.6-sol` high |
+| Execução barata em volume | `gpt-5.6-luna` | codex | **xhigh/max** with Sol planning and review; never for UI work; verbose at max | — |
 | UI / design (taste) | `kimi-k3` **e** `claude-opus-5` | cursor / claude | `kimi-k3-high` (`-max` for hard work); Opus high for design review and medium for UI diffs | one covers the other |
 | Image gen (UI ideas, imagens, app logos, qualquer coisa que precise de imagem) | **Image Gen 2 with `gpt-5.6`** | the `gpt-5.6` surface that exposes Image Gen 2 | — | — |
 | Cyber (defensivo) | `gpt-daybreak-blue-latest` | codex | low; raise on need | — |
@@ -64,8 +63,13 @@ Opus for UI entirely. Evaluate that question over the next design tasks. During
 the initial design-planning phase, pair the UI/design seat with Claude Code's
 `/design` command.
 
-Grok is a fast, good execution seat as well as the live-research seat. Ox Alpha
-is a real executor while it is free, not only a burst option.
+Grok is a fast, good execution seat as well as the live-research seat. Staff it
+knowing its headless recovery ladder: a cancelled turn is a failed receipt, two
+consecutive proved cancellations schedule a session fork (the headless backend
+reference owns the fork command), and a cancellation on the fresh forked
+session is a proved capability miss — restaff the unit. The 2026-08-22 wp-917
+wave climbed the whole ladder before writable turns carried
+`--always-approve`.
 
 `composer-2.5` has one niche: fast in-Cursor iteration under an external plan,
 as in "Grok plans, Composer builds". It is much faster in wall-clock time than
@@ -100,7 +104,6 @@ seed:
 | `gpt-daybreak-blue` | 9 | n/a | médio | médio | equal to Sol; defensive-only | 2026-08-21 |
 | `grok-4.6` | 8.5 | 6 | rápido | barato | deep quota on SuperGrok; fast quality executor confirmed by Henrique | 2026-08-21 |
 | `kimi-k3` | 8 | 10 | lento | médio | DesignArena #1; inside the $200 Cursor subscription | 2026-08-21 |
-| `ox-alpha` | 7 | 8 | rápido | barato | community praise for its design taste; likely GLM-5.x; free week, then a cheap OpenCode plan | 2026-08-21 |
 | `claude-opus-5` | 8 | 9 | médio | médio | benchmarks say far more (SWE-V 96), but daily use puts it below Sol; UI/design or work supervised by Fable | 2026-08-21 |
 | `gpt-5.6-luna` | 7 | 5 | rápido | barato | volume executor at xhigh/max | 2026-08-21 |
 | `composer-2.5` | 7 | 6 | rápido | barato | niche: fast in-Cursor iteration under an external plan | 2026-08-21 |
@@ -185,7 +188,6 @@ These entries are not general staffing seats:
 - `claude-haiku-4-5`, `gpt-5.6-terra`, and `claude-sonnet-5` are removed by
   decision. Harness sub-agents already delegate to cheap and mid-tier models;
   this roster gives the orchestrator frontier choices.
-
-The OpenCode account is unpaid. Ox Alpha is its only roster entry. Re-verify
-the preview ID with `opencode models --refresh`. Its replies can have malformed
-protocol headers, so judge the receipt and diff, not the header.
+- `ox-alpha` (`opencode/x-preview-f-free`) is removed by Henrique's decision
+  (2026-08-22): weak in real execution. OpenCode has no roster seat until he
+  scores a new one.

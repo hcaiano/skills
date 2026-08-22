@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -22,6 +22,12 @@ const out = argv[argv.indexOf("--output-last-message") + 1];
 fs.writeFileSync(process.env.FAKE_CODEX_ARGV, JSON.stringify(argv));
 process.stdout.write(JSON.stringify({ type: "item.started" }) + "\\n");
 if (mode === "ok") { fs.writeFileSync(out, "2 findings: ...\\n"); process.exit(0); }
+// Drift modes mutate the review cwd and still "succeed" — the wrapper's
+// fingerprint must turn each into a failure.
+if (mode === "mutate-new") { fs.writeFileSync("planted.txt", "x\\n"); fs.writeFileSync(out, "findings\\n"); process.exit(0); }
+if (mode === "mutate-tracked") { fs.appendFileSync("tracked.txt", "drift\\n"); fs.writeFileSync(out, "findings\\n"); process.exit(0); }
+if (mode === "mutate-untracked") { fs.appendFileSync("loose.txt", "drift\\n"); fs.writeFileSync(out, "findings\\n"); process.exit(0); }
+if (mode === "mutate-symlink") { fs.unlinkSync("loose-link"); fs.symlinkSync("target-b", "loose-link"); fs.writeFileSync(out, "findings\\n"); process.exit(0); }
 if (mode === "empty") { fs.writeFileSync(out, "   \\n"); process.exit(0); }
 if (mode === "nofile") { process.exit(0); }
 if (mode === "fail") { process.stderr.write("rate limit\\n"); process.exit(1); }
@@ -58,6 +64,34 @@ const runFail = (mode, ...args) => {
 };
 const sentArgv = () => JSON.parse(readFileSync(argvLog, "utf8"));
 
+// Drift cases need their own repo: mutating the skills repo from a test would
+// be vandalism, and the fingerprint must see a quiet baseline.
+const newScratchRepo = (name) => {
+  const dir = join(root, name);
+  mkdirSync(dir);
+  const git = (...args) =>
+    spawnSync("git", ["-C", dir, "-c", "user.name=t", "-c", "user.email=t@t.test", ...args], { encoding: "utf8" });
+  git("init", "-q");
+  writeFileSync(join(dir, "tracked.txt"), "base\n");
+  git("add", ".");
+  git("commit", "-qm", "init");
+  writeFileSync(join(dir, "loose.txt"), "untracked\n");
+  symlinkSync("target-a", join(dir, "loose-link"));
+  return dir;
+};
+const runFailIn = (dir, mode, ...args) => {
+  try {
+    execFileSync(process.execPath, [script, ...args, "--cwd", dir], {
+      encoding: "utf8",
+      env: env(mode),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    return JSON.parse(error.stdout);
+  }
+  throw new Error("expected nonzero exit");
+};
+
 test("headless-codex passes a completed review and writes its receipt", () => {
   const receipt = join(root, "codex-receipt.json");
   const ok = runOk("ok", "review the diff", "--base", "HEAD", "--receipt", receipt);
@@ -90,9 +124,12 @@ test("headless-codex sends only flags codex exec review actually accepts", () =>
   // --json plus the final-message file are what make content validation
   // mechanical instead of an eyeballed transcript.
   assert.ok(argv.includes("--output-last-message"));
-  // A review that can write is not a review. `codex exec review` has no
-  // --sandbox of its own, so the mode arrives as a config override.
-  assert.equal(argv[argv.indexOf("--config") + 1], 'sandbox_mode="read-only"');
+  // `codex exec review` has no --sandbox of its own, so the mode arrives as a
+  // config override. workspace-write (network off), not read-only: read-only
+  // Landlock denies TMPDIR and kills the harness before the review (EROFS);
+  // the wrapper's tree fingerprint is what enforces read-only instead.
+  assert.equal(argv[argv.indexOf("--config") + 1], 'sandbox_mode="workspace-write"');
+  assert.ok(argv.includes("sandbox_workspace_write.network_access=false"));
   assert.equal(argv[argv.indexOf("--model") + 1], "gpt-5");
   // The range selectors are mutually exclusive with a custom prompt, and the
   // prompt is where the axis lives — so they must never reach the CLI.
@@ -156,4 +193,42 @@ test("headless-codex kills a hang on its idle deadline", () => {
   assert.equal(hung.ok, false);
   assert.equal(hung.killed, true);
   assert.match(hung.reason, /hang: no output for/u);
+});
+
+test("the fingerprint fails a review that mutated the tree, untracked files included", () => {
+  // The sandbox is workspace-write, so the fingerprint is the read-only
+  // enforcement: tracked edits, new files, and changed untracked files must
+  // all fail — `git diff HEAD` alone never sees the untracked ones.
+  for (const [mode, what] of [
+    ["mutate-tracked", "a tracked edit"],
+    ["mutate-new", "a new untracked file"],
+    ["mutate-untracked", "a changed untracked file"],
+    ["mutate-symlink", "a retargeted untracked symlink"],
+  ]) {
+    const dir = newScratchRepo(`drift-${mode}`);
+    const receipt = runFailIn(dir, mode, "review it", "--base", "HEAD");
+    assert.equal(receipt.ok, false, `${what} must fail the review`);
+    assert.match(receipt.tree_changed, /changed during the review/u);
+    assert.match(receipt.reason, /must stay read-only/u);
+  }
+  // And a clean review in the same shape of repo still passes.
+  const clean = newScratchRepo("drift-clean");
+  const receipt = JSON.parse(
+    execFileSync(process.execPath, [script, "review it", "--base", "HEAD", "--cwd", clean], { encoding: "utf8", env: env("ok") }),
+  );
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.tree_changed, undefined);
+});
+
+test("an untracked FIFO never blocks the fingerprint", (t) => {
+  // readFileSync on a FIFO blocks forever, outside the supervisor's watchdog;
+  // the lstat-first fingerprint records its type without reading it.
+  const dir = newScratchRepo("drift-fifo");
+  const made = spawnSync("mkfifo", [join(dir, "pipe.fifo")], { encoding: "utf8" });
+  if (made.status !== 0) return t.skip("mkfifo unavailable");
+  const receipt = JSON.parse(
+    execFileSync(process.execPath, [script, "review it", "--base", "HEAD", "--cwd", dir], { encoding: "utf8", env: env("ok") }),
+  );
+  assert.equal(receipt.ok, true);
+  assert.equal(receipt.tree_changed, undefined);
 });
