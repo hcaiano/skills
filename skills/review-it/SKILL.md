@@ -37,14 +37,15 @@ repository-defined checks covering every changed contract and its changed direct
 consumers pass on this range. Standalone, run them before grading. A gate over
 an unproven range reviews a moving target.
 
-Read pool capacity before committing either review pool: run
+Read pool capacity before committing any review pool: run
 `node scripts/usage-state.mjs` from the orchestrate skill installed
 alongside this one. A pool is out of headroom at `used_percent` ≥ 90 or when its
-CLI is observed refusing — a null reading never degrades on its own. A pool
-inside its headroom but reading `pace` above 2 spends at twice what the rest of
-its window funds, so it empties before its reset. The graded reviews still run
-at that pace; what gives way is the Claude simplify pass, and only to
-`claude.pace`.
+CLI is observed refusing. A pool with `pace` above 1 is protected because its
+projected spend reaches 100% before reset. A null reading never degrades on its
+own. A stale protected or out-of-headroom reading remains actionable because it
+is a lower bound, not proof that the pool cooled. Do not start automatic work on
+a protected pool. An explicit user instruction to use it overrides protection
+after you state its use, pace, and reset; it does not override a refusal.
 
 That helper is a sibling skill, not a bundled one. When it is not installed,
 record `Gate: <grade> — pool state unread (usage-state.mjs not installed)` and
@@ -54,8 +55,8 @@ observed CLI refusal degrades execution.
 
 Before starting any simplify or review command, read and follow
 [process transport](references/visible-herdr-runs.md). An interactive slash
-command in the current agent pane is already visible; every external Claude or
-Codex command runs through the transport, which records whether it ran in a
+command in the current agent pane is already visible; every external Claude,
+Codex, or Cursor command runs through the transport. The transport records whether it ran in a
 visible Herdr pane or as a local background process. The visible backend needs
 `pair` installed beside this skill for its caller-pane proof, and
 the transport reference owns backend selection. Outside `HERDR_ENV=1` it uses
@@ -88,15 +89,23 @@ rose, or fell. Any uncertainty about satisfying `skip` promotes to `single`; any
 uncertainty about subsystem containment, requirements, or blast radius promotes
 to `dual`.
 
-After the semantic grade is fixed, `single` prefers a reviewer from the model
-family that did not implement the change, then the cooler available pool; `dual`
-requires both families. Claude out records `dual — degraded to codex-only`;
-Codex out records `dual — degraded to claude-only`; capacity changes execution,
-not the semantic grade. With a reviewed gate, both out → stop and ask the user
-whether to use whichever harness still responds or wait for a reset. Tell the
-user the candidate grade and every capacity degradation.
+After the semantic grade is fixed, choose from native Claude, native Codex, and
+eligible Cursor-hosted reviewers whose mapped Cursor pool is available.
+`single` prefers a model family that did not implement the change, then the
+highest tier, lower pace, and lower used percentage. `dual` requires two model
+families. Prefer different harnesses, but two fresh Cursor sessions with
+different eligible families satisfy it when Cursor is the only sustainable
+harness. A protected or out-of-headroom pool is excluded from automatic
+staffing. Use a same-bar substitute first. If none exists, take this gate's
+capacity path without asking: skip protected Claude simplify; keep `single` at
+one available reviewer; and reduce `dual` to one available reviewer covering
+both axes. Cursor Grok may cover one degraded review through
+`cursor.cursor_models`; D-tier Composer and all Google models are ineligible.
+Ask whether to spend a protected pool or wait for reset only when no eligible
+unprotected reviewer remains. Capacity changes execution, not the semantic grade.
+Tell the user the candidate grade, measured states, and every capacity reduction.
 
-Done when the candidate grade and every capacity degradation are recorded.
+Done when the candidate grade and every capacity reduction are recorded.
 
 ## 2. Simplify
 
@@ -112,8 +121,10 @@ guards. A user-requested simplify pass overrides every one of those eligibility
 skips, at any grade including `skip` — the user asking for it is the target.
 
 Simplify is independent of reviewer count. An eligible pass runs once per gate,
-before review so reviewers see the resulting diff. Claude being unavailable or
-`claude.pace` above 2 records a skip. Skip an existing receipt only when its
+before review so reviewers see the resulting diff. Claude being unavailable,
+protected, or `claude.pace` above 1 records a capacity skip and continues to the
+selected available reviewer without asking to spend Claude. Skip an existing
+receipt only when its
 `Simplify:` line names the current clean review HEAD and the complete diff has
 not changed, or proves an applicable eligibility skip. A failed or aborted
 attempt is not success.
@@ -132,8 +143,8 @@ Otherwise have Claude run its native `/simplify` command on the proven diff:
   already restored (a `restore_error` means it is NOT — inspect before touching
   anything). Record `failed — <reason>` on the receipt's `Simplify:` line, mark
   Claude unavailable, and apply step 1's capacity rules without changing the
-  semantic grade. Continue only when Codex can execute the reviewed gate as
-  `single — Codex` or `dual — degraded to codex-only`; otherwise stop.
+  semantic grade. Continue only when step 1 selects an eligible unprotected
+  reviewer; otherwise stop.
 
 On success, keep Claude's changes in the working tree.
 
@@ -159,12 +170,13 @@ uncommitted on a branch range, and the review grade is explicit.
 ## 4. Review Standards and Spec
 
 Review on that exact review HEAD. `skip` records its semantic reason and runs no
-review. `single` and a capacity-degraded `dual` use one native reviewer to cover
-**Standards + Spec**. `dual` assigns one native reviewer to **Standards**
+review. `single` and a capacity-reduced `dual` use one fresh available reviewer
+to cover **Standards + Spec**; the preferred family being protected never blocks
+that available reviewer. A full `dual` assigns one reviewer to **Standards**
 (correctness, security, regressions, repository conventions, and test quality)
 and the other to **Spec** (requested behavior, acceptance criteria, scope, and
-applicable source documents). Two reviews from the same harness do not satisfy
-`dual`.
+applicable source documents). Two reviews from the same model family do not
+satisfy `dual`.
 
 A `single` reviewer promotes the gate before any correction when it finds a
 valid material issue that crosses into the other axis, discovers a `dual` signal
@@ -174,8 +186,10 @@ bounded finding stays `single`. Apply the capacity degradation from step 1 if
 promotion cannot reach both pools, and record it.
 
 A one-review gate stops if its review cannot complete and never regrades to
-another agent. A `dual` review that cannot complete preserves its semantic grade
-and records degraded execution on the other harness alone, named in the receipt.
+another agent. A `dual` with only one eligible unprotected reviewer starts that
+review directly and records capacity-reduced execution. A full `dual` whose
+second review cannot complete preserves its semantic grade and records the
+completed reviewer alone in the receipt.
 A review completes on content: a refusal, rate-limit notice, or empty payload is
 a failed review even with exit zero. Rerun it or apply the capacity degradation
 under these rules; never count it. In-flight feedback from implementation is not
@@ -197,12 +211,22 @@ Use each agent's native command surface, not an assumed repository skill:
   rather than an instruction the model may skip. Use its `--commit` or
   `--uncommitted` selector when the gate's range is one of those. `codex exec`
   with a freeform prompt does not satisfy this gate.
+- Cursor fallback: launch the bundled
+  `node <skill dir>/scripts/headless-cursor.mjs "<axis prompt>" --model
+  <live-catalog-id> --base origin/<target-branch>` wrapper through the transport.
+  It uses a fresh read-only plan-mode session, resolves and records the same
+  range contract, fingerprints the tree, and requires non-empty output. Use its
+  `--commit` or `--uncommitted` selector for those ranges. Map the model to
+  `cursor.cursor_models` or `cursor.other_models` before launch.
 
-`{ok: true}` with a non-empty result is the only pass for either wrapper. Name
+`{ok: true}` with a non-empty result is the only pass for any wrapper. Name
 the assigned axis in the reviewer's prompt, include its applicable sources, and
 require read-only findings output. An improvised read-through of the diff does
-not count. Model budget: Claude uses Opus (`--model opus`), never Fable; Codex
-uses its default model with no extra-high reasoning. Fable is advisor-only.
+not count. Model budget: native Claude uses Opus (`--model opus`); native Codex
+uses its default model with no extra-high reasoning. Cursor uses the highest-tier
+eligible live-catalog model in an available Cursor pool: Fable or Sol in
+`other_models`, or Cursor Grok as the lower-bar degraded fallback in
+`cursor_models`. Google models never run.
 
 `dual` only — start the Standards and Spec reviews in distinct panes before
 waiting for either. In a `pair` session, ask the Claude peer through the

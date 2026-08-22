@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Prints one JSON line with each pool's weekly usage AND burn rate, for phase 2
-// grading. Per pool (or null when the source is unavailable):
+// Prints one JSON line with each pool's usage AND burn rate. Claude and Codex
+// are weekly; Cursor's two included pools follow its monthly billing cycle.
+// Per pool (or null when the source is unavailable):
 //   used_percent     percent of the 7-day pool already spent
 //   elapsed_hours    how much of the 168 h window has already passed
 //   resets_in_hours  hours until the window resets
@@ -15,6 +16,9 @@
 //   stale_minutes    age of the snapshot; a stale pool reads cooler than it is
 // Claude source: ~/.claude/usage-state.json (written by the user's statusline).
 // Codex source: newest plan-pool rate_limits snapshot in ~/.codex/sessions/**/*.jsonl.
+// Cursor source: the logged-in CLI's native /usage command. In its current UI,
+// "Auto" is the Cursor Models pool and "API" is the Other Models pool.
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -40,6 +44,78 @@ const burstWindow = (usedPercent, resetsAt) => {
     ? { used_percent: Math.round(usedPercent), resets_in_hours: round(left) }
     : null;
 };
+
+const ansi = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007)|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/gu;
+const cursorReset = (label) => {
+  const parsed = label.match(/^([A-Z][a-z]{2}) (\d{1,2})$/u);
+  if (!parsed) return null;
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months.indexOf(parsed[1]);
+  if (month === -1) return null;
+  const now = new Date();
+  let reset = Date.UTC(now.getUTCFullYear(), month, Number(parsed[2]), 23, 59, 59);
+  if (reset <= Date.now()) reset = Date.UTC(now.getUTCFullYear() + 1, month, Number(parsed[2]), 23, 59, 59);
+  // A Cursor individual billing cycle repeats on the same calendar day.
+  const resetDate = new Date(reset);
+  const previous = Date.UTC(
+    resetDate.getUTCMonth() === 0 ? resetDate.getUTCFullYear() - 1 : resetDate.getUTCFullYear(),
+    resetDate.getUTCMonth() === 0 ? 11 : resetDate.getUTCMonth() - 1,
+    resetDate.getUTCDate(),
+    23, 59, 59,
+  );
+  return { reset, windowHours: (reset - previous) / 3600000 };
+};
+
+const readCursorUsage = () => new Promise((resolve) => {
+  if (process.env.USAGE_STATE_SKIP_CURSOR === '1') return resolve(null);
+  const cursorBin = process.env.CURSOR_AGENT_BIN || 'cursor-agent';
+  // `script` supplies the TTY required by Cursor's native /usage command. The
+  // command reads account state and never starts a model turn.
+  const quoted = `'${cursorBin.replaceAll("'", "'\\''")}'`;
+  const child = spawn(
+    'script',
+    ['-qfec', `stty cols 120 rows 40; exec ${quoted}`, '/dev/null'],
+    { stdio: ['pipe', 'pipe', 'ignore'] },
+  );
+  let output = '';
+  let settled = false;
+  const timers = [];
+  const finish = () => {
+    if (settled) return;
+    settled = true;
+    for (const timer of timers) clearTimeout(timer);
+    try { child.kill('SIGTERM'); } catch {}
+    const text = output.replace(ansi, '');
+    const values = Object.fromEntries(
+      [...text.matchAll(/^\s*(Included|Auto|API)\s+(\d+)% used\b/gmu)]
+        .map((match) => [match[1], Number(match[2])]),
+    );
+    const resetLabel = text.match(/\bResets ([A-Z][a-z]{2} \d{1,2})\b/u)?.[1];
+    const cycle = resetLabel ? cursorReset(resetLabel) : null;
+    if (!cycle || !Number.isFinite(values.Auto) || !Number.isFinite(values.API)) return resolve(null);
+    const hoursLeft = (cycle.reset - Date.now()) / 3600000;
+    resolve({
+      included: Number.isFinite(values.Included) ? pace(values.Included, hoursLeft, cycle.windowHours) : null,
+      cursor_models: pace(values.Auto, hoursLeft, cycle.windowHours),
+      other_models: pace(values.API, hoursLeft, cycle.windowHours),
+      resets_on: resetLabel,
+      stale_minutes: 0,
+    });
+  };
+  child.on('error', finish);
+  child.on('close', finish);
+  child.stdin.on('error', () => {});
+  child.stdout.on('data', (chunk) => {
+    output += chunk.toString('utf8');
+    if (/^\s*API\s+\d+% used\b/mu.test(output.replace(ansi, ''))) {
+      try { child.stdin.write('\u001b'); } catch {}
+      timers.push(setTimeout(finish, 100));
+    }
+  });
+  timers.push(setTimeout(() => { try { child.stdin.write('/usage\r'); } catch {} }, 1800));
+  timers.push(setTimeout(() => { try { child.stdin.write('\r'); } catch {} }, 2300));
+  timers.push(setTimeout(finish, 8000));
+});
 
 // Turns a raw (used_percent, hours until reset) reading into the pace fields,
 // or null when the snapshot describes a window that has already reset — its
@@ -150,4 +226,5 @@ try {
   };
 } catch {}
 
-console.log(JSON.stringify({ claude, codex }));
+const cursor = await readCursorUsage();
+console.log(JSON.stringify({ claude, codex, cursor }));

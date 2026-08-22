@@ -29,8 +29,7 @@ Look for a pair to resume before creating one: `status --repo "$REPO_ROOT"`
 reports a recorded session, and `init` resumes it rather than replacing it.
 
 Require the partner CLI (`claude`, `codex`, `cursor-agent`, `grok`, or
-`opencode`) and
-`trash` on `PATH`. The partner is chosen, never derived, and the helper refuses
+`opencode`) on `PATH`. The partner is chosen, never derived, and the helper refuses
 to pair a CLI kind with itself. For model, effort, and pool choices, read
 [`models.md`](models.md). Leave `--model` unset for the CLI default. Choose
 Codex effort explicitly from `low`, `high`, or `xhigh`; use the per-CLI rubric
@@ -73,7 +72,7 @@ Done when `init` reports a `sid` and the first `task` has a terminal
 Write only the body to a temp file, then invoke:
 
 ```bash
-BODY=$(mktemp); trap 'trash "$BODY"' EXIT
+BODY=$(mktemp); trap 'rm -- "$BODY"' EXIT
 # Write the partner message body to "$BODY".
 node "$PAIR_SCRIPT" send --repo "$REPO_ROOT" --kind "$KIND" --body-file "$BODY" \
   [--background]
@@ -239,8 +238,8 @@ is evidence of loss and never proof of health. It probes `~/.codex/sessions`,
 sessions in a database, so the helper cannot prove an OpenCode session absent
 with a filesystem walk; its next resumed turn is the authority.
 
-`end` trashes the session directory, and runs
+`end` deletes the session directory, and runs
 only when the user explicitly asks to end the pair. It refuses while an
 in-flight marker exists — wait for the turn or run `clear` first — because
-trashing the session mid-turn destroys the running transcript and leaves a
+deleting the session mid-turn destroys the running transcript and leaves a
 write-lease partner editing with no record.

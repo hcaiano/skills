@@ -14,7 +14,7 @@ Set `SKILL_DIR` to this skill directory and
 path; the project cwd is unrelated to the installed skill path.
 
 Require `herdr` with the agent automation commands (`herdr agent start`,
-`herdr agent prompt`), `jq`, and `trash` on `PATH`, plus `HERDR_ENV=1`. If
+`herdr agent prompt`) and `jq` on `PATH`, plus `HERDR_ENV=1`. If
 any is missing, stop and tell the user to install or start (or update) Herdr.
 
 Before any Herdr mutation, read and execute the
@@ -114,7 +114,7 @@ recorded receipt. Skill reload and compaction always resume that session.
 Write only the body to a temp file, then invoke:
 
 ```bash
-BODY=$(mktemp); trap 'trash "$BODY"' EXIT
+BODY=$(mktemp); trap 'rm -- "$BODY"' EXIT
 # Write the partner message body to "$BODY".
 node "$PAIR_SCRIPT" send "${CALLER_ID[@]}" --sid "$PAIR_SID" \
   --kind "$KIND" --body-file "$BODY"
@@ -210,7 +210,7 @@ node "$PAIR_SCRIPT" repin "${CALLER_ID[@]}" --sid "$PAIR_SID" \
 The command refuses if the old participant is still live. It journals the
 participant change in the session and does not change the partner.
 
-End and trash the session only when the user explicitly asks to end the pair,
+End and delete the session only when the user explicitly asks to end the pair,
 or when an orchestrate unit's recorded restaff or dismantle lifecycle owns the
 session end:
 

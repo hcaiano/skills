@@ -49,10 +49,10 @@ the caller transcript:
 
 Both excerpts must be exact and unique to this conversation, and must remain
 different after trimming; the commentary excerpt must be at least 12
-characters. Set `MARKERS_FILE` to that file and trash it after resolution.
+characters. Set `MARKERS_FILE` to that file and remove it after resolution.
 
-Re-run the proof with `--conversation-markers-file "$MARKERS_FILE"`, then trash
-the file. That path narrows to candidate panes whose agent kind matches `--as`
+Re-run the proof with `--conversation-markers-file "$MARKERS_FILE"`, then run
+`rm -- "$MARKERS_FILE"`. That path narrows to candidate panes whose agent kind matches `--as`
 and whose `cwd` or `foreground_cwd` equals `TASK_REPO`, keeps those with a live
 foreground agent process, reads each one's transcript, and requires exactly one
 to contain both markers. A pane mid-tool-call refuses scrollback capture, and

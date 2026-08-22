@@ -194,16 +194,7 @@ process.stdout.write(JSON.stringify({ type: "step_finish", sessionID: sid, part:
 process.exit(0);
 `,
 );
-// A stand-in for `trash`: it moves the directory aside instead of deleting it,
-// which is exactly the property the real command guarantees.
-writeFileSync(
-  join(bin, "trash"),
-  `#!/usr/bin/env node
-const fs = require("node:fs");
-fs.renameSync(process.argv[2], process.argv[2] + ".trashed");
-`,
-);
-for (const name of ["codex", "claude", "cursor-agent", "grok", "opencode", "trash"]) chmodSync(join(bin, name), 0o755);
+for (const name of ["codex", "claude", "cursor-agent", "grok", "opencode"]) chmodSync(join(bin, name), 0o755);
 
 const newRepo = (name) => {
   const repo = join(root, name);
@@ -399,7 +390,6 @@ test("a plain directory supports the full headless pair lifecycle", () => {
   const ended = run("ok", "claude", "end", "--repo", plain).receipt;
   assert.equal(ended.status, "ended");
   assert.equal(existsSync(expectedPlace.stateDir), false);
-  assert.equal(existsSync(`${expectedPlace.stateDir}.trashed`), true);
 });
 
 test("each turn's command matches the flags the installed CLIs accept", () => {
@@ -1548,12 +1538,12 @@ test("end refuses while a turn is in flight", () => {
   const refused = run("ok", "claude", "end", "--repo", repo);
   assert.equal(refused.receipt.ok, false);
   assert.match(refused.receipt.reason, /in flight/u);
-  assert.equal(existsSync(join(realpathSync(repo), ".git", "pair", "session.json")), true, "nothing was trashed");
+  assert.equal(existsSync(join(realpathSync(repo), ".git", "pair", "session.json")), true, "the session remains");
   unlinkSync(lockPath);
   assert.equal(run("ok", "claude", "end", "--repo", repo).receipt.status, "ended");
 });
 
-test("status reports the session and end trashes it", () => {
+test("status reports the session and end deletes it", () => {
   const repo = newRepo("lifecycle");
   run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go"));
@@ -1568,6 +1558,5 @@ test("status reports the session and end trashes it", () => {
   const ended = run("ok", "claude", "end", "--repo", repo).receipt;
   assert.equal(ended.ok, true);
   assert.equal(existsSync(join(repo, ".git", "pair")), false);
-  assert.equal(existsSync(`${join(repo, ".git", "pair")}.trashed`), true);
   assert.match(run("ok", "claude", "status", "--repo", repo).receipt.reason, /no pair session/u);
 });

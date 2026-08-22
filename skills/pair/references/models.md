@@ -15,8 +15,10 @@ Choose in this order:
   would otherwise become a hidden constraint.
 - **Roster**: after risk and context set the bar, apply the preference rules and
   current seats in the Roster section.
-- **Pool**: use the pool that has headroom and the CLI the user chose. Pool
-  balance breaks a tie; it does not override risk or context.
+- **Pool**: use a pool whose pace is sustainable. A pool with `pace > 1` is
+  protected because its projected spend reaches 100% before reset. Use a
+  protected pool only after the user explicitly chooses it with that state in
+  view. Pool balance never overrides risk or context.
 - **Speed**: use a faster model or lower effort for a closed, mechanical task
   with a short proof. Speed never lowers the proof required for the task.
 
@@ -38,33 +40,75 @@ setting.
 
 ## Roster
 
-The seats are the first read for staffing after risk and context set the bar.
-The dimension scores rank only models that meet that bar. The live catalogs
-remain authoritative for model IDs.
+The preference table is the first read for staffing after risk and context set
+the bar. `Tier` is Henrique's general quality judgment. `Automatic use` turns
+that judgment into a staffing rule. A specialist role may override the general
+tier only where the table says so. The live catalogs remain authoritative for
+model IDs and availability.
+
+### Operational preferences
+
+This table applies Henrique's 2026-08-22 tier-list image to staffing. It is not
+a copy for display. A model appears only when its native harness or the live
+Cursor catalog exposes it. Recheck both sources before adding a model; omit it
+while neither source has it. Within a tier, rows keep the image's left-to-right
+order; the eligible role and required proof still decide whether that order
+applies. Taste uses a 0–10 scale. Speed uses `lento`, `médio`, or `rápido`.
+Cost uses `barato`, `médio`, or `caro` for subscription pressure, never API
+price. `?` means the image ranks general quality but other operating evidence
+is absent.
+
+| Model | Tier | Taste | Speed | Cost | Automatic use | Evidence / condition | Updated |
+|---|---:|---:|---|---|---|---|---|
+| `claude-fable-5` | S+ | 9 | lento | caro | planning and orchestration | strongest general preference; premium Claude or Cursor other-models pool | 2026-08-23 |
+| `gpt-5.6-sol` | A | 8 | médio | médio | high-quality general execution and review | preferred back-end and general executor | 2026-08-23 |
+| `kimi-k3` | B | 10 | lento | médio | UI and design | specialist taste seat; use a live Cursor ID | 2026-08-23 |
+| `gpt-5.6-luna` | B | 5 | rápido | barato | general fallback and volume execution | first general fallback below Sol; never the UI seat | 2026-08-23 |
+| `grok-4.6` | C | 6 | rápido | barato | fast fallback and live research | use after eligible B-tier general choices; deep but finite Grok pool | 2026-08-23 |
+| `claude-opus-5` | D | 9 | médio | médio | UI/design fallback only | specialist taste can justify it after Kimi and Fable; never a general fallback | 2026-08-23 |
+| `composer-2.5` | D | 6 | rápido | barato | externally planned Cursor iteration only | provisional `?` placement in Henrique's image; not a headline seat | 2026-08-23 |
+| `gpt-5.6-terra` | D | ? | ? | ? | no seat | available IDs do not overcome Henrique's D-tier judgment | 2026-08-23 |
+| `claude-sonnet-5` | D | ? | ? | ? | no seat | available IDs do not overcome Henrique's D-tier judgment | 2026-08-23 |
+| `gemini-3.7-flash` | excluded | ? | ? | ? | never | Henrique's Google exclusion applies through every harness | 2026-08-23 |
+| `gemini-3.1-pro` | excluded | ? | ? | ? | never | Henrique's Google exclusion applies through every harness | 2026-08-23 |
+| `gpt-daybreak-blue-latest` | specialist | n/a | médio | médio | defensive cyber only | Sol-equivalent specialist; not part of the general tier order | 2026-08-23 |
+
+Apply every row as follows:
+
+- Staff only the latest generation of each model family in each harness. The
+  live catalogs decide current IDs.
+- Tier ranks models that already meet the risk, context, role, and proof bar.
+  It never lowers that bar.
+- Prefer a native harness over a Cursor duplicate when tier, role, and pool are
+  equal. Cursor remains eligible when it uniquely exposes the preferred model
+  or has the sustainable pool.
+- Before Cursor owns implementation, apply the machine-specific headless
+  Cursor caveat in
+  [`staffing.md`](../../orchestrate/references/staffing.md).
+- Promo IDs belong only in roster data, never in scripts.
 
 ### Seats por papel
 
 | Papel | Seat | Harness | Effort | Fallback |
 |---|---|---|---|---|
 | Planear / orquestrar | `claude-fable-5` | claude | **medium** for normal work; **high** only on the opening planning prompt of a large orchestration; never max because short tasks show an overthinking regression | `gpt-5.6-sol` high |
-| Execução de alta qualidade (back-end e geral) | `gpt-5.6-sol` | codex | **high**; `ultra` is a subagent mode, not an effort value | `grok-4.6` high |
-| Execução rápida | `grok-4.6` | grok | **high** (CLI default) | `gpt-5.6-sol` high |
-| Execução barata em volume | `gpt-5.6-luna` | codex | **xhigh/max** with Sol planning and review; never for UI work; verbose at max | — |
-| UI / design (taste) | `kimi-k3` **e** `claude-opus-5` | cursor / claude | `kimi-k3-high` (`-max` for hard work); Opus high for design review and medium for UI diffs | one covers the other |
+| Execução de alta qualidade (back-end e geral) | `gpt-5.6-sol` | codex | **high**; `ultra` is a subagent mode, not an effort value | `gpt-5.6-luna` high/xhigh → `grok-4.6` high |
+| Execução rápida | `gpt-5.6-luna` | codex | **high** or a live fast ID | `grok-4.6` high |
+| Execução barata em volume | `gpt-5.6-luna` | codex | **xhigh/max** with Sol planning and review; never for UI work; verbose at max | `grok-4.6` high |
+| UI / design (taste) | `kimi-k3` | cursor | `kimi-k3-high` (`-max` for hard work) | `claude-fable-5` medium/high → `claude-opus-5` high for design review or medium for UI diffs |
 | Image gen (UI ideas, imagens, app logos, qualquer coisa que precise de imagem) | **Image Gen 2 with `gpt-5.6`** | the `gpt-5.6` surface that exposes Image Gen 2 | — | — |
 | Cyber (defensivo) | `gpt-daybreak-blue-latest` | codex | low; raise on need | — |
 | Research live web/X | `grok-4.6` | grok | high (CLI default) | claude + WebSearch |
 
-Opus's primary seat is UI/design. Its legitimate secondary use is execution
-under a stronger supervisor such as Fable. Its strong benchmark aggregates,
-including SWE-V 96, diverge from Henrique's daily-use experience outside UI;
-his experience governs. The open question is whether `kimi-k3` will replace
-Opus for UI entirely. Evaluate that question over the next design tasks. During
-the initial design-planning phase, pair the UI/design seat with Claude Code's
-`/design` command.
+Kimi is the primary UI/design seat. Fable is the stronger fallback when its pool
+is sustainable. Opus is D-tier in general work and remains eligible only as the
+last UI/design specialist fallback. Its benchmark aggregates do not override
+Henrique's daily-use judgment. During initial design planning, pair the selected
+UI/design seat with Claude Code's `/design` command when Claude is available.
 
-Grok is a fast, good execution seat as well as the live-research seat. Staff it
-knowing its headless recovery ladder: a cancelled turn is a failed receipt, two
+Grok is the C-tier fast fallback after eligible B-tier general models and keeps
+the specialist live-research seat. Staff it knowing its headless recovery
+ladder: a cancelled turn is a failed receipt, two
 consecutive proved cancellations schedule a session fork (the headless backend
 reference owns the fork command), and a cancellation on the fresh forked
 session is a proved capability miss — restaff the unit. The 2026-08-22 wp-917
@@ -76,61 +120,46 @@ as in "Grok plans, Composer builds". It is much faster in wall-clock time than
 `grok-4.6`, but it is less capable: CursorBench scores are 56.1 and 69.9. It is
 not a headline seat.
 
-### Dimension scores
-
-Scores are Henrique's editable seeds. His daily-use experience governs them;
-benchmark aggregates inform them. They are provisional and can change when he
-gets new evidence. Inteligência and Taste use a 0–10 scale; `?` marks low
-confidence. Velocidade uses only `lento`, `médio`, or `rápido`. More reasoning
-effort makes a run slower. Custo uses only `barato`, `médio`, or `caro`, based
-on the subscription consumed and how constrained its pool is; it never uses
-API prices. Each row carries its last `Updated` date. Apply these rules to every
-seed:
-
-- Staff only the latest generation of each model family in each harness. The
-  live catalogs decide current IDs.
-- Scores rank models that already meet the risk and context bar. A score never
-  lowers that bar or the required proof.
-- Prefer a native harness over a Cursor duplicate. Cursor rows cover models
-  that Cursor uniquely hosts.
-- Before Cursor owns implementation, apply the machine-specific headless
-  Cursor caveat in
-  [`staffing.md`](../../orchestrate/references/staffing.md).
-
-| Model | Inteligência | Taste | Velocidade | Custo | Key evidence | Updated |
-|---|---:|---:|---:|---|---|---|
-| `claude-fable-5` | 9.5 | 9 | lento | caro | Artificial Analysis Intelligence leader; premium pool | 2026-08-21 |
-| `gpt-5.6-sol` | 9 | 8 | médio | médio | Artificial Analysis Coding Agent #1; top back-end executor confirmed by Henrique | 2026-08-21 |
-| `gpt-daybreak-blue` | 9 | n/a | médio | médio | equal to Sol; defensive-only | 2026-08-21 |
-| `grok-4.6` | 8.5 | 6 | rápido | barato | deep quota on SuperGrok; fast quality executor confirmed by Henrique | 2026-08-21 |
-| `kimi-k3` | 8 | 10 | lento | médio | DesignArena #1; inside the $200 Cursor subscription | 2026-08-21 |
-| `claude-opus-5` | 8 | 9 | médio | médio | benchmarks say far more (SWE-V 96), but daily use puts it below Sol; UI/design or work supervised by Fable | 2026-08-21 |
-| `gpt-5.6-luna` | 7 | 5 | rápido | barato | volume executor at xhigh/max | 2026-08-21 |
-| `composer-2.5` | 7 | 6 | rápido | barato | niche: fast in-Cursor iteration under an external plan | 2026-08-21 |
-
-Promo IDs belong only in roster data, never in scripts.
-
 ### Pace and fallback
 
-Before staffing, read the Claude and Codex pools with:
+Before staffing, read the Claude, Codex, and Cursor pools with:
 
 ```bash
 node "$SKILL_DIR/../orchestrate/scripts/usage-state.mjs"
 ```
 
-Cursor, Grok, and OpenCode have no local usage source. A refusal or rate limit
-is their headroom signal. If the primary pool has `used_percent >= 90`, refuses
-the request, or returns a rate limit, staff the seat's fallback. Keep the same
-risk and context bar.
+The helper reads Cursor's native `/usage` command through the logged-in CLI. It
+reports two monthly Cursor pools: `cursor.cursor_models` for Cursor Grok,
+Composer, and Auto; and `cursor.other_models` for the other hosted models. A
+model being present in `cursor-agent models` does not mean its Cursor pool is
+cool. Grok outside Cursor and OpenCode have no local usage source; a refusal or
+rate limit is their headroom signal.
 
-Cursor is the deliberate universal fallback harness. It hosts Anthropic,
-OpenAI, xAI, and other providers, so any seat can use Cursor when its native
-pool is exhausted. Prefer the native harness. Name Cursor as the exception in
-the staffing reason when it is the fallback.
+Classify every measured pool before a new pair, unit, simplify pass, or review:
 
-Balance equal-bar work across subscriptions during a wave. This protects the
-week's headroom in every harness. Grok 4.6 "unlimited" has a quota in practice;
-treat it as a deep pool, not an infinite pool.
+- **available** — `pace <= 1`, or `pace` is null and `used_percent < 90`;
+- **protected** — `pace > 1`; projected use reaches 100% before reset;
+- **unavailable** — `used_percent >= 90`, refusal, or rate limit.
+
+A stale snapshot is a floor: a stale protected or unavailable reading remains
+actionable, while a stale available reading does not prove current headroom.
+Automatic staffing first uses a same-bar fallback for protected and unavailable
+pools. If none exists, apply only the active workflow's explicit capacity path,
+such as skipping an optional pass or reducing redundant reviewers, and record
+the reduction. Stop for the user only when that workflow has no permitted path
+left. An explicit user choice may spend a protected pool after you state its
+use, pace, and reset; it never turns a refusal into capacity.
+
+Cursor is the deliberate universal fallback harness for every eligible model
+that its live catalog exposes. Choose the hosted model and its pool together.
+Prefer `cursor.cursor_models` while it is available; use
+`cursor.other_models` only while that separate pool is available. Name Cursor
+and the pool in the staffing reason.
+
+When several available pools meet the same bar, prefer lower `pace`, then lower
+`used_percent`, then speed. Balance equal-bar work across subscriptions during a
+wave. Grok 4.6 "unlimited" has a quota in practice; treat it as a deep pool,
+not an infinite pool.
 
 ### Effort
 
@@ -182,12 +211,14 @@ These entries are not general staffing seats:
   offensive-capable specialist. It is gated and unavailable.
 - `claude-mythos-5` is Glasswing-gated.
 - `gpt-reserve` and `codex-auto-review` are internal SKUs.
-- Cursor extras `gemini-3.7-flash`, `gemini-3.1-pro`, `glm-5.2`, and
-  `cursor-grok-4.6` are unscored. Add rows only after Henrique scores them.
+- Rows marked `no seat`, `excluded from automatic staffing`, or `never` in the
+  operational table are not staffing seats. Add a seat only after its harness,
+  role, and controls are known. `cursor-grok-4.6` uses the Grok 4.6 evidence
+  when Cursor is selected.
 - `grok-build-0.1` is superseded.
-- `claude-haiku-4-5`, `gpt-5.6-terra`, and `claude-sonnet-5` are removed by
-  decision. Harness sub-agents already delegate to cheap and mid-tier models;
-  this roster gives the orchestrator frontier choices.
+- `claude-haiku-4-5` is removed by decision. Harness sub-agents already
+  delegate to cheap and mid-tier models; this roster gives the orchestrator
+  frontier choices.
 - `ox-alpha` (`opencode/x-preview-f-free`) is removed by Henrique's decision
   (2026-08-22): weak in real execution. OpenCode has no roster seat until he
   scores a new one.

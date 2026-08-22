@@ -74,14 +74,15 @@ test("the five kinds, the partner rule, and the roles are the same everywhere", 
   assert.match(herdrBackend, /contractual here/u);
 });
 
-test("an existing pair is resumed, never respawned to change its model", () => {
+test("an existing pair is capacity-checked and never respawned to change its model", () => {
   assert.match(
     skill,
-    /Look for an existing pair before proposing one[\s\S]*resumed as it is/u,
+    /Look for an existing pair before proposing one[\s\S]*Resume an existing\s+pair when its pool is available/u,
   );
+  assert.match(skill, /When its pool is protected[\s\S]*ask whether to spend it or end the session/u);
   assert.match(
     skill,
-    /respawning discards the pair's whole history, and a model is changed by ending\s+the pair/u,
+    /respawning discards the pair's whole\s+history, and a model is changed by ending the pair/u,
   );
   // No hardcoded catalog: cursor's own list is the catalog.
   assert.match(skill, /cursor-agent --list-models/u);
@@ -108,12 +109,12 @@ test("an existing pair is resumed, never respawned to change its model", () => {
 
 test("the roster is the single editable model preference source", () => {
   const roster = models.slice(models.indexOf("## Roster"));
+  const preferences = roster.slice(
+    roster.indexOf("### Operational preferences"),
+    roster.indexOf("### Seats por papel"),
+  );
   const seats = roster.slice(
     roster.indexOf("### Seats por papel"),
-    roster.indexOf("### Dimension scores"),
-  );
-  const scores = roster.slice(
-    roster.indexOf("### Dimension scores"),
     roster.indexOf("### Pace and fallback"),
   );
   const pace = roster.slice(
@@ -124,6 +125,47 @@ test("the roster is the single editable model preference source", () => {
     roster.indexOf("### Effort"),
     roster.indexOf("### Specialists and excluded"),
   );
+  assert.match(preferences, /A model appears only when its native harness or the live\s+Cursor catalog exposes it/u);
+  assert.match(preferences, /Recheck both sources before adding a model; omit it\s+while neither source has it/u);
+  assert.doesNotMatch(models, /### Henrique's tier list|### Dimension scores/u);
+
+  const preferenceRows = preferences.split("\n").filter((line) => /^\| `[^`]+`/u.test(line));
+  assert.equal(preferenceRows.length, 12);
+  const preference = Object.fromEntries(preferenceRows.map((line) => {
+    const [model, tier, taste, speed, cost, automaticUse] = line
+      .split("|")
+      .slice(1, 7)
+      .map((cell) => cell.trim().replaceAll("`", ""));
+    return [model, { tier, taste, speed, cost, automaticUse }];
+  }));
+  assert.deepEqual(Object.fromEntries(Object.entries(preference).map(([model, value]) => [model, value.tier])), {
+    "claude-fable-5": "S+",
+    "gpt-5.6-sol": "A",
+    "kimi-k3": "B",
+    "gpt-5.6-luna": "B",
+    "grok-4.6": "C",
+    "claude-opus-5": "D",
+    "composer-2.5": "D",
+    "gpt-5.6-terra": "D",
+    "claude-sonnet-5": "D",
+    "gemini-3.7-flash": "excluded",
+    "gemini-3.1-pro": "excluded",
+    "gpt-daybreak-blue-latest": "specialist",
+  });
+  for (const unavailable of ["deepseek-v4-flash", "muse-spark-1.2", "glm-5.3", "deepseek-v4-pro"]) {
+    assert.doesNotMatch(preferences, new RegExp(unavailable.replaceAll(".", "\\."), "u"));
+  }
+  assert.equal(preference["claude-fable-5"].automaticUse, "planning and orchestration");
+  assert.equal(preference["gpt-5.6-sol"].automaticUse, "high-quality general execution and review");
+  assert.equal(preference["gpt-5.6-luna"].automaticUse, "general fallback and volume execution");
+  assert.equal(preference["grok-4.6"].automaticUse, "fast fallback and live research");
+  assert.equal(preference["claude-opus-5"].automaticUse, "UI/design fallback only");
+  assert.equal(preference["gemini-3.7-flash"].automaticUse, "never");
+  assert.equal(preference["gemini-3.1-pro"].automaticUse, "never");
+  assert.match(preferences, /Tier ranks models that already meet the risk, context, role, and proof bar/u);
+  assert.match(preferences, /Prefer a native harness over a Cursor duplicate when tier, role, and pool are\s+equal/u);
+  assert.match(preferences, /machine-specific headless[\s\S]*`staffing\.md`/u);
+  assert.doesNotMatch(preferences, /API (?:input|output)|\$[0-9.]+\/M/u);
   const seatModels = [
     "claude-fable-5",
     "claude-opus-5",
@@ -136,68 +178,24 @@ test("the roster is the single editable model preference source", () => {
   assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 8);
   for (const seat of seatModels) assert.match(seats, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
   assert.match(seats, /Planear \/ orquestrar[\s\S]*medium[\s\S]*opening planning prompt[\s\S]*never max/u);
-  assert.match(seats, /Execução de alta qualidade \(back-end e geral\)[\s\S]*`gpt-5\.6-sol`[\s\S]*`ultra` is a subagent mode/u);
-  assert.match(seats, /Execução rápida[\s\S]*`grok-4\.6`[\s\S]*CLI default[\s\S]*`gpt-5\.6-sol` high/u);
+  assert.match(seats, /Execução de alta qualidade \(back-end e geral\)[\s\S]*`gpt-5\.6-sol`[\s\S]*`gpt-5\.6-luna` high\/xhigh → `grok-4\.6` high/u);
+  assert.match(seats, /Execução rápida[\s\S]*`gpt-5\.6-luna`[\s\S]*`grok-4\.6` high/u);
   assert.match(seats, /Execução barata em volume[\s\S]*xhigh\/max[\s\S]*never for UI work[\s\S]*verbose at max/u);
-  assert.match(seats, /UI \/ design \(taste\)[\s\S]*`kimi-k3`[\s\S]*`claude-opus-5`[\s\S]*Opus high for design review and medium for UI diffs[\s\S]*one covers the other/u);
+  assert.match(seats, /UI \/ design \(taste\)[\s\S]*`kimi-k3`[\s\S]*`claude-fable-5` medium\/high → `claude-opus-5`/u);
   assert.match(seats, /Image gen \(UI ideas, imagens, app logos, qualquer coisa que precise de imagem\) \| \*\*Image Gen 2 with `gpt-5\.6`\*\* \| the `gpt-5\.6` surface that exposes Image Gen 2 \| — \| — \|/u);
-  assert.match(seats, /Opus's primary seat is UI\/design[\s\S]*legitimate secondary use is execution[\s\S]*stronger supervisor such as Fable[\s\S]*SWE-V 96[\s\S]*daily-use experience[\s\S]*experience\s+governs/u);
-  assert.match(seats, /open question[\s\S]*`kimi-k3` will replace\s+Opus[\s\S]*next design tasks/u);
+  assert.match(seats, /Kimi is the primary UI\/design seat[\s\S]*Fable is the stronger fallback[\s\S]*Opus is D-tier[\s\S]*last UI\/design specialist fallback/u);
   // Staffing reads the cancel/fork/restaff ladder here, before an incident,
   // not inside a failed wait receipt mid-incident.
-  assert.match(seats, /Grok is a fast, good execution seat[\s\S]*headless recovery ladder[\s\S]*two\s+consecutive proved cancellations schedule a session fork[\s\S]*proved capability miss — restaff the unit/u);
+  assert.match(seats, /Grok is the C-tier fast fallback after eligible B-tier general models[\s\S]*headless recovery\s+ladder[\s\S]*two\s+consecutive proved cancellations schedule a session fork[\s\S]*proved capability miss — restaff the unit/u);
   assert.match(seats, /Claude Code's\s+`\/design`/u);
   assert.match(seats, /composer-2\.5[\s\S]*"Grok plans, Composer builds"[\s\S]*56\.1 and 69\.9[\s\S]*not a headline seat/u);
 
-  const scoredModels = [
-    "claude-fable-5",
-    "claude-opus-5",
-    "gpt-5.6-sol",
-    "gpt-5.6-luna",
-    "grok-4.6",
-    "kimi-k3",
-    "composer-2.5",
-    "gpt-daybreak-blue",
-  ];
-  const scoreRows = scores.split("\n").filter((line) => /^\| `[^`]+`/u.test(line));
-  assert.equal(scoreRows.length, 8);
-  for (const model of scoredModels) assert.match(scores, new RegExp(`\`${model.replaceAll(".", "\\.")}\``, "u"));
-  assert.match(scores, /\| Model \| Inteligência \| Taste \| Velocidade \| Custo \| Key evidence \| Updated \|/u);
-  assert.equal(scores.match(/2026-08-21/g)?.length, 8);
-  assert.match(scores, /Henrique's editable seeds[\s\S]*daily-use experience governs[\s\S]*benchmark aggregates inform[\s\S]*provisional/u);
-  assert.match(scores, /Inteligência and Taste use a 0–10 scale/u);
-  assert.match(scores, /Velocidade uses only `lento`, `médio`, or `rápido`[\s\S]*reasoning\s+effort makes a run slower/u);
-  assert.match(scores, /Custo uses only `barato`, `médio`, or `caro`[\s\S]*subscription consumed[\s\S]*never uses\s+API prices/u);
-  assert.match(scores, /Staff only the latest generation of each model family/u);
-  assert.match(scores, /Scores rank models that already meet the risk and context bar/u);
-  assert.match(scores, /Prefer a native harness over a Cursor duplicate/u);
-  assert.match(scores, /machine-specific headless[\s\S]*`staffing\.md`/u);
-
-  const dimensions = Object.fromEntries(scoreRows.map((line) => {
-    const [model, intelligence, taste, speed, cost] = line
-      .split("|")
-      .slice(1, 6)
-      .map((cell) => cell.trim().replaceAll("`", ""));
-    return [model, [intelligence, taste, speed, cost]];
-  }));
-  assert.deepEqual(dimensions, {
-    "claude-fable-5": ["9.5", "9", "lento", "caro"],
-    "gpt-5.6-sol": ["9", "8", "médio", "médio"],
-    "gpt-daybreak-blue": ["9", "n/a", "médio", "médio"],
-    "grok-4.6": ["8.5", "6", "rápido", "barato"],
-    "kimi-k3": ["8", "10", "lento", "médio"],
-    "claude-opus-5": ["8", "9", "médio", "médio"],
-    "gpt-5.6-luna": ["7", "5", "rápido", "barato"],
-    "composer-2.5": ["7", "6", "rápido", "barato"],
-  });
-  assert.doesNotMatch(scoreRows.join("\n"), /\?/u);
-  assert.doesNotMatch(scores, /API (?:input|output)|\$[0-9.]+\/M/u);
-  assert.match(scores, /`kimi-k3`[\s\S]*inside the \$200 Cursor subscription/u);
-  assert.match(scores, /`claude-opus-5` \| 8 \| 9[\s\S]*SWE-V 96[\s\S]*daily use puts it below Sol[\s\S]*UI\/design or work supervised by Fable/u);
-
   assert.match(pace, /usage-state\.mjs/u);
-  assert.match(pace, /`used_percent >= 90`[\s\S]*refuses[\s\S]*rate limit[\s\S]*fallback/u);
+  assert.match(pace, /`cursor\.cursor_models`[\s\S]*`cursor\.other_models`/u);
+  assert.match(pace, /\*\*protected\*\* — `pace > 1`/u);
+  assert.match(pace, /\*\*unavailable\*\* — `used_percent >= 90`, refusal, or rate limit/u);
   assert.match(pace, /Cursor is the deliberate universal fallback harness/u);
+  assert.match(pace, /prefer lower `pace`, then lower\s+`used_percent`, then speed/u);
   assert.match(pace, /Balance equal-bar work across subscriptions/u);
   assert.match(pace, /Grok 4\.6 "unlimited" has a quota in practice/u);
 
@@ -207,14 +205,14 @@ test("the roster is the single editable model preference source", () => {
   assert.match(effort, /Opus high is suitable for design review[\s\S]*medium for UI diffs/u);
   assert.match(effort, /Luna's hidden `max`[\s\S]*volume execution under external[\s\S]*review/u);
 
-  const removed = ["claude-haiku-4-5", "gpt-5.6-terra", "claude-sonnet-5", "ox-alpha"];
+  const removed = ["claude-haiku-4-5", "ox-alpha"];
   for (const model of removed) {
     assert.doesNotMatch(seats, new RegExp(model.replaceAll(".", "\\."), "u"));
-    assert.doesNotMatch(scores, new RegExp(model.replaceAll(".", "\\."), "u"));
     assert.match(roster, new RegExp(model.replaceAll(".", "\\."), "u"));
   }
-  assert.match(roster, /are removed by\s+decision/u);
-  assert.match(roster, /Harness sub-agents already delegate to cheap and mid-tier models/u);
+  assert.match(roster, /`claude-haiku-4-5` is removed by decision/u);
+  assert.doesNotMatch(seats, /gpt-5\.6-terra|claude-sonnet-5/u);
+  assert.match(roster, /Harness sub-agents already\s+delegate to cheap and mid-tier models/u);
   assert.match(roster, /Promo IDs belong only in roster data, never in scripts/u);
   assert.doesNotMatch(`${helper}\n${headlessHelper}`, /x-preview-f-free/u);
 
@@ -223,14 +221,13 @@ test("the roster is the single editable model preference source", () => {
     "claude-mythos-5",
     "gpt-reserve",
     "codex-auto-review",
-    "gemini-3.7-flash",
-    "gemini-3.1-pro",
-    "glm-5.2",
     "cursor-grok-4.6",
     "grok-build-0.1",
   ]) {
     assert.match(roster, new RegExp(excluded.replaceAll(".", "\\."), "u"));
   }
+  assert.match(preferences, /`gemini-3\.7-flash`[\s\S]*\| never \|/u);
+  assert.match(preferences, /`gemini-3\.1-pro`[\s\S]*\| never \|/u);
   // ox-alpha's removal must leave OpenCode seatless until Henrique scores a
   // replacement, not silently fall back to an undocumented model.
   assert.match(roster, /OpenCode has no roster seat until he\s+scores a new one/u);

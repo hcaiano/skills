@@ -106,7 +106,8 @@ test("grading is risk-adaptive and auditable", () => {
     reviewIt,
     /Staffing, implementing model, and use of a pair never choose the grade or number\s+of reviews/u,
   );
-  assert.match(reviewIt, /capacity changes execution,\s+not the semantic grade/u);
+  assert.match(reviewIt, /Capacity changes execution, not the semantic grade/u);
+  assert.match(reviewIt, /`pace` above 1 is protected/u);
   assert.doesNotMatch(reviewIt, /regrades to the other harness/u);
 });
 
@@ -126,17 +127,21 @@ test("review promotion and degradation survive", () => {
   assert.match(reviewIt, /A `single` reviewer promotes the gate/u);
   assert.match(
     reviewIt,
-    /A `dual` review that cannot complete preserves its semantic grade\s+and records degraded execution/u,
+    /A `dual` with only one eligible unprotected reviewer starts that\s+review directly and records capacity-reduced execution/u,
   );
   assert.match(
     reviewIt,
-    /Two reviews from the same harness do not satisfy\s+`dual`/u,
+    /A full `dual` whose\s+second review cannot complete preserves its semantic grade/u,
+  );
+  assert.match(
+    reviewIt,
+    /Two reviews from the same model family do not\s+satisfy `dual`/u,
   );
   assert.match(
     reviewIt,
     /a refusal, rate-limit notice, or empty payload is\s+a failed review even with exit zero/u,
   );
-  assert.match(reviewIt, /Fable is advisor-only/u);
+  assert.match(reviewIt, /Google models never run/u);
 });
 
 test("Codex review selects the diff mechanically", () => {
@@ -163,6 +168,25 @@ test("Codex review selects the diff mechanically", () => {
   assert.match(
     reviewIt,
     /Name\s+the assigned axis in the reviewer's prompt, include its applicable sources, and\s+require read-only findings output/u,
+  );
+});
+
+test("Cursor fallback is pool-aware and mechanically pinned", () => {
+  assert.match(reviewIt, /scripts\/headless-cursor\.mjs/u);
+  assert.match(reviewIt, /fresh read-only plan-mode session/u);
+  assert.match(reviewIt, /`cursor\.cursor_models` or `cursor\.other_models`/u);
+  assert.match(reviewIt, /Cursor Grok may cover one degraded review/u);
+  assert.match(
+    reviewIt,
+    /skip protected Claude simplify; keep `single` at\s+one available reviewer; and reduce `dual` to one available reviewer/u,
+  );
+  assert.match(
+    reviewIt,
+    /continues to the\s+selected available reviewer without asking to spend Claude/u,
+  );
+  assert.match(
+    reviewIt,
+    /Ask whether to spend a protected pool or wait for reset only when no eligible\s+unprotected reviewer remains/u,
   );
 });
 
@@ -206,7 +230,7 @@ test("transport preserves wrapper liveness and Herdr pane proof", () => {
   );
   assert.match(
     processTransport,
-    /wrappers\s+own both backends' idle and total deadlines, PID-scoped termination, and content\s+validation/u,
+    /wrappers own\s+both backends' idle and total deadlines, PID-scoped termination, and content\s+validation/u,
   );
   assert.match(
     processTransport,

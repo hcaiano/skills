@@ -42,6 +42,7 @@ import {
   readdirSync,
   realpathSync,
   renameSync,
+  rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -1612,7 +1613,7 @@ const runClear = () => {
 const runEnd = () => {
   const place = requirePlace();
   if (!existsSync(place.stateDir)) fail(`no pair session at ${place.stateDir}`);
-  // Ending under a live marker would trash the running turn's transcript and
+  // Ending under a live marker would delete the running turn's transcript and
   // reply target mid-write and leave a write-lease partner editing the
   // workspace with no record of it.
   if (existsSync(place.lockPath)) {
@@ -1620,10 +1621,12 @@ const runEnd = () => {
       `a turn is in flight (or its marker remains) at ${place.lockPath} — wait for it to finish, or run clear first`,
     );
   }
-  const trashed = spawnSync("trash", [place.stateDir], { encoding: "utf8" });
-  if (trashed.error) fail(`trash is required to end a pair: ${trashed.error.message}`);
-  if (trashed.status !== 0) fail(`trash failed: ${(trashed.stderr || "").trim()}`);
-  emit({ ok: true, status: "ended", trashed: place.stateDir }, 0);
+  try {
+    rmSync(place.stateDir, { recursive: true });
+  } catch (error) {
+    fail(`cannot delete pair session ${place.stateDir}: ${error.message}`);
+  }
+  emit({ ok: true, status: "ended", deleted: place.stateDir }, 0);
 };
 
 const COMMANDS = {

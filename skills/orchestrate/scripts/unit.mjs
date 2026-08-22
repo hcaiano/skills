@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  rmSync,
   rmdirSync,
   unlinkSync,
   writeFileSync,
@@ -266,7 +267,7 @@ const withRegistryLock = (place, operation) => {
       mkdirSync(place.lock);
     } catch (retryError) {
       if (staleClaim) {
-        try { trashPath(staleClaim); } catch {}
+        try { removePath(staleClaim); } catch {}
       }
       fail(`cannot recover stale orchestrate registry lock: ${retryError.message}`);
     }
@@ -288,7 +289,7 @@ const withRegistryLock = (place, operation) => {
     fail(`cannot publish orchestrate registry lock owner: ${error.message}`);
   }
   if (staleClaim) {
-    try { trashPath(staleClaim); } catch {}
+    try { removePath(staleClaim); } catch {}
   }
   try {
     return operation();
@@ -658,10 +659,9 @@ const listRecords = (place) => {
     });
 };
 
-const trashPath = (path) => {
+const removePath = (path) => {
   if (!existsSync(path)) return;
-  const result = run("trash", [path]);
-  if (result.status !== 0) throw new Error(commandError(result, `trash ${path}`));
+  rmSync(path, { recursive: true });
 };
 
 const branchExists = (repo, branch) => {
@@ -1194,7 +1194,7 @@ const create = (options) => {
       }
       if (record.resources.task_file) {
         try {
-          trashPath(record.task_file);
+          removePath(record.task_file);
           rollback.push({ resource: "task-file", ok: true });
           record.resources.task_file = false;
         } catch (taskError) {
@@ -1204,7 +1204,7 @@ const create = (options) => {
       record.rollback = rollback;
       const complete = rollback.every((step) => step.ok);
       if (complete) {
-        try { trashPath(path); } catch {}
+        try { removePath(path); } catch {}
       } else {
         writeRecord(path, record);
       }
@@ -1565,7 +1565,7 @@ const restaff = (options) => {
         throw error;
       } finally {
         try {
-          trashPath(checkpointPath);
+          removePath(checkpointPath);
         } catch (cleanupError) {
           if (!sendError) throw cleanupError;
         }
@@ -1691,10 +1691,10 @@ const dismantle = (options) => {
           return { via: "git worktree remove" };
         }
         if (!forced) throw new Error(commandError(removed, "remove worktree"));
-        trashPath(record.worktree);
+        removePath(record.worktree);
         gitChecked(place.root, ["worktree", "prune"], "prune worktrees");
         record.resources.worktree = false;
-        return { via: "trash + prune" };
+        return { via: "delete + prune" };
       });
     }
     step("local-branch", () => {
@@ -1704,12 +1704,12 @@ const dismantle = (options) => {
     step("remote-branch", () => removeRemoteBranch(place.root, record.branch));
     if (record.task_file && existsSync(record.task_file)) {
       step("task-file", () => {
-        trashPath(record.task_file);
+        removePath(record.task_file);
         record.resources.task_file = false;
       });
     }
     const result = { ok: true, status: "dismantled", unit_id: id, merged_pr: merged, forced, done: record.cleanup };
-    trashPath(path);
+    removePath(path);
     return result;
   });
 };
