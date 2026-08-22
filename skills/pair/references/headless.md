@@ -99,15 +99,19 @@ after that rename. `wait` reads only a complete receipt:
 node "$PAIR_SCRIPT" wait --repo "$REPO_ROOT" [--seq "$SEQ"]
 ```
 
-A writable `kind=task` turn has a 45-minute default idle budget; every other
-turn and `init` use 20 minutes. An explicit `--idle-min` replaces that default.
-The session preamble tells the partner to keep tool output flowing during long
-turns, so useful activity resets the watchdog.
+A writable `kind=task` turn defaults to a 45-minute idle budget and a
+120-minute total budget — a delivery turn runs the repository's own CI, which
+alone can take an hour; every other turn and `init` default to 20 idle and 60
+total. Explicit `--idle-min`/`--total-min` replace those defaults, and a
+hang-kill receipt names the flag to raise. The session preamble tells the
+partner to keep tool output flowing during long turns, so useful activity
+resets the watchdog.
 
 With no `--seq`, `wait` follows `state.seq`, not the in-flight marker, so a
 fast turn that already cleared its marker is still waitable. `--seq` selects an
-older turn. The default wait timeout is 65 minutes; pass `--timeout-min N` when
-the turn needs a different bound. If the worker is dead and no receipt exists,
+older turn. The default wait timeout is 125 minutes — the largest default total
+budget plus slack; pass `--timeout-min N` when the turn needs a different
+bound. If the worker is dead and no receipt exists,
 `wait` returns `reason=worker-lost` immediately instead of waiting for the
 timeout. A `running` receipt is not terminal; call `wait` and then read its
 `receipt_file`.
@@ -149,6 +153,10 @@ After two consecutive proved Grok cancellations, the receipt advises a fork.
 The counter increments while the turn owns the lock and resets on the next
 terminal non-cancelled result. Inspect the task directory and transcript before
 following that advice; cancellation is not proof that the edits are complete.
+A fork is the cure for cancellations, so a cancellation on the proved fresh
+fork — or two more after any committed fork — records `capability_miss`: that
+receipt advises restaffing, and `fork` refuses until a turn returns `replied`
+— a failed, empty, or hang-killed turn proves nothing and keeps the miss.
 
 ## Fork a cancelled Grok session
 
@@ -180,23 +188,21 @@ unless you pass `--write`, and under `executor` it is writable unless you pass
 Inspect the task files, `git diff` when Git is present, and real validation
 output yourself afterwards.
 
-What holds a turn differs by partner. A Codex turn is held by a filesystem
-sandbox (`read-only`, or `workspace-write` with `--write`). A Claude turn is
-held by a permission mode (`plan`, or `acceptEdits` with `--write`) that
-restrains the agent's edits without being an OS sandbox, and a Grok turn by the
-same kind of mode (`plan` or `acceptEdits`). A Cursor turn writes by default in
-`--print`, so its read-only turns are the ones carrying `--mode plan` — the
-mode restrains the agent, and is not an OS sandbox either.
-An OpenCode read-only turn selects the built-in `plan` agent. A writable turn
-uses `--auto`; this is OpenCode's permission control, not an OS sandbox.
+A headless run has no approver: a tool call left waiting for one is denied or
+cancelled, never queued. Writable turns therefore run every partner with its
+full bypass — Henrique's standing decision (2026-08-22) for the dedicated dev
+machines these pairs run on: Codex gets the `danger-full-access` sandbox,
+Claude and Grok get `--permission-mode bypassPermissions` (Grok also gets
+`--always-approve`, because under `acceptEdits` it cancelled its own tool
+calls as "User cancelled" on wp-917), Cursor gets `--force`, and OpenCode gets
+`--auto`. Nothing OS-level restrains a writable partner; the write lease,
+scope contract, and review gates are the restraint.
 
-Every writable Codex turn resolves the Git common directory again and passes
-`sandbox_workspace_write.writable_roots=["<git-common-dir>"]` plus
-`sandbox_workspace_write.network_access=true`. A plain directory uses its
-fallback state directory as the writable root. These per-turn overrides also
-reach resumed Codex sessions. Network access is required because writable
-delivery turns can push and run `gh` from the sandboxed Codex executor. The
-2026-08-21 Mediavine delivery run proved this requirement.
+Read-only turns keep each CLI's restraining mode: Codex a `read-only`
+filesystem sandbox, Claude and Grok `--permission-mode plan`, and OpenCode the
+built-in `plan` agent. A Cursor turn writes by default in `--print`, so its
+read-only turns are the ones carrying `--mode plan`. Only the Codex mode is an
+OS sandbox; the other modes restrain the agent without one.
 
 The transport is half-duplex, so one turn runs at a time. In a Git worktree, a
 send takes a lock by creating `<git-dir>/pair/in-flight.json`; in a plain

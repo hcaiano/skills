@@ -71,7 +71,7 @@ For each unit, write one task file with:
 - the complete task and intended outcome;
 - write scope and read-only context;
 - validation commands and observable evidence;
-- base branch, merge policy, and relevant constraints;
+- base branch and relevant constraints;
 - an instruction to implement, validate, commit, and return `ready` with the
   commit SHA, diff summary, and exact validation output; the executor waits for
   scope approval before pushing or opening a PR.
@@ -85,7 +85,7 @@ node "$UNIT" create --repo "$REPO" --unit <id> \
   --lead <current-cli> --partner <other-cli> --model <name-or-CLI-default> \
   [--effort <level>] --reason <one-line-reason> --task-file <file> \
   --scope <scope-summary> --validation <validation-summary> \
-  --merge-policy <auto|hold> [--setup <project-worktree-setup-command>]
+  [--setup <project-worktree-setup-command>]
 ```
 
 `create` journals the task before mutation, creates the worktree from the base,
@@ -233,7 +233,8 @@ chain of custody, PR checks, holds, merge, and drift. Out-of-scope findings
 become follow-up tasks; quality debt created by this unit stays in the unit.
 
 Done when the exact approved change has a delivery receipt on the PR head and
-is either held for the user or merged with the required live evidence.
+is held for Henrique's review — or, only after his approval of that exact
+head, merged with the required live evidence.
 
 ## Dismantle
 

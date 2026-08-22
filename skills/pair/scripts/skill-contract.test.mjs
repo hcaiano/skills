@@ -132,20 +132,20 @@ test("the roster is the single editable model preference source", () => {
     "kimi-k3",
     "gpt-daybreak-blue-latest",
     "grok-4.6",
-    "opencode/x-preview-f-free",
   ];
-  assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 9);
+  assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 8);
   for (const seat of seatModels) assert.match(seats, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
   assert.match(seats, /Planear \/ orquestrar[\s\S]*medium[\s\S]*opening planning prompt[\s\S]*never max/u);
   assert.match(seats, /Execução de alta qualidade \(back-end e geral\)[\s\S]*`gpt-5\.6-sol`[\s\S]*`ultra` is a subagent mode/u);
-  assert.match(seats, /Execução rápida[\s\S]*`grok-4\.6`[\s\S]*CLI default[\s\S]*`ox-alpha` high/u);
+  assert.match(seats, /Execução rápida[\s\S]*`grok-4\.6`[\s\S]*CLI default[\s\S]*`gpt-5\.6-sol` high/u);
   assert.match(seats, /Execução barata em volume[\s\S]*xhigh\/max[\s\S]*never for UI work[\s\S]*verbose at max/u);
-  assert.match(seats, /Executor grátis \(enquanto durar\)[\s\S]*`opencode\/x-preview-f-free`[\s\S]*variant high/u);
   assert.match(seats, /UI \/ design \(taste\)[\s\S]*`kimi-k3`[\s\S]*`claude-opus-5`[\s\S]*Opus high for design review and medium for UI diffs[\s\S]*one covers the other/u);
   assert.match(seats, /Image gen \(UI ideas, imagens, app logos, qualquer coisa que precise de imagem\) \| \*\*Image Gen 2 with `gpt-5\.6`\*\* \| the `gpt-5\.6` surface that exposes Image Gen 2 \| — \| — \|/u);
   assert.match(seats, /Opus's primary seat is UI\/design[\s\S]*legitimate secondary use is execution[\s\S]*stronger supervisor such as Fable[\s\S]*SWE-V 96[\s\S]*daily-use experience[\s\S]*experience\s+governs/u);
   assert.match(seats, /open question[\s\S]*`kimi-k3` will replace\s+Opus[\s\S]*next design tasks/u);
-  assert.match(seats, /Grok is a fast, good execution seat[\s\S]*Ox Alpha[\s\S]*real executor/u);
+  // Staffing reads the cancel/fork/restaff ladder here, before an incident,
+  // not inside a failed wait receipt mid-incident.
+  assert.match(seats, /Grok is a fast, good execution seat[\s\S]*headless recovery ladder[\s\S]*two\s+consecutive proved cancellations schedule a session fork[\s\S]*proved capability miss — restaff the unit/u);
   assert.match(seats, /Claude Code's\s+`\/design`/u);
   assert.match(seats, /composer-2\.5[\s\S]*"Grok plans, Composer builds"[\s\S]*56\.1 and 69\.9[\s\S]*not a headline seat/u);
 
@@ -157,14 +157,13 @@ test("the roster is the single editable model preference source", () => {
     "grok-4.6",
     "kimi-k3",
     "composer-2.5",
-    "ox-alpha",
     "gpt-daybreak-blue",
   ];
   const scoreRows = scores.split("\n").filter((line) => /^\| `[^`]+`/u.test(line));
-  assert.equal(scoreRows.length, 9);
+  assert.equal(scoreRows.length, 8);
   for (const model of scoredModels) assert.match(scores, new RegExp(`\`${model.replaceAll(".", "\\.")}\``, "u"));
   assert.match(scores, /\| Model \| Inteligência \| Taste \| Velocidade \| Custo \| Key evidence \| Updated \|/u);
-  assert.equal(scores.match(/2026-08-21/g)?.length, 9);
+  assert.equal(scores.match(/2026-08-21/g)?.length, 8);
   assert.match(scores, /Henrique's editable seeds[\s\S]*daily-use experience governs[\s\S]*benchmark aggregates inform[\s\S]*provisional/u);
   assert.match(scores, /Inteligência and Taste use a 0–10 scale/u);
   assert.match(scores, /Velocidade uses only `lento`, `médio`, or `rápido`[\s\S]*reasoning\s+effort makes a run slower/u);
@@ -187,13 +186,11 @@ test("the roster is the single editable model preference source", () => {
     "gpt-daybreak-blue": ["9", "n/a", "médio", "médio"],
     "grok-4.6": ["8.5", "6", "rápido", "barato"],
     "kimi-k3": ["8", "10", "lento", "médio"],
-    "ox-alpha": ["7", "8", "rápido", "barato"],
     "claude-opus-5": ["8", "9", "médio", "médio"],
     "gpt-5.6-luna": ["7", "5", "rápido", "barato"],
     "composer-2.5": ["7", "6", "rápido", "barato"],
   });
   assert.doesNotMatch(scoreRows.join("\n"), /\?/u);
-  assert.match(scores, /`ox-alpha` \| 7 \| 8[\s\S]*community praise for its design taste/u);
   assert.doesNotMatch(scores, /API (?:input|output)|\$[0-9.]+\/M/u);
   assert.match(scores, /`kimi-k3`[\s\S]*inside the \$200 Cursor subscription/u);
   assert.match(scores, /`claude-opus-5` \| 8 \| 9[\s\S]*SWE-V 96[\s\S]*daily use puts it below Sol[\s\S]*UI\/design or work supervised by Fable/u);
@@ -210,7 +207,7 @@ test("the roster is the single editable model preference source", () => {
   assert.match(effort, /Opus high is suitable for design review[\s\S]*medium for UI diffs/u);
   assert.match(effort, /Luna's hidden `max`[\s\S]*volume execution under external[\s\S]*review/u);
 
-  const removed = ["claude-haiku-4-5", "gpt-5.6-terra", "claude-sonnet-5"];
+  const removed = ["claude-haiku-4-5", "gpt-5.6-terra", "claude-sonnet-5", "ox-alpha"];
   for (const model of removed) {
     assert.doesNotMatch(seats, new RegExp(model.replaceAll(".", "\\."), "u"));
     assert.doesNotMatch(scores, new RegExp(model.replaceAll(".", "\\."), "u"));
@@ -234,8 +231,9 @@ test("the roster is the single editable model preference source", () => {
   ]) {
     assert.match(roster, new RegExp(excluded.replaceAll(".", "\\."), "u"));
   }
-  assert.match(roster, /Re-verify[\s\S]*`opencode models --refresh`/u);
-  assert.match(roster, /malformed[\s\S]*protocol headers[\s\S]*judge the receipt and diff, not the header/u);
+  // ox-alpha's removal must leave OpenCode seatless until Henrique scores a
+  // replacement, not silently fall back to an undocumented model.
+  assert.match(roster, /OpenCode has no roster seat until he\s+scores a new one/u);
 });
 
 test("each harness effort ladder matches its current control surface", () => {
@@ -352,11 +350,16 @@ test("the headless backend documents the helper's whole command surface", () => 
   }
   assert.match(headlessBackend, /send --repo[\s\S]*\[--background\]/u);
   assert.match(headlessBackend, /wait --repo[\s\S]*\[--seq/u);
-  assert.match(headlessBackend, /default wait timeout is 65 minutes/u);
-  assert.match(headlessHelper, /opt\("timeout-min", "65"\)/u);
-  assert.match(headlessBackend, /writable `kind=task` turn has a 45-minute default idle budget/u);
-  assert.match(headlessBackend, /explicit `--idle-min` replaces that default/u);
+  assert.match(headlessBackend, /default wait timeout is 125 minutes/u);
+  assert.match(headlessHelper, /opt\("timeout-min", "125"\)/u);
+  // Delivery turns run the repository's own CI, so writable task turns carry
+  // the raised total budget and every hang receipt names the flag to raise.
+  assert.match(headlessBackend, /writable `kind=task` turn defaults to a 45-minute idle budget and a\s+120-minute total budget/u);
+  assert.match(headlessBackend, /hang-kill receipt names the flag to raise/u);
   assert.match(headlessHelper, /kind === "task" && write \? 45 : 20/u);
+  assert.match(headlessHelper, /kind === "task" && write \? 120 : 60/u);
+  assert.match(headlessHelper, /raise it with send --total-min/u);
+  assert.match(headlessHelper, /raise it with send --idle-min/u);
   assert.match(headlessHelper, /keep tool output flowing so the idle watchdog can see progress/u);
   assert.match(headlessBackend, /fork --repo[\s\S]*\[--retry\]/u);
   assert.match(headlessBackend, /fork-scheduled[\s\S]*fork runs on the next normal `send`/u);
@@ -398,22 +401,24 @@ test("the headless backend states what each guarantee is actually worth", () => 
   // One pair per worktree, not per repository: the state lives in the
   // worktree's git dir, so a linked worktree carries its own.
   assert.match(headlessBackend, /a worktree holds one pair and a linked\s+worktree gets its own/u);
-  // A permission mode is not an OS sandbox, and the reader must not read it as one.
+  // Headless has no approver, so the doc must carry the standing decision:
+  // writable turns run each CLI's full bypass, and read-only turns keep each
+  // CLI's restraining mode.
   assert.match(
     headlessBackend,
-    /Codex turn is held by a filesystem\s+sandbox[\s\S]*Claude turn is\s+held by a permission mode[\s\S]*without being an OS sandbox/u,
+    /Writable turns therefore run every partner with its\s+full bypass[\s\S]*`danger-full-access`[\s\S]*`--permission-mode bypassPermissions`[\s\S]*`--always-approve`[\s\S]*`--force`[\s\S]*`--auto`/u,
   );
+  assert.match(headlessBackend, /write lease,\s+scope contract, and review gates are the restraint/u);
   assert.match(
     headlessBackend,
-    /Every writable Codex turn resolves the Git common directory again[\s\S]*sandbox_workspace_write\.writable_roots=\["<git-common-dir>"\][\s\S]*sandbox_workspace_write\.network_access=true[\s\S]*resumed Codex sessions/u,
+    /Read-only turns keep each CLI's restraining mode[\s\S]*`read-only`\s+filesystem sandbox[\s\S]*`--permission-mode plan`[\s\S]*built-in `plan` agent/u,
   );
-  assert.match(headlessHelper, /sandbox_workspace_write\.writable_roots=/u);
-  assert.match(headlessHelper, /sandbox_workspace_write\.network_access=true/u);
+  assert.match(headlessHelper, /sandbox_mode="\$\{sandbox\}"/u);
   // Cursor writes by default in --print, which is the trap: its read-only turn
   // is the one that had to ask.
   assert.match(
     headlessBackend,
-    /Cursor turn writes by default in\s+`--print`[\s\S]*`--mode plan`[\s\S]*not an OS sandbox either/u,
+    /Cursor turn writes by default in `--print`[\s\S]*`--mode plan`[\s\S]*Only the Codex mode is an\s+OS sandbox/u,
   );
   // An empty reply may still have consumed the prompt, so resending can duplicate work.
   assert.match(

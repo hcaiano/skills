@@ -113,7 +113,9 @@ ship it.
    findings and their dispositions, `Reviewed HEAD`, `Gate HEAD`, and every
    transport record — and adds delivery's own fields around it:
    `Focused proof:` (why its exact commands cover every altered behavior),
-   `Final validated HEAD: <40-character pushed SHA>`, the deterministic commands
+   `Final validated HEAD: <40-character pushed SHA>` (pasted from
+   `git rev-parse HEAD` output, never retyped — a hand-typed one shipped a
+   one-character typo on 2026-08-22), the deterministic commands
    and results, every check delegated to native PR CI and why, `Review rounds:`
    with each reviewed SHA, and `Residual findings:` with every item closed by
    the convergence rule.
@@ -155,9 +157,12 @@ ship it.
    as one post-gate round and enters the same loop. Record the clean check
    timestamp and head.
 7. **Merge and deploy when authorized.** A ship-it invocation authorizes its
-   local gate, push, and PR work; merge and deployment require explicit user
-   authorization or an enclosing workflow with standing authorization. When
-   that authority is already present, proceed directly without another LLM
+   local gate, push, and PR work; merge and deployment require the user's own
+   explicit authorization for this delivery. A delegating workflow, skill
+   invocation, or recorded merge policy never carries that authority: a
+   delegated delivery stops at merge-ready and returns the held PR to its
+   caller for the user's review. When the user's authorization is present,
+   proceed directly without another LLM
    review or confirmation. Merge with the repository's documented method,
    verify the merged commit and base state, then run the repository's
    documented deployment path when deployment is in scope. Verify the

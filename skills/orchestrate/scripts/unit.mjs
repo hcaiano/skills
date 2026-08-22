@@ -22,7 +22,6 @@ const herdrPairScript = process.env.ORCHESTRATE_HERDR_PAIR_SCRIPT ??
   join(scriptDir, "../../pair/scripts/herdr-pair.mjs");
 const partnerKinds = new Set(["claude", "codex", "cursor", "grok", "opencode"]);
 const pairBackends = new Set(["headless", "herdr"]);
-const mergePolicies = new Set(["auto", "hold"]);
 const timeoutFromEnvironment = (name, fallback) => {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? value : fallback;
@@ -759,7 +758,6 @@ const ensureMatchingCreate = (record, options, task) => {
     ["staffing.current.reason", options.reason],
     ["scope", options.scope],
     ["validation", options.validation],
-    ["merge_policy", options["merge-policy"]],
     ["setup", options.setup ?? null],
   ]);
   if (recordedWorktree !== requestedWorktree) {
@@ -918,10 +916,15 @@ const create = (options) => {
   const place = repository(options.repo);
   const id = unitId(options.unit);
   const path = recordPath(place, id);
-  const required = ["worktree", "branch", "base", "scope", "validation", "merge-policy"];
+  const required = ["worktree", "branch", "base", "scope", "validation"];
   for (const key of required) if (!options[key]) fail(`create requires --${key}`, null, 2);
   if (!isAbsolute(options.worktree)) fail("--worktree must be an absolute path", null, 2);
-  if (!mergePolicies.has(options["merge-policy"])) fail("--merge-policy must be auto or hold", null, 2);
+  // Removed 2026-08-22: every unit PR holds for Henrique's review before
+  // merge, so a per-unit merge policy has nothing left to select. Old records
+  // may still carry merge_policy; resume tolerates it and never compares it.
+  if (options["merge-policy"]) {
+    fail("--merge-policy is removed — every unit PR holds for Henrique's review before merge; drop the flag", null, 2);
+  }
   if (options["task-file"] && !existsSync(options["task-file"])) {
     fail(`task file does not exist: ${options["task-file"]}`);
   }
@@ -978,7 +981,6 @@ const create = (options) => {
         task_file: join(place.registry, "tasks", `${id}.md`),
         scope: options.scope,
         validation: options.validation,
-        merge_policy: options["merge-policy"],
         setup: options.setup ?? null,
         resources: { task_file: false, worktree: false, local_branch: false, pair: false },
         staffing: {

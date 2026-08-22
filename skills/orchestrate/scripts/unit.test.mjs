@@ -326,7 +326,6 @@ const createArgs = (id, partner = "codex", setup = "true") => [
   "--task-file", taskFile(id),
   "--scope", `file-${id}.txt`,
   "--validation", "test -f README.md",
-  "--merge-policy", "auto",
   "--setup", setup,
 ];
 const herdrCreateArgs = (id, partner = "grok") => [
@@ -390,7 +389,6 @@ const writeRecoveryRecord = (
     task_file: join(common, "orchestrate", "tasks", `${id}.md`),
     scope: `file-${id}.txt`,
     validation: "test -f README.md",
-    merge_policy: "auto",
     setup: "true",
     resources: {
       task_file: false,
@@ -436,6 +434,12 @@ test("create journals a durable unit and starts an executor pair", () => {
     readFileSync(exclude.path, "utf8").split(/\r?\n/u).filter((line) => line === "/PR_BODY.md").length,
     1,
   );
+});
+
+test("create refuses --merge-policy: every unit PR holds for Henrique's review", () => {
+  const refused = invoke([...createArgs("merge-policy-refused"), "--merge-policy", "auto"]);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.output.reason, /--merge-policy is removed[\s\S]*holds for Henrique's review/u);
 });
 
 test("Herdr backend is recorded and routes the unit through pinned pair commands", () => {

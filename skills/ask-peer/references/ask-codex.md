@@ -25,9 +25,14 @@ exchange; never use `--last` when another Codex lane may have run in the repo.
 
 ## Scoped write pass
 
-Only when the user asked for implementation, use `-s workspace-write` initially
-and `-c sandbox_mode="workspace-write"` on resume. The prompt must name the write
-lease and validation. Afterwards, inspect `git diff`, touched files, and actual
+Only when the user asked for implementation, use
+`-s danger-full-access -c 'approval_policy="never"'` initially and
+`-c sandbox_mode="danger-full-access" -c 'approval_policy="never"'` on resume —
+the standing 2026-08-22 decision: writable headless runs bypass the sandbox
+and the approval prompts (they are separate controls, and a machine whose
+config keeps approvals on-request would still stall), and the write lease plus
+your own inspection are the restraint. The prompt must name the write lease
+and validation. Afterwards, inspect `git diff`, touched files, and actual
 validation output yourself.
 
 Outside a Git repository add `--skip-git-repo-check`. Never pin a model in the

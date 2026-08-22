@@ -19,9 +19,15 @@
 // SHA lands on the receipt for the delivery's chain of custody.
 //
 // Three differences from the Claude wrapper, all forced by the CLI surface:
-//   * No baseline/restore. The run is pinned to `sandbox_mode="read-only"`, so
-//     there is no writable mode to undo. The tree is fingerprinted before and
-//     after anyway and any drift is reported on `tree_changed` for the caller.
+//   * No baseline/restore, and the sandbox is `workspace-write` with network
+//     off, not `read-only`: on Linux, read-only Landlock denies every write
+//     including TMPDIR, and the review harness dies before the review with
+//     EROFS (wp-918's dual gate, 2026-08-22, silently degraded to one arena).
+//     Codex 0.149 has no granular tmp-write grant for the read-only profile
+//     (probed; the `sandbox_permissions` help example is ignored), so
+//     workspace-write is the narrowest profile whose init survives. The tree
+//     fingerprint below is therefore the read-only enforcement, not just an
+//     audit trail: a changed tree fails the run.
 //   * The sandbox and the range arrive through `--config` and the prompt because
 //     `codex exec review` accepts neither `--sandbox` nor `--color` nor `--cd`;
 //     those belong to `codex exec` and its `review` subcommand rejects them.
@@ -32,7 +38,8 @@
 //
 // Exit 0: JSON receipt {ok: true, result: "<final message>", ...}.
 // Exit 1: {ok: false, reason, ...}.
-import { mkdtempSync, openSync, closeSync, existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdtempSync, openSync, closeSync, existsSync, lstatSync, readFileSync, readlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gitRunner, optionReader, receiptEmitter, supervise } from './headless-run.mjs';
@@ -65,8 +72,34 @@ if (selectors.length !== 1) {
 }
 
 const git = gitRunner(cwd);
-const fingerprint = () => git('diff', 'HEAD', '--binary').stdout;
+// Tracked drift alone misses a reviewer that CREATES files: `git diff HEAD`
+// never sees untracked paths. The fingerprint therefore hashes every
+// non-ignored untracked file too, and a fingerprint that cannot be computed is
+// null — enforcement that cannot read the tree proves nothing. lstat first,
+// and only regular files are read: readFileSync on an untracked FIFO would
+// block forever outside the supervisor's watchdog, and a symlink is
+// fingerprinted by its target, never followed.
+const fingerprint = () => {
+  const diff = git('diff', 'HEAD', '--binary');
+  const untracked = git('ls-files', '--others', '--exclude-standard', '-z');
+  if (diff.status !== 0 || untracked.status !== 0) return null;
+  const hashes = untracked.stdout.split('\0').filter(Boolean).sort().map((file) => {
+    const path = join(cwd, file);
+    try {
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) return `${file}:symlink:${readlinkSync(path)}`;
+      if (!stat.isFile()) return `${file}:special:${stat.mode}`;
+      return `${file}:file:${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
+    } catch {
+      return `${file}:unreadable`;
+    }
+  });
+  return `${diff.stdout}\n--untracked--\n${hashes.join('\n')}`;
+};
 const baselineTree = fingerprint();
+if (baselineTree == null) {
+  emit({ ok: false, reason: 'cannot fingerprint the working tree before the review' }, 1);
+}
 
 // Resolving here rather than in the prompt is the point: a ref that does not
 // exist fails now, with the reason, instead of becoming a review of the wrong
@@ -109,7 +142,8 @@ const composedPrompt = [
 const args = [
   'exec', 'review',
   '--json',
-  '--config', 'sandbox_mode="read-only"',
+  '--config', 'sandbox_mode="workspace-write"',
+  '--config', 'sandbox_workspace_write.network_access=false',
   '--output-last-message', lastMessagePath,
   ...(model ? ['--model', model] : []),
   composedPrompt,
@@ -119,12 +153,18 @@ const finish = (outcome) => {
   closeSync(logFd);
   const seconds = Math.round((Date.now() - startedAt) / 1000);
   const record = { command: ['codex', ...args], review_range: range, seconds, log: logPath, ...outcome };
-  // The sandbox is the enforcement; this is the audit trail. It never fails the
-  // run on its own — in a shared worktree an unrelated edit would read as
-  // review drift, and a false failure on a valid review costs more than a
-  // reported one the caller can check.
-  if (fingerprint() !== baselineTree) {
-    record.tree_changed = 'the working tree changed during a read-only review — inspect before trusting this diff';
+  // With a workspace-write sandbox, this fingerprint is what enforces
+  // read-only: a tree that changed under the review cannot prove the reviewer
+  // kept its hands off, so the run fails loudly instead of degrading silently.
+  const finalTree = fingerprint();
+  if (finalTree == null) {
+    record.tree_changed = 'cannot fingerprint the working tree after the review — inspect before trusting this diff';
+    record.ok = false;
+    record.reason = record.reason ?? 'tree fingerprint failed after a review that must stay read-only';
+  } else if (finalTree !== baselineTree) {
+    record.tree_changed = 'the working tree changed during the review — inspect before trusting this diff';
+    record.ok = false;
+    record.reason = record.reason ?? 'tree changed during a review that must stay read-only';
   }
   emit(record, record.ok ? 0 : 1);
 };

@@ -19,11 +19,17 @@ Published history is merged, never rebased or force-pushed.
 
 Use **executor delivery** by default. After the review fan-out and its correction
 round below, send a pair `task` that names the scope-approved SHA and explicitly
-tells the executor to use the installed `ship-it` skill. The executor must run
+tells the executor to use the installed `ship-it` skill. Size that send's
+`--total-min` to the repository's full local-CI entrypoint: the writable-task
+default is 120 minutes, and a repository whose CI alone approaches that needs
+more — the 2026-08-22 wave hang-killed two legitimate ship-it turns at the old
+60-minute default while `ci:local` was mid-run. The executor must run
 the proportional proof and graded review gate on the complete diff, push, open
 or update one PR against the recorded base, put the complete `## Delivery gate`
 receipt in the PR body, and return the PR URL, exact head SHA, check state, and
-review-checked timestamp.
+review-checked timestamp. Ship-it delegation carries no merge authority: the
+executor stops at merge-ready, and the PR stays held for the Hold or merge
+section below.
 
 Use **orchestrator-owned Git mechanics** only after the executor proves that
 its arena cannot reach Git metadata or the network. A failed command and its
@@ -102,16 +108,20 @@ scope and delivery on the new head.
 
 ## Hold or merge
 
-Use `hold` for visible UI, auth, payments, migrations, destructive data,
-public contracts, or open product judgment. Visible UI also needs before and
-after screenshots. A held PR stays open for Henrique's own review.
-Orchestrate never merges it, including with admin rights or after its own
-verification. Dependent units wait when this rule serializes them. Only
-Henrique's explicit approval moves that exact head to `auto`; a changed head
-needs fresh evidence and approval.
+Every unit PR is held for Henrique's own review before merge — including a PR
+whose base is an epic branch (decision 2026-08-22). The full delivery still
+runs first: second-arena fan-out, the ship-it gate, live evidence. The hold
+comes after all of it, never instead of it. Orchestrate never merges a
+PR he has not reviewed, including with admin rights or after its own
+verification; a recorded `auto` merge policy waits for the same review.
+Visible UI also needs before and after screenshots. Dependent units wait when
+this rule serializes them. His feedback on the held PR returns to the executor
+as a correction round and re-enters delivery on the new head. Only his
+explicit approval of that exact verified head authorizes the merge; a changed
+head needs fresh evidence and approval.
 
-For `auto`, merge in the repository's configured style with the verified head
-guard:
+After his approval, merge in the repository's configured style with the
+verified head guard:
 
 ```bash
 gh pr merge <number> --match-head-commit <verified-head> <repo-merge-flags>

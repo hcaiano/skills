@@ -16,6 +16,8 @@ writeFileSync(
   `#!/usr/bin/env node
 const fs = require("node:fs");
 const mode = process.env.FAKE_CLAUDE_MODE;
+// Record argv so the tests can assert the exact flags the wrapper builds.
+if (process.env.FAKE_CLAUDE_ARGV) fs.writeFileSync(process.env.FAKE_CLAUDE_ARGV, JSON.stringify(process.argv.slice(2)));
 const line = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
 line({ type: "system", subtype: "init" });
 if (mode === "ok") { line({ type: "result", is_error: false, result: "3 findings: ..." }); process.exit(0); }
@@ -39,7 +41,8 @@ if (mode === "mutate-and-die") {
 chmodSync(join(bin, "claude"), 0o755);
 
 const script = join(new URL(".", import.meta.url).pathname, "headless-claude.mjs");
-const env = (mode) => ({ ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_CLAUDE_MODE: mode });
+const argvLog = join(root, "argv.json");
+const env = (mode) => ({ ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_CLAUDE_MODE: mode, FAKE_CLAUDE_ARGV: argvLog });
 const runOk = (mode, ...args) =>
   JSON.parse(execFileSync(process.execPath, [script, ...args], { encoding: "utf8", env: env(mode) }));
 const runFail = (mode, ...args) => {
@@ -110,4 +113,16 @@ test("headless-claude survives a closed visible-output pipe", async () => {
   assert.equal(exit, 0);
   assert.equal(JSON.parse(stdout).ok, true);
   assert.equal(JSON.parse(readFileSync(receipt, "utf8")).result, "No findings");
+});
+
+test("the permission mode follows the lease: plan read-only, bypass writable", () => {
+  // acceptEdits still gates every command behind an approval no headless run
+  // can give; the writable leg runs bypassPermissions (decision 2026-08-22)
+  // and the wrapper's baseline/restore is the restraint.
+  runOk("ok", "/code-review");
+  const readOnly = JSON.parse(readFileSync(argvLog, "utf8"));
+  assert.equal(readOnly[readOnly.indexOf("--permission-mode") + 1], "plan");
+  runOk("ok", "/simplify", "--writable", "true");
+  const writable = JSON.parse(readFileSync(argvLog, "utf8"));
+  assert.equal(writable[writable.indexOf("--permission-mode") + 1], "bypassPermissions");
 });

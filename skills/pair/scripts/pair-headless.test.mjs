@@ -391,11 +391,7 @@ test("a plain directory supports the full headless pair lifecycle", () => {
   const sent = run("ok", "claude", "send", "--repo", plain, "--kind", "task", "--body-file", bodyFile("plain task"), "--write");
   assert.equal(sent.receipt.status, "replied");
   assert.equal(sent.receipt.seq, 1);
-  assert.ok(
-    invocations()[0].argv.includes(
-      `sandbox_workspace_write.writable_roots=${JSON.stringify([expectedPlace.stateDir])}`,
-    ),
-  );
+  assert.ok(invocations()[0].argv.includes('sandbox_mode="danger-full-access"'));
   const status = run("ok", "claude", "status", "--repo", plain).receipt;
   assert.equal(status.sid, CODEX_SID);
   assert.equal(status.seq, 1);
@@ -420,17 +416,18 @@ test("each turn's command matches the flags the installed CLIs accept", () => {
   );
   const resume = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true });
   // `codex exec resume` accepts neither -C nor -s, so the sandbox arrives as a
-  // config override and the directory through the spawn's cwd.
+  // config override and the directory through the spawn's cwd. Writable turns
+  // run the full bypass (danger-full-access) by the 2026-08-22 decision, and
+  // force approval_policy=never because the machine config may keep approvals
+  // on-request.
   assert.deepEqual(resume.args, [
     "exec",
     "resume",
     "S",
     "-c",
-    'sandbox_mode="workspace-write"',
+    'sandbox_mode="danger-full-access"',
     "-c",
-    'sandbox_workspace_write.writable_roots=["/repo"]',
-    "-c",
-    "sandbox_workspace_write.network_access=true",
+    'approval_policy="never"',
     "--json",
     "-o",
     "/r",
@@ -444,7 +441,10 @@ test("each turn's command matches the flags the installed CLIs accept", () => {
   assert.equal(claudeCreate.args.at(-1), "plan");
   const claudeResume = turnCommand({ partner: "claude", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: true });
   assert.deepEqual(claudeResume.args.slice(0, 3), ["-p", "--resume", "S"]);
-  assert.equal(claudeResume.args.at(-1), "acceptEdits");
+  // acceptEdits alone lets a headless partner edit but never validate — every
+  // Bash call would die on an approval nobody can give — so writable turns
+  // bypass permissions outright.
+  assert.deepEqual(claudeResume.args.slice(-2), ["--permission-mode", "bypassPermissions"]);
 });
 
 test("cursor, grok, and OpenCode turns carry each CLI's own mode and resume flags", () => {
@@ -457,9 +457,11 @@ test("cursor, grok, and OpenCode turns carry each CLI's own mode and resume flag
       promptVia: "stdin",
     },
   );
+  // --force is cursor's bypass; without it a writable headless turn stalls on
+  // command approvals.
   assert.deepEqual(
     turnCommand({ partner: "cursor", sid: "chat-1", resume: true, write: true }).args,
-    ["-p", "--trust", "--output-format", "stream-json", "--resume", "chat-1"],
+    ["-p", "--trust", "--output-format", "stream-json", "--resume", "chat-1", "--force"],
   );
   // Cursor parameterizes the model itself, so effort has nowhere to go without one.
   assert.equal(cursorModel(null, "high"), null);
@@ -477,9 +479,12 @@ test("cursor, grok, and OpenCode turns carry each CLI's own mode and resume flag
       promptVia: "file",
     },
   );
+  // Writable turns bypass and auto-approve together: acceptEdits made
+  // grok 1.0.5 cancel its own tool calls with no user present, so both of
+  // grok's asking paths are closed.
   assert.deepEqual(
     turnCommand({ partner: "grok", sid: "u-1", resume: true, promptFile: "/p", write: true }).args,
-    ["--prompt-file", "/p", "--output-format", "streaming-json", "--resume", "u-1", "--permission-mode", "acceptEdits"],
+    ["--prompt-file", "/p", "--output-format", "streaming-json", "--resume", "u-1", "--permission-mode", "bypassPermissions", "--always-approve"],
   );
 
   // OpenCode takes the prompt as the final argv item, which the runner adds
@@ -520,10 +525,16 @@ test("cursor, grok, and OpenCode turns carry each CLI's own mode and resume flag
 });
 
 test("every flag the five CLIs are sent is one they accept", (t) => {
+  // Both leases per CLI: the writable bypass flags (--force, --always-approve,
+  // --auto) only appear on write turns, so a read-only-only sweep never
+  // exercises them against the installed help.
   const surfaces = [
     ["cursor-agent", ["--help"], turnCommand({ partner: "cursor", sid: "S", resume: true, write: false }).args],
+    ["cursor-agent", ["--help"], turnCommand({ partner: "cursor", sid: "S", resume: true, write: true }).args],
     ["grok", ["--help"], turnCommand({ partner: "grok", sid: "S", resume: true, promptFile: "/p", write: false }).args],
+    ["grok", ["--help"], turnCommand({ partner: "grok", sid: "S", resume: true, promptFile: "/p", write: true }).args],
     ["opencode", ["run", "--help"], turnCommand({ partner: "opencode", sid: "S", resume: true, root: "/repo", write: false, effort: "high" }).args],
+    ["opencode", ["run", "--help"], turnCommand({ partner: "opencode", sid: "S", resume: true, root: "/repo", write: true, effort: "high" }).args],
   ];
   for (const [binary, helpArgs, args] of surfaces) {
     const help = spawnSync(binary, helpArgs, { encoding: "utf8" });
@@ -549,9 +560,11 @@ test("every flag the helper sends is one the installed CLIs accept", (t) => {
   const accepted = new Set(help.stdout.match(/--[a-z][a-z-]+/gu));
   accepted.add("-c");
   accepted.add("-o");
-  const { args } = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write: false });
-  for (const token of args.filter((part) => part.startsWith("-") && part !== "-")) {
-    assert.ok(accepted.has(token), `codex exec resume does not accept ${token}`);
+  for (const write of [false, true]) {
+    const { args } = turnCommand({ partner: "codex", sid: "S", resume: true, replyFile: "/r", root: "/repo", write });
+    for (const token of args.filter((part) => part.startsWith("-") && part !== "-")) {
+      assert.ok(accepted.has(token), `codex exec resume does not accept ${token}`);
+    }
   }
   assert.match(help.stdout, /--json[\s\S]*JSONL/u);
 
@@ -755,33 +768,26 @@ test("send resumes the exact session, sequences it, and returns the reply", () =
   assert.equal(second.receipt.seq, 2);
 });
 
-test("--write is the only thing that opens the sandbox for a turn", () => {
+test("--write is the only thing that lifts the sandbox for a turn", () => {
   const repo = newRepo("write-lease");
   run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
   run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("implement"), "--write");
-  assert.deepEqual(invocations()[0].argv.slice(3, 9), [
-    "-c",
-    'sandbox_mode="workspace-write"',
-    "-c",
-    `sandbox_workspace_write.writable_roots=${JSON.stringify([join(realpathSync(repo), ".git")])}`,
-    "-c",
-    "sandbox_workspace_write.network_access=true",
-  ]);
+  // Writable turns run the full bypass — no writable-roots plumbing to get
+  // wrong per machine — and only --write selects it.
+  assert.deepEqual(invocations()[0].argv.slice(3, 7), ["-c", 'sandbox_mode="danger-full-access"', "-c", 'approval_policy="never"']);
+  const reviewed = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("look"));
+  assert.equal(reviewed.receipt.write, false);
+  assert.deepEqual(invocations()[0].argv.slice(3, 5), ["-c", 'sandbox_mode="read-only"']);
 });
 
-test("a Codex write turn opens the linked worktree's Git common directory", () => {
-  const { repo, worktree } = newLinkedWorktree("linked-sandbox");
+test("a linked worktree holds its own pair session", () => {
+  const { repo, worktree } = newLinkedWorktree("linked-state");
   run("ok", "claude", "init", "--repo", worktree, "--partner", "codex");
-  run("ok", "claude", "send", "--repo", worktree, "--kind", "task", "--body-file", bodyFile("commit from the worktree"), "--write");
-
   const place = locate(worktree);
-  assert.equal(place.writableRoot, join(realpathSync(repo), ".git"));
-  assert.ok(
-    invocations()[0].argv.includes(
-      `sandbox_workspace_write.writable_roots=${JSON.stringify([place.writableRoot])}`,
-    ),
-  );
-  assert.ok(invocations()[0].argv.includes("sandbox_workspace_write.network_access=true"));
+  assert.ok(place.stateDir.includes(join(".git", "worktrees")), `worktree state stays in its own git dir: ${place.stateDir}`);
+  // The main checkout is a different pair slot: no session recorded there.
+  const status = run("ok", "claude", "status", "--repo", repo).receipt;
+  assert.match(status.reason, /no pair session/u);
 });
 
 test("send refuses a body or kind the protocol does not define", () => {
@@ -999,20 +1005,55 @@ test("a scheduled Grok fork commits only after the new session is proved", () =>
   assert.ok(invocations()[0].argv.includes(scheduled.pending_sid));
 });
 
-test("a cancelled fork commits the proved new sid and counts the cancellation", () => {
+test("a cancelled fork commits the proved new sid and ends the ladder at capability miss", () => {
   const repo = newRepo("grok-fork-cancelled");
   const created = run("ok", "claude", "init", "--repo", repo, "--partner", "grok").receipt;
   const scheduled = run("ok", "claude", "fork", "--repo", repo).receipt;
   const cancelled = run("cancel", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("continue")).receipt;
   assert.equal(cancelled.status, "failed");
   assert.equal(cancelled.reason, "grok-cancelled");
+  // A fork is the cure for cancellations, so cancellation on the proved fresh
+  // fork is the ladder's terminal state: restaff, never another fork.
+  assert.match(cancelled.recovery, /capability miss[\s\S]*restaff[\s\S]*do not fork again/u);
   const status = run("ok", "claude", "status", "--repo", repo).receipt;
   assert.equal(status.sid, scheduled.pending_sid);
   assert.equal(status.pending_fork, null);
   assert.equal(status.grok_cancelled_consecutive, 1);
+  assert.match(status.capability_miss, /fresh forked session/u);
   assert.deepEqual(status.forked.map(({ sid, successor_sid: successorSid }) => ({ sid, successorSid })), [
     { sid: created.sid, successorSid: scheduled.pending_sid },
   ]);
+  const refused = run("ok", "claude", "fork", "--repo", repo).receipt;
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason, /capability miss[\s\S]*restaff/u);
+  // A turn that fails for another reason proves nothing about the
+  // cancellation behavior: the miss stays and fork stays refused.
+  const failed = run("fail", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("probe")).receipt;
+  assert.equal(failed.status, "failed");
+  assert.match(run("ok", "claude", "status", "--repo", repo).receipt.capability_miss, /fresh forked session/u);
+  assert.match(run("ok", "claude", "fork", "--repo", repo).receipt.reason, /capability miss/u);
+  // Only a successful replied turn is contrary evidence: it clears the miss
+  // so a recovered session forks again.
+  const recovered = run("ok", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("health")).receipt;
+  assert.equal(recovered.status, "replied");
+  assert.equal(run("ok", "claude", "status", "--repo", repo).receipt.capability_miss, null);
+  assert.equal(run("ok", "claude", "fork", "--repo", repo).receipt.status, "fork-scheduled");
+});
+
+test("cancellations recurring after a committed fork advise restaff, not another fork", () => {
+  const repo = newRepo("grok-post-fork-cancels");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "grok");
+  run("ok", "claude", "fork", "--repo", repo);
+  const forked = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("continue")).receipt;
+  assert.equal(forked.status, "replied");
+  const send = () => run("cancel", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go")).receipt;
+  assert.equal(send().recovery, undefined);
+  const second = send();
+  // Without the fork history this would advise a fork; with it, the loop ends.
+  assert.match(second.recovery, /capability miss[\s\S]*restaff[\s\S]*do not fork again/u);
+  const refused = run("ok", "claude", "fork", "--repo", repo).receipt;
+  assert.equal(refused.ok, false);
+  assert.match(refused.reason, /capability miss/u);
 });
 
 test("a failed fork keeps recovery state and retry chooses a fresh target", () => {
@@ -1075,7 +1116,7 @@ test("a grok partner is handed the session id it will resume, and reads its prom
   assert.equal(sent.status, "replied");
   assert.equal(sent.write, true);
   const resumed = invocations()[0];
-  assert.deepEqual(resumed.argv.slice(2), ["--output-format", "streaming-json", "--resume", created.sid, "--permission-mode", "acceptEdits"]);
+  assert.deepEqual(resumed.argv.slice(2), ["--output-format", "streaming-json", "--resume", created.sid, "--permission-mode", "bypassPermissions", "--always-approve"]);
   assert.equal(resumed.stdin, `[agent claude -> grok kind=task sid=${created.sid}]\n\nimplement\n`);
   const reviewed = run("ok", "claude", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("look"), "--read-only").receipt;
   assert.equal(reviewed.write, false);
