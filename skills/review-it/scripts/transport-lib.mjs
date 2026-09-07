@@ -1,15 +1,4 @@
-// What both transport backends need identically. They parse the same argv and
-// write the same completion receipt, and that sameness is load-bearing: it is
-// what lets the gate's later steps stop caring which transport ran.
-//
-// It used to be maintained by copy-paste, and it had already drifted — the
-// receipt shape was two hand-written object literals in two files, so a field
-// the contract required could go missing from both without any test noticing.
-// One writer makes the claim structural instead of aspirational.
-//
-// `fail` is injected rather than shared because the two callers genuinely
-// differ: herdr-visible-run.mjs closes its pane and removes its command file
-// first, run-transport.mjs has neither to clean up.
+// Shared transport arguments and receipts. Callers supply fail() to run their own cleanup.
 import { readFileSync } from 'node:fs';
 
 export const sleepSync = (milliseconds) =>
