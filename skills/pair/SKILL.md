@@ -1,6 +1,6 @@
 ---
 name: pair
-description: "Persistent two-agent pairing across claude, codex, cursor, grok, and opencode, in a Herdr tab or headless outside it. Use for live peer work, workflows requesting a pair, any inbound `[agent ...]` / `[herdr-pair control ...]` line, resuming a pair after context compaction, or pairing with another CLI when Herdr is absent."
+description: "Pair persistently with another coding agent. Use for live peer work, inbound `[agent ...]` or `[herdr-pair control ...]` messages, and resuming a pair after context compaction."
 ---
 
 # Pair
@@ -39,21 +39,13 @@ nothing until they answer. Read pool
 state first and do not recommend a protected or unavailable pool. The user may
 explicitly choose a protected pool after you state its use, pace, and reset:
 
-- **Partner**: which of the five CLIs, other than yours. A Codex partner may
+- **Partner**: a CLI allowed by the transport rule above. A Codex partner may
   also name an **identity**, the account it runs as; `default` is `~/.codex`
   and a named one is `~/.codex-profiles/<name>`.
-- **Model**: `CLI default`, an exact model name, or a family as
-  `latest:<family>`. When choosing a
-  model, effort, or pool, read [`references/models.md`](references/models.md);
-  it owns the risk, speed, context, catalog, and effort rubric. For a cursor
-  partner run `cursor-agent --list-models`; for Grok run `grok models`; for
-  OpenCode run `opencode models`; for the others take the user's answer as
-  given.
-- **Effort**: only for a partner that exposes it — Claude Code
-  (`--effort low|medium|high|xhigh|max`), grok (`--reasoning-effort`), codex
-  (`model_reasoning_effort`), or cursor (an `[effort=…]` suffix on the model
-  name, so it needs a model too), or OpenCode (`--variant` on headless
-  `opencode run`; its Herdr TUI does not expose this flag).
+- **Model and effort**: `CLI default`, an exact model, or `latest:<family>`,
+  with effort supported by that model and backend. Read
+  [`references/models.md`](references/models.md) for family selection, live
+  catalog lookup, effort controls, and account capacity.
 
 The **role** is the last choice, asked only when nothing has set it; it
 decides who holds the write leases by default:
@@ -72,13 +64,19 @@ and a different one means a new pair.
 
 Read one backend reference in full and follow it:
 
+- Resume through the recorded backend. An explicit headless request, or an
+  orchestrate unit recorded as headless, uses the [Headless backend](references/headless.md)
+  even inside Herdr. For a new pair needing `latest:<family>` or a named Codex
+  identity inside Herdr, offer that explicit headless route.
 - `HERDR_ENV=1` → [Herdr backend](references/herdr.md). Its preconditions
   own the `herdr` CLI check: a Herdr environment missing the CLI stops there
   instead of falling through to a hidden headless session.
 - Otherwise → [Headless backend](references/headless.md).
 
-An inbound `[agent ...]` or `[herdr-pair control ...]` line always means the
-Herdr backend, whatever else the environment looks like.
+A `[herdr-pair control ...]` line identifies Herdr. An `[agent ...]` header is
+shared by both transports: use the recorded session to choose its backend.
+Done when the selected session and its backend agree; report ambiguous state
+before sending a message.
 
 ## Protocol
 

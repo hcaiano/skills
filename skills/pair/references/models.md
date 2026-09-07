@@ -224,8 +224,7 @@ Effort describes the reasoning budget, not the model's identity:
 
 Four seat caveats override the ladders:
 
-- Sol `ultra` is an in-weights multi-subagent delegation mode, not an effort
-  value. Never set it by default.
+- Sol `ultra` requires explicit user selection and support in the live catalog.
 - Fable max has an overthinking regression on short tasks.
 - Opus high is suitable for design review; use medium for UI diffs.
 - Luna `max` is the setting for bounded execution under external planning and

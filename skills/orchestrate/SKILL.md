@@ -115,6 +115,10 @@ invocation runs. Durable records support manual resume, not automatic wakeups
 after the lead stops. Native T3 thread creation and remote preview access must
 be verified before promising them; current transports are Herdr and headless.
 
+Done when every admitted issue has one agreed plan, explicit acceptance proof,
+satisfied dependencies and a non-overlapping write scope, and the batch fits
+the measured capacity. Report excluded or blocked issues with their reason.
+
 ## Staff and create
 
 Read [staffing](references/staffing.md) before every wave. It owns arena,

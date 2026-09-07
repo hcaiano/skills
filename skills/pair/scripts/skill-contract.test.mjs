@@ -24,26 +24,23 @@ test("the skill routes to exactly one backend", () => {
   assert.match(skill, /Otherwise → \[Headless backend\]\(references\/headless\.md\)/u);
   assert.match(
     skill,
-    /An inbound `\[agent \.\.\.\]` or `\[herdr-pair control \.\.\.\]` line always means the\s+Herdr backend/u,
+    /An `\[agent \.\.\.\]` header is\s+shared by both transports: use the recorded session/u,
   );
+  assert.match(skill, /explicit headless request/u);
+  assert.match(skill, /`\[herdr-pair control \.\.\.\]` line identifies Herdr/u);
 });
 
 test("the description carries every trigger", () => {
   const description = skill.match(/^description: "(.+)"$/mu)[1];
   for (const trigger of [
     /live peer work/u,
-    /workflows requesting a pair/u,
-    /`\[agent \.\.\.\]` \/ `\[herdr-pair control \.\.\.\]` line/u,
+    /Pair persistently/u,
+    /`\[agent \.\.\.\]` or `\[herdr-pair control \.\.\.\]` messages/u,
     /after context compaction/u,
-    /when Herdr is absent/u,
   ]) {
     assert.match(description, trigger);
   }
-  // The pair is no longer two fixed CLIs, and the description is where each
-  // supported harness finds that out.
-  for (const kind of ["claude", "codex", "cursor", "grok", "opencode"]) {
-    assert.match(description, new RegExp(`\\b${kind}\\b`, "u"));
-  }
+  // Provider details belong in the body; the pointer carries trigger branches.
   assert.doesNotMatch(description, /Claude-Codex/u);
 });
 
@@ -102,9 +99,9 @@ test("an existing pair is capacity-checked and never respawned to change its mod
     /respawning discards the pair's whole\s+history, and a model is changed by ending the pair/u,
   );
   // No hardcoded catalog: cursor's own list is the catalog.
-  assert.match(skill, /cursor-agent --list-models/u);
-  assert.match(skill, /grok models/u);
-  assert.match(skill, /opencode models/u);
+  assert.match(models, /cursor-agent --list-models/u);
+  assert.match(models, /grok models/u);
+  assert.match(models, /opencode models/u);
   assert.match(skill, /`CLI default`/u);
   assert.match(skill, /references\/models\.md/u);
   assert.match(models, /Risk/u);
@@ -115,7 +112,7 @@ test("an existing pair is capacity-checked and never respawned to change its mod
   assert.match(models, /A Codex pair spawn always\s+sets\s+effort\s+explicitly, including medium/u);
   assert.match(models, /SKILL_DIR[\s\S]*usage-state\.mjs/u);
   // Claude Code has an effort door; the backend and prose must carry it.
-  assert.match(skill, /Claude Code\s+\(`--effort low\|medium\|high\|xhigh\|max`\)/u);
+  assert.match(skill, /effort controls, and account capacity/u);
   assert.match(models, /Claude Code accepts\s+`--effort low\|medium\|high\|xhigh\|max`/u);
   assert.match(headlessBackend, /Claude receives\s+`--effort low\|medium\|high\|xhigh\|max`/u);
   assert.match(headlessHelper, /EFFORT_SUPPORT = \{ claude: true/u);
@@ -244,7 +241,7 @@ test("the roster is the single editable model preference source, by family", () 
 
   assert.match(effort, /per-seat guidance in Seats por papel overrides these generic ladders/u);
   assert.match(effort, /checked\s+against the catalog's effort list for the resolved model/u);
-  assert.match(effort, /Sol `ultra`[\s\S]*multi-subagent delegation mode[\s\S]*Never set it by default/u);
+  assert.match(effort, /Sol `ultra` requires explicit user selection and support in the live catalog/u);
   assert.match(effort, /Fable max has an overthinking regression/u);
   assert.match(effort, /Opus high is suitable for design review[\s\S]*medium for UI diffs/u);
   assert.match(effort, /Luna `max` is the setting for bounded execution under external planning and\s+review/u);
