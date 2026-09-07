@@ -72,9 +72,16 @@ const readCursorUsage = () => new Promise((resolve) => {
   // `script` supplies the TTY required by Cursor's native /usage command. The
   // command reads account state and never starts a model turn.
   const quoted = `'${cursorBin.replaceAll("'", "'\\''")}'`;
+  const command = `stty cols 120 rows 40; exec ${quoted}`;
+  // BSD script rejects Node's socket-backed stdin. Bash supplies a real pipe,
+  // then exec keeps script as the supervised PID.
+  const darwin = process.platform === 'darwin';
+  const scriptArgs = darwin
+    ? ['-c', 'exec /usr/bin/script -q /dev/null /bin/sh -c "$1" < <(cat)', 'cursor-usage', command]
+    : ['-qfec', command, '/dev/null'];
   const child = spawn(
-    'script',
-    ['-qfec', `stty cols 120 rows 40; exec ${quoted}`, '/dev/null'],
+    darwin ? '/bin/bash' : 'script',
+    scriptArgs,
     { stdio: ['pipe', 'pipe', 'ignore'] },
   );
   let output = '';
@@ -84,6 +91,7 @@ const readCursorUsage = () => new Promise((resolve) => {
     if (settled) return;
     settled = true;
     for (const timer of timers) clearTimeout(timer);
+    child.stdin.destroy();
     try { child.kill('SIGTERM'); } catch {}
     const text = output.replace(ansi, '');
     const values = Object.fromEntries(
