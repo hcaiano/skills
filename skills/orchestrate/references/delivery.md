@@ -120,6 +120,15 @@ as a correction round and re-enters delivery on the new head. Only his
 explicit approval of that exact verified head authorizes the merge; a changed
 head needs fresh evidence and approval.
 
+For a browser flow, the executor first exercises the acceptance path itself.
+Hand off the exact preview URL and route, the tested commit, test-data or login
+prerequisites, the actions Henrique should try, and remaining limitations.
+Verify that the link is reachable through the user's existing Mac/mobile remote
+access path; a Linux localhost URL alone is not that proof. Keep the preview
+process recorded with a cleanup instruction. A short video helps for motion or
+multi-step flows; screenshots suffice for static changes. Redact private data
+from evidence. If preview access cannot be proved, report that gap explicitly.
+
 After his approval, merge in the repository's configured style with the
 verified head guard:
 

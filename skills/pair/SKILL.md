@@ -6,14 +6,14 @@ description: "Persistent two-agent pairing across claude, codex, cursor, grok, a
 # Pair
 
 Pair two agents on one task: you are the **lead**, and the partner is one of
-`claude`, `codex`, `cursor`, `grok`, or `opencode` — any of them except the CLI you are
-already running, because two panes of one CLI echo rather than review. Keep the
+`claude`, `codex`, `cursor`, `grok`, or `opencode`. The transports require a
+different CLI, except headless Codex can use a different account home selected
+with `--identity <name>`. The helper proves home separation; separate accounts
+do not themselves guarantee independent reasoning. Two different harnesses may use the
+same underlying model or provider and still form a valid pair. Keep the
 pair and its `sid` alive across tasks, accepted work cycles, and context
 compaction, naming its `sid` in every command — one lead can run several
 pairs at once. Keep protocol headers and identifiers literal.
-
-The refusal is based only on the CLI kind. Two different harnesses may use the
-same underlying model or provider and still form a valid pair.
 
 Two backends carry the same protocol. Inside Herdr the partner is a visible
 pane the user can read and interject in; outside it the partner is a persistent
@@ -31,13 +31,19 @@ another partner. When its partner, model, or effort differs from what the user
 just asked for, say so and keep going — respawning discards the pair's whole
 history, and a model is changed by ending the pair, not by restarting its pane.
 
-With no pair to resume, ask the user in plain chat text — no structured-question
-tool needed — for three things, and start nothing until they answer. Read pool
+With no pair to resume, take every choice the user or an orchestrate unit has
+already made — partner, model, effort, identity, role — as final and do not
+ask for it again. Ask the user in plain chat text — no structured-question
+tool needed — only for a material choice that is still missing, and start
+nothing until they answer. Read pool
 state first and do not recommend a protected or unavailable pool. The user may
 explicitly choose a protected pool after you state its use, pace, and reset:
 
-- **Partner**: which of the five CLIs, other than yours.
-- **Model**: `CLI default`, or any model name they name. When choosing a
+- **Partner**: which of the five CLIs, other than yours. A Codex partner may
+  also name an **identity**, the account it runs as; `default` is `~/.codex`
+  and a named one is `~/.codex-profiles/<name>`.
+- **Model**: `CLI default`, an exact model name, or a family as
+  `latest:<family>`. When choosing a
   model, effort, or pool, read [`references/models.md`](references/models.md);
   it owns the risk, speed, context, catalog, and effort rubric. For a cursor
   partner run `cursor-agent --list-models`; for Grok run `grok models`; for
@@ -49,15 +55,18 @@ explicitly choose a protected pool after you state its use, pace, and reset:
   name, so it needs a model too), or OpenCode (`--variant` on headless
   `opencode run`; its Herdr TUI does not expose this flag).
 
-Then ask for the **role**, which sets who holds the write leases by default:
+The **role** is the last choice, asked only when nothing has set it; it
+decides who holds the write leases by default:
 
 - `peer` (default): equals. Split scopes, one lease per scope, review each
   other's `ready`.
 - `executor`: the partner holds the write leases and implements; you plan and
   review. Any individual `task` still redistributes leases.
 
-The backend records partner, model, effort, and role in the session, so a
-resumed pair keeps them without asking again.
+The backend records partner, model, effort, identity, and role in the session,
+so a resumed pair keeps them without asking again. The headless backend also
+records the exact model the request resolved to; a session keeps that model,
+and a different one means a new pair.
 
 ## Choose the backend
 

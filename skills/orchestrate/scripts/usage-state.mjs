@@ -15,13 +15,14 @@
 //   short_window     the pool's burst limit, when it publishes one
 //   stale_minutes    age of the snapshot; a stale pool reads cooler than it is
 // Claude source: ~/.claude/usage-state.json (written by the user's statusline).
-// Codex source: newest plan-pool rate_limits snapshot in ~/.codex/sessions/**/*.jsonl.
+// Codex source: per-home session snapshots; --live adds read-only account RPC.
 // Cursor source: the logged-in CLI's native /usage command. In its current UI,
 // "Auto" is the Cursor Models pool and "API" is the Other Models pool.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { codexRead, listCodexHomes } from '../../pair/scripts/codex-rpc.mjs';
 
 const WEEK_MINUTES = 10080;
 const WEEK_HOURS = WEEK_MINUTES / 60;
@@ -176,6 +177,7 @@ const tail = (file, bytes) => {
   } finally { fs.closeSync(fd); }
 };
 
+const readCodexSnapshot = (codexHome) => {
 let codex = null;
 try {
   const files = [];
@@ -186,7 +188,7 @@ try {
       else if (e.name.endsWith('.jsonl')) files.push({ f, m: fs.statSync(f).mtimeMs });
     }
   };
-  walk(path.join(os.homedir(), '.codex', 'sessions'));
+  walk(path.join(codexHome, 'sessions'));
   files.sort((a, b) => b.m - a.m);
   // Sessions may run promo/free lanes with their own limit_id (e.g.
   // "codex_bengalfox"); only limit_id "codex" is the plan's weekly pool.
@@ -233,6 +235,60 @@ try {
     stale_minutes: Math.round((Date.now() - best.at) / 60000),
   };
 } catch {}
+return codex;
+};
+
+const live = process.argv.slice(2).includes('--live');
+const unknownArgs = process.argv.slice(2).filter((arg) => arg !== '--live');
+if (unknownArgs.length) throw new Error('usage: usage-state.mjs [--live]');
+const homes = listCodexHomes();
+
+const measuredPool = (reading) => {
+  const limits = reading.rateLimitsByLimitId?.codex ?? reading.rateLimits;
+  if (!limits || (limits.limitId && limits.limitId !== 'codex')) return null;
+  const windows = [limits.primary, limits.secondary].filter(Boolean);
+  const week = windows.find((w) => w.windowDurationMins === WEEK_MINUTES);
+  if (!week || !Number.isFinite(week.usedPercent) || week.usedPercent < 0 || week.usedPercent > 100) return null;
+  const weekly = pace(week.usedPercent, hoursUntil(week.resetsAt));
+  if (!weekly) return null;
+  const burst = windows.find((w) => w.windowDurationMins < WEEK_MINUTES);
+  return { ...weekly, stale_minutes: 0,
+    short_window: burst ? burstWindow(burst.usedPercent, burst.resetsAt) : null };
+};
+const poolState = (pool) => {
+  if (!pool) return 'unknown';
+  if (pool.used_percent >= 90 || pool.short_window?.used_percent >= 90) return 'unavailable';
+  if (pool.pace > 1) return 'protected';
+  if (pool.stale_minutes == null || pool.stale_minutes > 15) return 'unknown';
+  return 'available';
+};
+const codexIdentities = {};
+const seenHomes = new Set();
+for (const [identity, home] of Object.entries(homes)) {
+  let canonical = home;
+  try { canonical = fs.realpathSync(home); } catch {}
+  if (seenHomes.has(canonical)) continue;
+  seenHomes.add(canonical);
+  let pool = readCodexSnapshot(canonical);
+  let source = 'session-snapshot';
+  let liveError = null;
+  if (live) {
+    try {
+      if (!fs.statSync(canonical).isDirectory()) throw new Error('home missing');
+      pool = measuredPool(await codexRead('account/rateLimits/read', {}, { codexHome: canonical }));
+      source = 'account/rateLimits/read';
+    } catch {
+      liveError = 'live quota unavailable; snapshot is not current account proof';
+    }
+  }
+  codexIdentities[identity] = { home: canonical, pool, source,
+    state: liveError ? (['protected', 'unavailable'].includes(poolState(pool)) ? poolState(pool) : 'unknown') : poolState(pool),
+    ...(liveError ? { error: liveError } : {}) };
+}
+const eligible = Object.entries(codexIdentities).filter(([, entry]) => entry.state === 'available');
+eligible.sort(([, a], [, b]) => (a.pool.pace ?? 1) - (b.pool.pace ?? 1) || a.pool.used_percent - b.pool.used_percent);
+const codex = codexIdentities.default?.pool ?? null;
 
 const cursor = await readCursorUsage();
-console.log(JSON.stringify({ claude, codex, cursor }));
+console.log(JSON.stringify({ claude, codex, cursor, codex_identities: codexIdentities,
+  recommended_codex_identity: eligible[0]?.[0] ?? null }));

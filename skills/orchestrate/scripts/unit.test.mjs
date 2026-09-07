@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmdirSync,
   symlinkSync,
   unlinkSync,
@@ -69,7 +70,7 @@ if (command === "init") {
   const count = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) + 1 : 1;
   writeFileSync(counterPath, String(count));
   const baseSid = "sid-" + partner + "-" + gitDir.split("/").at(-1);
-  const state = {ok:true,sid:baseSid + (count === 1 ? "" : "-" + count),partner,role:"executor",model:option("model"),effort:option("effort"),seq:0,forked:[]};
+  const state = {ok:true,sid:baseSid + (count === 1 ? "" : "-" + count),partner,identity:option("identity") || "default",role:"executor",model:option("model"),effort:option("effort"),seq:0,forked:[]};
   writeFileSync(statePath, JSON.stringify(state));
   if (process.env.FAKE_PAIR_BAD_INIT_RESPONSE_PARTNER === partner) emit({...state,model:"forced-wrong-model"});
   emit(state);
@@ -252,7 +253,12 @@ emit({ok:false,reason:"unsupported " + command}, 2);
 writeFileSync(join(bin, "gh"), `#!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 const args = process.argv.slice(2);
+if (process.env.FAKE_GH_FAIL === "1") { console.error("offline"); process.exit(1); }
+if (args[0] === "issue") { console.log(process.env.FAKE_GH_ISSUES || "[]"); process.exit(0); }
 const branch = args[args.indexOf("--head") + 1];
+if ((process.env.FAKE_GH_HELD || "").split(",").includes(branch)) {
+  console.log(JSON.stringify([{number:2,url:"https://example.test/pr/2",state:"OPEN",isDraft:false}])); process.exit(0);
+}
 const merged = (process.env.FAKE_GH_MERGED || "").split(",").includes(branch);
 const head = spawnSync("git", ["rev-parse", "refs/heads/" + branch], {encoding:"utf8"}).stdout.trim();
 console.log(JSON.stringify(merged ? [{number:1,url:"https://example.test/pr/1",state:"MERGED",mergedAt:"2026-08-19T00:00:00Z",headRefOid:head,baseRefName:"main",isDraft:false}] : []));
@@ -429,6 +435,67 @@ test("create journals a durable unit and starts an executor pair", () => {
   );
 });
 
+test("named Codex identity crosses create, status and restaff without losing the issue", () => {
+  const args = [...createArgs("identity-route"), "--identity", "second", "--issue", "123"];
+  args[args.indexOf("--lead") + 1] = "codex";
+  const created = invoke(args);
+  assert.equal(created.status, 0, JSON.stringify(created.output));
+  assert.equal(created.output.unit.staffing.current.identity, "second");
+  assert.equal(created.output.unit.observed.pair.identity, "second");
+  assert.equal(created.output.unit.issue, 123);
+  const status = invoke(["status", "--repo", repository, "--unit", "identity-route"]);
+  assert.equal(status.output.unit.observed.pair.identity, "second");
+  const restaff = [...restaffArgs("identity-route", "codex"), "--identity", "third"];
+  restaff[restaff.indexOf("--lead") + 1] = "codex";
+  const restaffed = invoke(restaff);
+  assert.equal(restaffed.status, 0, JSON.stringify(restaffed.output));
+  assert.equal(restaffed.output.unit.staffing.current.identity, "third");
+  assert.equal(restaffed.output.unit.staffing.history[0].identity, "second");
+  assert.equal(restaffed.output.unit.issue, 123);
+  const duplicate = invoke([...createArgs("same-issue"), "--issue", "123"]);
+  assert.notEqual(duplicate.status, 0);
+  assert.match(duplicate.output.reason, /conflicts with recorded unit/u);
+  const herdr = invoke([...herdrCreateArgs("identity-herdr"), "--identity", "second", "--backend", "herdr"]);
+  assert.equal(herdr.status, 2);
+  assert.match(herdr.output.reason, /named identities currently require/u);
+});
+
+test("intake closes on a full human review queue or unknown PR evidence", () => {
+  const isolated = mkdtempSync(join(root, "intake-"));
+  git(isolated, "init", "-b", "main");
+  const units = join(isolated, ".git", "orchestrate", "units");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "one.json"), JSON.stringify({unit_id:"one",branch:"feat/one",issue:7,lifecycle:"working"}));
+  const args = ["intake", "--repo", isolated, "--label", "ready-for-agent", "--max-held", "1"];
+  const env = {FAKE_GH_HELD:"feat/one",FAKE_GH_ISSUES:JSON.stringify([{number:7},{number:8}])};
+  const result = invoke(args, env);
+  assert.equal(result.status, 0, JSON.stringify(result.output));
+  assert.equal(result.output.capacity.held, 1);
+  assert.equal(result.output.capacity.slots, 0);
+  assert.deepEqual(result.output.candidates.map((issue) => issue.number), [8]);
+  const offline = invoke(args, {FAKE_GH_FAIL:"1"});
+  assert.notEqual(offline.status, 0);
+  assert.match(offline.output.reason, /admission paused: cannot read live PR state/u);
+  const create = createArgs("over-held");
+  create[create.indexOf("--repo") + 1] = isolated;
+  const blocked = invoke([...create,"--max-active","2","--max-held","1"], env);
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.output.reason, /human-review limit reached/u);
+  assert.equal(existsSync(join(root, "worktree-over-held")), false);
+  const active = invoke([...create,"--max-active","1","--max-held","2"]);
+  assert.notEqual(active.status, 0);
+  assert.match(active.output.reason, /limit reached/u);
+});
+
+test("a headless Cursor family carries effort to the catalog resolver", () => {
+  const args = createArgs("cursor-family", "cursor");
+  args[args.indexOf("--model") + 1] = "latest:fable";
+  const created = invoke(args);
+  assert.equal(created.status, 0, JSON.stringify(created.output));
+  assert.equal(created.output.unit.observed.pair.model, "latest:fable");
+  assert.equal(created.output.unit.observed.pair.effort, "high");
+});
+
 test("create refuses --merge-policy: every unit PR holds for Henrique's review", () => {
   const refused = invoke([...createArgs("merge-policy-refused"), "--merge-policy", "auto"]);
   assert.notEqual(refused.status, 0);
@@ -492,7 +559,7 @@ test("Herdr backend is recorded and routes the unit through pinned pair commands
   assert.equal(spawnCalls.length, 2);
   assert.equal(
     spawnCalls[0].args[spawnCalls[0].args.indexOf("--partner-repo-root") + 1],
-    join(root, `worktree-${id}`),
+    join(realpathSync(root), `worktree-${id}`),
   );
   assert.equal(spawnCalls[0].args.includes("--autonomy"), true);
   const initCall = calls.find((entry) => entry.command === "init");

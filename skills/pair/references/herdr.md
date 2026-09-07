@@ -73,6 +73,12 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    the executor in a different unit worktree. Omit it for an ordinary pair in
    one repository.
 
+   A pane runs the tab's own login and takes the model literally, so this
+   backend has no account identities and no family resolution: `spawn` and
+   `init` refuse `--identity` other than `default` and any `--model latest…`.
+   Name an exact model ID from the live catalog here; use the headless backend
+   for a named Codex account.
+
    A new pane can pause at its CLI's own startup prompt. Observed prompts
    include a Codex self-update restart and Codex or Cursor directory trust.
    Read that exact pane and answer the prompt with keys, then continue after
