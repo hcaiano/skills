@@ -60,34 +60,30 @@ test("pair is the only unit transport", () => {
   assert.doesNotMatch(skill, /report_pane|pane tokens|orphan adoption/u);
 });
 
-test("staffing matches difficulty and records its evidence", () => {
+test("staffing keeps family, account and evidence separate", () => {
+  assert.match(staffing, /models\.md/u);
   assert.match(staffing, /Match model intelligence to task difficulty/u);
-  assert.match(staffing, /models\.md[\s\S]*owns the model-choice rubric and\s+the Roster subsections Operational preferences, Seats por papel, Pace and\s+fallback, and Effort/u);
-  assert.match(staffing, /This file owns arena\s+floors, capacity evidence, and the\s+orchestration\s+decision record/u);
-  assert.match(staffing, /Apply the roster before these\s+arena floors/u);
-  assert.match(staffing, /Roster's Seats por papel and Effort subsections/u);
-  assert.match(staffing, /same tier and bar, use Taste/u);
-  assert.match(staffing, /lower pool pace, lower used percentage, then speed/u);
+  assert.match(staffing, /Joint planning uses Fable and Astra/u);
+  assert.match(staffing, /Grok is eligible for\s+bounded simple tasks/u);
   assert.match(staffing, /both monthly Cursor pools/u);
-  assert.match(staffing, /`cursor\.cursor_models` or `cursor\.other_models`/u);
-  assert.match(staffing, /`pace > 1` or `used_percent >= 90`/u);
-  assert.match(staffing, /current\s+orchestrator\s+CLI\s+is\s+not\s+a legal partner/iu);
-  assert.match(staffing, /Claude \| `claude-opus-5` for UI\/design units; general\/back-end units prefer the Codex or Grok arenas per the Roster \| `claude-opus-5` for UI\/design units; general\/back-end units prefer the Codex or Grok arenas per the Roster[\s\S]*`claude-fable-5`[\s\S]*it plans, it does not run units/u);
-  assert.match(staffing, /Codex \| `gpt-5\.6-sol`; `gpt-5\.6-luna` is the B-tier fallback when it meets the task bar \| `gpt-5\.6-sol`[\s\S]*`gpt-5\.6-terra`[\s\S]*Luna is excluded from hard and UI lanes/u);
-  for (const arena of ["Cursor", "Grok", "OpenCode"]) {
-    assert.match(staffing, new RegExp(`\\| ${arena} \\| a current Roster seat with evidence for the task`, "u"));
-  }
-  assert.doesNotMatch(staffing, /haiku|sonnet/iu);
-  assert.match(staffing, /floor table restricts orchestration roles[\s\S]*does not create another\s+roster/u);
-  assert.match(staffing, /one-line reason/u);
-  assert.match(staffing, /compared roster tiers and Taste when either breaks the tie/u);
-  assert.doesNotMatch(staffing, /Quality evidence|x-preview-f-free|SWE-Pro|AA Coding Agent Index/u);
-  assert.match(
-    staffing,
-    /headless `cursor-agent` run proves that shell commands are\s+rejected[^]*consult and read-only review arena/u,
-  );
-  assert.match(staffing, /Cursor pane on the Herdr backend keeps its own permission plumbing/u);
-  assert.doesNotMatch(staffing, /frontier by default|least expensive/u);
+  assert.match(staffing, /codex_identities/u);
+  assert.match(staffing, /recommended_codex_identity/u);
+  assert.match(staffing, /null reading is unknown/u);
+  assert.match(staffing, /Herdr does not yet support named account routing/u);
+  assert.match(staffing, /existing one/u);
+  assert.doesNotMatch(staffing, /claude-fable-5|gpt-5\.6-sol/u);
+});
+
+test("intake and joint planning preserve a bounded human acceptance gate", () => {
+  assert.match(skill, /node "\$UNIT" intake/u);
+  assert.match(skill, /--max-active 2 --max-held 2/u);
+  assert.match(skill, /Fable and Astra both participate/u);
+  assert.match(skill, /independent proposals before reading/u);
+  assert.match(skill, /requirements are current/u);
+  assert.match(skill, /--issue <number>/u);
+  assert.match(skill, /--identity <codex-account-name>/u);
+  assert.match(skill, /not automatic wakeups/u);
+  assert.match(delivery, /Linux localhost URL alone is not that proof/u);
 });
 
 test("restaff preserves evidence and normal feedback stays bounded", () => {

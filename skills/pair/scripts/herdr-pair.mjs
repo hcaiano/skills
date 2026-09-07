@@ -671,6 +671,7 @@ function agentStartFailure(error, paneId) {
 
 async function spawn(args) {
   const options = parseOptions(args);
+  refuseHeadlessOnlyStaffing(options);
   const requestedPartner = options.partner ?? null;
   const partnerRepoRoot = options["partner-repo-root"] ?? callerContext.repoRoot;
   if (requestedPartner && !agentKinds.includes(requestedPartner)) {
@@ -924,6 +925,7 @@ async function acquireLock(lock, timeoutMs, label) {
 
 async function initSession(args) {
   const options = parseOptions(args);
+  refuseHeadlessOnlyStaffing(options);
   const role = options.role ?? "peer";
   const partnerRepoRoot = options["partner-repo-root"] ?? callerContext.repoRoot;
   const suppliedRegistration = options["partner-registered-at"] ?? null;
@@ -1277,6 +1279,23 @@ async function verifyInbound(args) {
   process.stdout.write(
     `${JSON.stringify({ self: binding.self, partner: binding.partner, session: binding.session }, null, 2)}\n`,
   );
+}
+
+// Account identities and `latest:<family>` resolution exist only on the
+// headless backend: a Herdr pane inherits the tab's own login, and this helper
+// has no catalog step, so passing either through would silently start the
+// wrong account or hand the CLI a literal `latest:` it does not understand.
+function refuseHeadlessOnlyStaffing(options) {
+  if (options.identity !== undefined && options.identity !== "default") {
+    fail(
+      `--identity ${options.identity} is not supported on the Herdr backend — a pane runs the tab's own login; use the headless backend for a named account`,
+    );
+  }
+  if (typeof options.model === "string" && /^latest(?::|$)/iu.test(options.model)) {
+    fail(
+      `--model ${options.model} is not resolved on the Herdr backend — name an exact model ID from the live catalog`,
+    );
+  }
 }
 
 function parseOptions(args) {

@@ -30,31 +30,95 @@ reports a recorded session, and `init` resumes it rather than replacing it.
 
 Require the partner CLI (`claude`, `codex`, `cursor-agent`, `grok`, or
 `opencode`) on `PATH`. The partner is chosen, never derived, and the helper refuses
-to pair a CLI kind with itself. For model, effort, and pool choices, read
-[`models.md`](models.md). Leave `--model` unset for the CLI default. Choose
-Codex effort explicitly from `low`, `high`, or `xhigh`; use the per-CLI rubric
-for the other effort controls.
+to pair a CLI kind with itself — except two Codex accounts: a partner named
+with `--identity <name>` runs under `~/.codex-profiles/<name>` (`default`
+selects `~/.codex`), while the same home is refused by the transport.
+The lead's own account is read from its environment before anything is
+overridden for the child. For model, effort, and pool choices, read
+[`models.md`](models.md). Leave `--model` unset for the CLI default, name an
+exact catalog ID, or ask for a family with `latest:<family>`. Choose
+Codex effort explicitly from the values the catalog lists for the model
+(`low|medium|high|xhigh|max`, plus `ultra` where offered — Luna's seat is
+`max`); use the per-CLI rubric for the other effort controls.
+
+The Codex binary is `codex` on `PATH` unless `CODEX_BIN` names another
+install. Two installs on one machine publish different catalogs (2026-09-07:
+0.147.0 had no Astra, 0.153.4 did), so `init` verifies the chosen binary with
+`--version`, resolves the catalog through it, and records its absolute path as
+`partner_bin` with `partner_bin_version`; every later turn runs that recorded
+binary whatever `PATH` says then. A family the chosen binary does not publish
+refuses and names the binary, the page count, and the home it read.
 
 ## Start or resume
 
 ```bash
 node "$PAIR_SCRIPT" init --repo "$REPO_ROOT" --partner "$PARTNER" \
-  [--model "$MODEL"] [--effort "$EFFORT"] [--role peer|executor]
+  [--identity "$IDENTITY"] [--model "$MODEL"] [--effort "$EFFORT"] \
+  [--role peer|executor]
 ```
 
-It prints `{sid, partner, role, model, effort, state_file}`. Creating a session
+It prints `{sid, partner, role, model, effort, identity, identity_home,
+model_resolved, model_source, resolved_at, partner_bin, partner_bin_version,
+state_file}`. Creating a session
 spends one partner turn: the helper sends the complete protocol preamble and,
 for every partner but Grok, captures the session id from that run — Grok is
 handed a session id the helper generates, so nothing has to be parsed. The
 preamble already carries the protocol; the first `task` carries task context,
 so the partner never needs to reread this skill. `init` is idempotent — with a
-recorded session the CLI still knows, it resumes and spends nothing; a recorded
-session with a different partner is refused rather than replaced. Record the
+recorded session the CLI still knows, it resumes and spends nothing, taking
+partner, identity, home, and binary from the record rather than from the
+caller's flags or environment; a recorded
+session with a different partner is refused rather than replaced, and so is a
+different `--identity`. A recorded session that its own store proves absent is
+a loss: `init` refuses, keeps the record and history, and names the state file
+to inspect before the pair is ended and a new one created. Record the
 exact `sid`; every send is bound to it, and after compaction `status` recovers it
 from the state file.
 
+`--identity` defaults to `default`. Only Codex accepts a name: it must be a
+simple name whose home `~/.codex-profiles/<name>` already exists, and the
+helper pins the canonical absolute path as `identity_home`. Every partner
+process — init, each send's worker, and the `session_known` probe — runs
+with `CODEX_HOME` set to that recorded home, never to the caller's own. No
+credential is read or copied; the home is the account. A session recorded
+before identities existed keeps the `CODEX_HOME` it inherited; nothing moves
+it to another account. Every partner spawn also strips the lead's own harness
+markers (`CLAUDECODE`, `CODEX_SANDBOX`, `CODEX_THREAD_ID`, `CURSOR_AGENT`,
+`GROK_SESSION_ID`, and the rest of `LEAD_MARKERS`) after the lead has
+detected itself from them, so a partner that runs this helper in turn does not
+take itself for the lead's CLI or account; provider auth and config variables
+pass through.
+
+`--model latest:<family>` resolves before the first run: Codex through
+`codex app-server` `model/list` on the identity's own account and the
+recorded binary, following `nextCursor` across every page (a repeated cursor
+or more than twenty pages refuses); Grok through
+`grok models`, taking only lines that are exactly `<family>-<version>` plus
+the CLI's own annotation, so `grok-4.7-preview` is another model and never a
+truncated `grok-4.7`; Cursor through `cursor-agent --list-models` together
+with `--effort` (the resolved ID carries the effort, so no `[effort=…]` suffix
+is added). Cursor picks the newest plain version first and only then requires
+the effort there: a newest version that lacks it refuses and names the older
+ID to use explicitly, instead of downgrading. Claude passes the documented
+alias (`fable`, `opus`, `sonnet` — `claude --help` names them as aliases for
+the latest model) to the CLI, whether written as `latest:fable` or bare
+`fable`, and records the exact ID from the init stream's `system.init.model`;
+a CLI-default or explicit-ID Claude run is recorded the same way, and every
+resumed turn passes that exact ID. The requested form stays in `model` and
+the pick in `model_resolved`, with `model_source` and `resolved_at`; a Codex
+pick also records the catalog IDs considered, the effort list that validated
+`--effort`, the binary, and the page count. A plain `latest`, an unknown
+family, a hidden or promo entry, an effort the catalog does not offer, or two
+members tied at the newest version refuse before a session exists. A Claude
+alias that resolves outside its family, or a bootstrap the CLI marks
+`is_error`, refuses after the bootstrap run: that run's session exists in
+Claude's own store, but no pair state is recorded and there is nothing to
+end. OpenCode has no family resolution.
+
 The helper records model and effort in session state. Claude receives
-`--effort low|medium|high|xhigh|max` on every invocation; Codex receives
+`--effort low|medium|high|xhigh|max` on every invocation and `--model
+<model_resolved>` on every resumed turn, so a moving alias never changes a
+live session; Codex receives
 `model_reasoning_effort`, Grok `--reasoning-effort`, and Cursor an
 `[effort=…]` suffix inside `--model` (so Cursor needs a model). OpenCode
 receives `--variant <effort>` on every invocation. Resume keeps the recorded
@@ -229,14 +293,28 @@ node "$PAIR_SCRIPT" status --repo "$REPO_ROOT"
 node "$PAIR_SCRIPT" end --repo "$REPO_ROOT"
 ```
 
-`status` prints the sid, partner, role, model, effort, and sequence — use it to
+`status` prints the sid, partner, role, model, effort, identity,
+`identity_home`, `model_resolved`, `model_source`, `resolved_at`, and sequence —
+use it to
 rebuild state after compaction. Its `session_known` reports a positive absence
 only: `false` proves the CLI's session store was readable and did not hold this
 session, while `true` also covers a store that could not be read at all, so it
-is evidence of loss and never proof of health. It probes `~/.codex/sessions`,
+is evidence of loss and never proof of health. It probes the recorded Codex
+identity home's `sessions` (`~/.codex/sessions` for `default`),
 `~/.claude/projects`, `~/.grok/sessions`, and `~/.cursor/chats`. OpenCode keeps
 sessions in a database, so the helper cannot prove an OpenCode session absent
 with a filesystem walk; its next resumed turn is the authority.
+
+`scripts/codex-rpc.mjs` is the read-only door to a Codex account for other
+helpers: `codexRead(method, params, { codexHome, bin })` runs one short-lived
+`codex app-server`, completes `initialize` → `initialized`, and answers
+exactly one of `account/read`, `account/rateLimits/read`, or `model/list`
+before killing the server (TERM, then KILL after one second). It never starts a
+model turn, bounds its output and time, never surfaces the server's stderr,
+and selects the account only through `CODEX_HOME` and the binary through
+`bin` or `CODEX_BIN`. `codexModelCatalog` follows the catalog's pages,
+`listCodexHomes` names the homes on the machine, and `verifyCodexBinary`
+proves a binary answers `--version`.
 
 `end` deletes the session directory, and runs
 only when the user explicitly asks to end the pair. It refuses while an

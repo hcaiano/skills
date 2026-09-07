@@ -425,6 +425,7 @@ const transportCheckpoint = (status) => status.latest_receipt ?? (
 
 const staffingArguments = (staffing, backend) => {
   const args = [];
+  if (backend === "headless" && staffing.identity) args.push("--identity", staffing.identity);
   if (staffing.model) args.push("--model", staffing.model);
   if (staffing.effort && !(backend === "herdr" && staffing.partner === "opencode")) {
     args.push("--effort", staffing.effort);
@@ -607,7 +608,9 @@ const pullRequests = (repo, branch) => {
   ], { cwd: repo });
   if (result.status !== 0) return { ok: false, reason: commandError(result, "gh pr list") };
   try {
-    return { ok: true, prs: JSON.parse(result.stdout) };
+    const prs = JSON.parse(result.stdout);
+    if (!Array.isArray(prs)) throw new Error("expected an array");
+    return { ok: true, prs };
   } catch (error) {
     return { ok: false, reason: `gh pr list returned invalid JSON: ${error.message}` };
   }
@@ -703,9 +706,17 @@ const recoverableCreatePhases = new Set([
   "starting",
 ]);
 const normalizedModel = (value) => value === "CLI-default" || !value ? null : value;
+const issueNumber = (value) => {
+  if (value == null) return null;
+  if (!/^[1-9][0-9]*$/u.test(String(value)) || !Number.isSafeInteger(Number(value))) {
+    fail("--issue must be a positive issue number", null, 2);
+  }
+  return Number(value);
+};
 const requestedStaffing = (options) => ({
   lead: options.lead,
   partner: options.partner,
+  identity: options.identity ?? "default",
   model: normalizedModel(options.model),
   effort: options.effort ?? null,
   reason: options.reason,
@@ -721,15 +732,23 @@ const validateStaffing = (
   if (!partnerKinds.has(options.lead) || !partnerKinds.has(options.partner)) {
     fail("--lead and --partner must be claude, codex, cursor, grok, or opencode", null, 2);
   }
-  if (options.lead === options.partner) {
+  const identity = options.identity ?? "default";
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/u.test(identity)) fail("invalid --identity name", null, 2);
+  if (identity !== "default" && (backend !== "headless" || options.partner !== "codex")) {
+    fail("named identities currently require a headless Codex partner", null, 2);
+  }
+  // Pair proves the named home's separation from the lead before launching it.
+  if (options.lead === options.partner && !(backend === "headless" && options.partner === "codex" && options.identity != null)) {
     fail("the partner arena must differ from the orchestrator harness", null, 2);
   }
   if (options.partner === "cursor") {
+    const familyRequest = backend === "headless" && /^latest:[a-z0-9]+$/iu.test(options.model ?? "");
     const legacy = allowLegacyCursor && Boolean(options.effort);
     if (!legacy && (!options.model || options.model === "CLI-default")) {
       fail("cursor staffing requires an effort-specific --model from the live catalog", null, 2);
     }
-    if (options.effort && !legacy) {
+    if (familyRequest && !options.effort) fail("Cursor latest:<family> requires --effort for catalog resolution", null, 2);
+    if (options.effort && !legacy && !familyRequest) {
       fail("cursor staffing carries effort in the live-catalog model name; omit --effort", null, 2);
     }
   } else if (options.partner === "opencode" && backend === "herdr") {
@@ -742,6 +761,10 @@ const validateStaffing = (
 };
 const nestedValue = (value, path) => path.split(".").reduce((current, key) => current?.[key], value);
 const ensureMatchingCreate = (record, options, task) => {
+  if ((record.staffing.current.identity ?? "default") !== (options.identity ?? "default")) {
+    fail(`unit ${record.unit_id} cannot resume: staffing.current.identity differs`);
+  }
+  if ((record.issue ?? null) !== issueNumber(options.issue)) fail(`unit ${record.unit_id} cannot resume: issue differs`);
   const requestedWorktree = existsSync(options.worktree)
     ? realpathSync(options.worktree)
     : resolve(options.worktree);
@@ -956,10 +979,15 @@ const create = (options) => {
     } else {
       const backend = selectedBackend(options);
       validateStaffing(options, "create", { backend });
+      const issue = issueNumber(options.issue);
+      if (options["max-active"] || options["max-held"]) {
+        const capacity = queueCapacity(place, options);
+        if (capacity.slots === 0) fail("admission paused: active or human-review limit reached", capacity);
+      }
       if (!options["task-file"]) fail("a new unit requires --task-file", null, 2);
       if (existsSync(options.worktree)) fail(`worktree path already exists: ${options.worktree}`);
       const duplicate = listRecords(place).find(
-        (candidate) => candidate.branch === options.branch || candidate.worktree === options.worktree,
+        (candidate) => candidate.branch === options.branch || candidate.worktree === options.worktree || (issue && candidate.issue === issue),
       );
       if (duplicate) fail(`unit ${id} conflicts with recorded unit ${duplicate.unit_id}`);
       const existingRef = branchExists(place.root, options.branch);
@@ -968,6 +996,7 @@ const create = (options) => {
       record = {
         schema_version: 1,
         unit_id: id,
+        issue,
         repository: place.root,
         common_git_dir: place.commonGitDir,
         worktree: options.worktree,
@@ -986,6 +1015,7 @@ const create = (options) => {
         staffing: {
           current: {
             partner: options.partner,
+            identity: options.identity ?? "default",
             model: normalizedModel(options.model),
             effort: options.effort ?? null,
             reason: options.reason,
@@ -1109,10 +1139,16 @@ const create = (options) => {
         }
       }
       record.resources.pair = true;
+      if ((currentPair.identity ?? "default") !== (record.staffing.current.identity ?? "default")) {
+        throw new Error("recorded pair identity differs from requested staffing");
+      }
       record.pair = {
         ...record.pair,
         sid: currentPair.sid,
         latest_seq: currentPair.seq ?? 0,
+        identity: currentPair.identity ?? "default",
+        identity_home: currentPair.identity_home ?? null,
+        model_resolved: currentPair.model_resolved ?? null,
         ...(currentPair.partner_pane ? { partner_pane: currentPair.partner_pane } : {}),
       };
       record.lifecycle = "starting";
@@ -1213,6 +1249,58 @@ const create = (options) => {
   });
 };
 
+const boundedLimit = (options, key, fallback) => {
+  const raw = options[key] ?? String(fallback);
+  if (!/^[1-9][0-9]*$/u.test(raw) || Number(raw) > 100) fail(`--${key} must be between 1 and 100`, null, 2);
+  return Number(raw);
+};
+
+// Read live PR state, rather than assuming a terminal executor receipt means
+// the human accepted its output. Any uncertainty closes admission.
+const queueCapacity = (place, options) => {
+  const maxActive = boundedLimit(options, "max-active", 2);
+  const maxHeld = boundedLimit(options, "max-held", 2);
+  const units = listRecords(place).map((record) => {
+    if (!record.branch || record.lifecycle === "unreadable") fail("admission paused: unreadable unit record", record);
+    const observed = pullRequests(place.root, record.branch);
+    if (!observed.ok) fail("admission paused: cannot read live PR state", { unit: record.unit_id, reason: observed.reason });
+    const open = observed.prs.filter((pr) => pr.state === "OPEN");
+    if (open.length > 1 || open.some((pr) => typeof pr.isDraft !== "boolean")) {
+      fail("admission paused: ambiguous PR state", { unit: record.unit_id });
+    }
+    const recovery = record.lifecycle !== "working";
+    const state = recovery ? "active" : open.length ? (open[0].isDraft ? "active" : "held")
+      : observed.prs.some((pr) => pr.state === "MERGED" && pr.mergedAt) ? "merged" : "active";
+    return { unit: record.unit_id, issue: record.issue ?? null, state, pr: open[0]?.url ?? null };
+  });
+  const active = units.filter((unit) => unit.state === "active").length;
+  const held = units.filter((unit) => unit.state === "held").length;
+  return { max_active: maxActive, max_held: maxHeld, active, held,
+    // Active units will also become human-review work; reserve those places
+    // now instead of oversubscribing the queue when they finish together.
+    slots: Math.max(0, Math.min(maxActive - active, maxHeld - held - active)), units };
+};
+
+const intake = (options) => {
+  const place = repository(options.repo);
+  if (!options.label) fail("intake requires the repository's explicit --label for ready issues", null, 2);
+  const capacity = queueCapacity(place, options);
+  const limit = boundedLimit(options, "limit", 30);
+  const args = ["issue", "list", "--state", "open", "--label", options.label,
+    "--limit", String(limit), "--json", "number,title,url,body,labels,milestone"];
+  if (options.milestone) args.push("--milestone", options.milestone);
+  const result = runChecked("gh", args, { cwd: place.root }, "read ready issues");
+  const issues = parseJson(result.stdout, "gh issue list");
+  if (!Array.isArray(issues) || issues.some((issue) => !Number.isSafeInteger(issue.number) || issue.number < 1)) {
+    fail("gh issue list returned invalid issue data");
+  }
+  const recorded = new Set(capacity.units.map((unit) => unit.issue).filter(Boolean));
+  return { ok: true, repository: place.root, capacity,
+    candidates: issues.filter((issue) => !recorded.has(issue.number)),
+    admission: "candidate-only: verify dependencies, acceptance criteria and overlapping write scopes before create",
+    capped: issues.length === limit };
+};
+
 const list = (options) => {
   const place = repository(options.repo);
   return {
@@ -1307,6 +1395,9 @@ const repin = (options) => {
 
 const recoverableRestaffPhases = new Set(["restaffing", "restaff-failed"]);
 const ensureMatchingRestaff = (record, requested) => {
+  if ((record.pending_staffing?.identity ?? "default") !== (requested.identity ?? "default")) {
+    fail(`unit ${record.unit_id} cannot resume restaff: identity differs`);
+  }
   for (const field of ["lead", "partner", "model", "effort", "reason"]) {
     const recorded = record.pending_staffing?.[field] ?? null;
     const wanted = requested[field] ?? null;
@@ -1318,7 +1409,7 @@ const ensureMatchingRestaff = (record, requested) => {
     }
   }
 };
-const pairMatchesStaffing = (status, staffing) => [
+const pairMatchesStaffing = (status, staffing) => (status.identity ?? "default") === (staffing.identity ?? "default") && [
   ["partner", staffing.partner],
   ["role", "executor"],
   ["model", staffing.model],
@@ -1572,12 +1663,16 @@ const restaff = (options) => {
       }
       record.staffing.current = {
         partner: record.pending_staffing.partner,
+        identity: record.pending_staffing.identity ?? "default",
         model: record.pending_staffing.model,
         effort: record.pending_staffing.effort,
         reason: record.pending_staffing.reason,
         selected_at: new Date().toISOString(),
       };
       record.pair.latest_seq = running.in_flight?.seq ?? running.seq ?? record.pair.latest_seq;
+      record.pair.identity = currentStatus.identity ?? "default";
+      record.pair.identity_home = currentStatus.identity_home ?? null;
+      record.pair.model_resolved = currentStatus.model_resolved ?? null;
       if (running.delivery_receipt) record.pair.delivery_receipt = running.delivery_receipt;
       const receipt = currentStatus.latest_receipt ?? null;
       const receiptFile = running.receipt_file ?? receipt?.receipt_file;
@@ -1718,12 +1813,13 @@ try {
   const [command, ...arguments_] = process.argv.slice(2);
   const options = parseOptions(arguments_);
   if (command === "create") emit(create(options));
+  else if (command === "intake") emit(intake(options));
   else if (command === "list") emit(list(options));
   else if (command === "status") emit(status(options));
   else if (command === "repin") emit(repin(options));
   else if (command === "restaff") emit(restaff(options));
   else if (command === "dismantle") emit(dismantle(options));
-  else fail("usage: unit.mjs <create|list|status|repin|restaff|dismantle> --repo <path> ...", null, 2);
+  else fail("usage: unit.mjs <intake|create|list|status|repin|restaff|dismantle> --repo <path> ...", null, 2);
 } catch (error) {
   if (error instanceof CliExit) {
     process.exitCode = error.code;

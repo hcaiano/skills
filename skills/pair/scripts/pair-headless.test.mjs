@@ -23,9 +23,12 @@ import { fileURLToPath } from "node:url";
 
 import {
   AGENT_KINDS,
+  CLAUDE_ALIASES,
+  LEAD_MARKERS,
   acquireMarker,
   bootstrapPrompt,
   clearMarker,
+  compareVersions,
   cursorModel,
   defaultIdleMinutes,
   detectSelf,
@@ -35,19 +38,28 @@ import {
   messagePrompt,
   minutesToMs,
   newSessionId,
+  parseClaudeInit,
   parseClaudeResult,
   parseCursorSessionId,
   parseGrokStream,
+  parseModelRequest,
   parseOpenCodeStream,
   parseSessionId,
   parseTextReply,
+  partnerEnv,
+  partnerIdentity,
+  pickLatestCodex,
+  pickLatestCursor,
+  pickLatestGrok,
   processAlive,
   releaseMarker,
   resolvePartner,
   resolveWrite,
+  selfHome,
   sessionKnown,
   turnCommand,
 } from "./pair-headless.mjs";
+import { CODEX_READ_METHODS, codexHomeFor, codexModelCatalog, codexRead, listCodexHomes, verifyCodexBinary } from "./codex-rpc.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const helper = join(directory, "pair-headless.mjs");
@@ -75,15 +87,67 @@ if (mode === "steal") {
 }
 `;
 
-writeFileSync(
-  join(bin, "codex"),
-  `#!/usr/bin/env node
+// The fake app-server answers the documented handshake and the three read
+// methods with a catalog shaped like the live one (2026-09-07 probe): visible
+// families at several versions, a hidden entry, a promo ID, and per-model
+// effort lists. The catalog is paginated — Astra lives on the second page —
+// and an "old" binary publishes only the first page, as the 0.147.0 install
+// on this machine did.
+const CODEX_PAGE_ONE = [
+  { id: "gpt-5.6-sol", model: "gpt-5.6-sol", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }] },
+  { id: "gpt-5.5-sol", model: "gpt-5.5-sol", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }] },
+  { id: "gpt-5.10-sol", model: "gpt-5.10-sol", hidden: true, supportedReasoningEfforts: [{ reasoningEffort: "high" }] },
+  { id: "gpt-5.6-luna", model: "gpt-5.6-luna", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "medium" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }, { reasoningEffort: "max" }] },
+  { id: "gpt-5.6-terra", model: "gpt-5.6-terra", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "high" }] },
+  { id: "gpt-daybreak-blue-latest", model: "gpt-daybreak-blue-latest", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "low" }] },
+];
+const CODEX_PAGE_TWO = [
+  { id: "gpt-6-astra", model: "gpt-6-astra", hidden: false, isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }, { reasoningEffort: "xhigh" }, { reasoningEffort: "max" }, { reasoningEffort: "ultra" }] },
+  { id: "gpt-7-nova", model: "gpt-7-nova", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "high" }] },
+  { id: "gpt-7-nova", model: "gpt-7-nova", hidden: false, supportedReasoningEfforts: [{ reasoningEffort: "high" }] },
+];
+const CODEX_CATALOG = JSON.stringify({ data: [...CODEX_PAGE_ONE, ...CODEX_PAGE_TWO], nextCursor: null });
+// Which lead markers the child can still see: the helper must have stripped
+// every one of them before spawning a partner.
+const markerReport = `
+const lead_markers = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CURSOR_AGENT", "CURSOR_AGENT_CHAT_ID", "GROK_SESSION_ID", "GROK_AGENT", "OPENCODE_CLIENT", "OPENCODE_PID", "OPENCODE_WORKSPACE_ID"].filter((name) => process.env[name]);
+`;
+const codexFake = ({ old }) => `#!/usr/bin/env node
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || "ok";
+${markerReport}
+if (argv[0] === "--version") { process.stdout.write("codex-cli ${old ? "0.147.0-fake" : "9.9.9-fake"}\\n"); process.exit(0); }
+if (argv[0] === "app-server") {
+  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "codex", argv, cwd: process.cwd(), codex_home: process.env.CODEX_HOME ?? null, bin_path: process.argv[1], pid: process.pid, lead_markers }) + "\\n");
+  if (mode === "rpc-silent") { setInterval(() => {}, 1000); return; }
+  if (mode === "rpc-ignore-term") { process.on("SIGTERM", () => {}); setInterval(() => {}, 1000); return; }
+  let pending = "";
+  process.stdin.on("data", (chunk) => {
+    pending += chunk;
+    let nl;
+    while ((nl = pending.indexOf("\\n")) !== -1) {
+      const line = pending.slice(0, nl); pending = pending.slice(nl + 1);
+      if (!line.trim()) continue;
+      const message = JSON.parse(line);
+      if (message.method === "initialize") process.stdout.write(JSON.stringify({ id: message.id, result: { userAgent: "fake", codexHome: process.env.CODEX_HOME ?? null } }) + "\\n");
+      else if (message.method === "initialized") process.stdout.write(JSON.stringify({ method: "remoteControl/status/changed", params: { status: "disabled" } }) + "\\n");
+      else if (message.method === "model/list") {
+        const one = JSON.parse(${JSON.stringify(JSON.stringify(CODEX_PAGE_ONE))});
+        const two = JSON.parse(${JSON.stringify(JSON.stringify(CODEX_PAGE_TWO))});
+        const page = message.params?.cursor === "page-2" ? { data: two, nextCursor: mode === "rpc-loop" ? "page-2" : null } : { data: one, nextCursor: ${old ? "null" : '"page-2"'} };
+        process.stdout.write(JSON.stringify({ id: message.id, result: page }) + "\\n");
+      }
+      else if (message.method === "account/read") process.stdout.write(JSON.stringify({ id: message.id, result: { account: { type: "chatgpt", planType: "pro" }, requiresOpenaiAuth: true } }) + "\\n");
+      else if (message.method === "account/rateLimits/read") process.stdout.write(JSON.stringify({ id: message.id, result: { rateLimits: { limitId: "codex", primary: { usedPercent: 24, windowDurationMins: 10080, resetsAt: 1789362109 } } } }) + "\\n");
+      else process.stdout.write(JSON.stringify({ id: message.id, error: { code: -32601, message: "unknown method " + message.method } }) + "\\n");
+    }
+  });
+  return;
+}
 ${markerProbe}
 const stdin = fs.readFileSync(0, "utf8");
-fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "codex", argv, stdin, cwd: process.cwd() }) + "\\n");
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "codex", argv, stdin, cwd: process.cwd(), codex_home: process.env.CODEX_HOME ?? null, bin_path: process.argv[1], lead_markers }) + "\\n");
 if (mode === "hang") { setInterval(() => {}, 1000); return; }
 if (mode !== "nosid") process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "${CODEX_SID}" }) + "\\n");
 const out = argv[argv.indexOf("-o") + 1];
@@ -92,8 +156,12 @@ if (mode === "empty") { fs.writeFileSync(out, "   \\n"); process.exit(0); }
 if (mode === "big") { fs.writeFileSync(out, "[agent codex -> claude kind=ready sid=${CODEX_SID}]\\n\\n" + "x".repeat(300000) + "\\n"); process.exit(0); }
 fs.writeFileSync(out, "[agent codex -> claude kind=ready sid=${CODEX_SID}]\\n\\nlease accepted\\n");
 process.exit(0);
-`,
-);
+`;
+writeFileSync(join(bin, "codex"), codexFake({ old: false }));
+const oldCodexBin = join(root, "old-install", "codex");
+mkdirSync(dirname(oldCodexBin), { recursive: true });
+writeFileSync(oldCodexBin, codexFake({ old: true }));
+chmodSync(oldCodexBin, 0o755);
 writeFileSync(
   join(bin, "claude"),
   `#!/usr/bin/env node
@@ -101,11 +169,16 @@ const fs = require("node:fs");
 const argv = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || "ok";
 ${markerProbe}
+${markerReport}
 const stdin = fs.readFileSync(0, "utf8");
-fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "claude", argv, stdin, cwd: process.cwd() }) + "\\n");
+fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "claude", argv, stdin, cwd: process.cwd(), lead_markers }) + "\\n");
 if (mode === "fail") { process.stderr.write("auth expired\\n"); process.exit(1); }
 // stream-json: a system init event, an assistant event, then the final result.
-process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "${CLAUDE_SID}", tools: [] }) + "\\n");
+// The init event reports the exact model, as the live CLI does: an alias
+// resolves to the current family member, an explicit ID echoes back.
+const asked = argv.includes("--model") ? argv[argv.indexOf("--model") + 1] : "claude-opus-5";
+const model = { fable: "claude-fable-5-1", opus: "claude-opus-5", sonnet: "claude-sonnet-5" }[asked] ?? asked;
+process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "${CLAUDE_SID}", model: mode === "moved-alias" ? "claude-opus-5" : model, tools: [] }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "assistant", session_id: "${CLAUDE_SID}", message: { content: [{ type: "text", text: "thinking" }] } }) + "\\n");
 process.stdout.write(JSON.stringify({
   type: "result",
@@ -124,6 +197,27 @@ writeFileSync(
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || "ok";
+if (argv[0] === "--list-models") {
+  process.stdout.write([
+    "Available models",
+    "",
+    "auto - Auto (current, default)",
+    "gpt-5.6-sol-high - GPT-5.6 Sol 1M High",
+    "gpt-5.6-sol-high-fast - GPT-5.6 Sol 1M High Fast",
+    "gpt-5.6-sol-xhigh - GPT-5.6 Sol 1M Extra High",
+    "claude-fable-5-thinking-high - Claude Fable 5 1M Thinking (NO ZDR)",
+    "claude-fable-5-high - Claude Fable 5 1M (NO ZDR)",
+    "claude-fable-5-1-high - Claude Fable 5.1 1M (NO ZDR)",
+    "claude-fable-5-1-thinking-high - Claude Fable 5.1 1M Thinking (NO ZDR)",
+    "claude-fable-5-1-xhigh - Claude Fable 5.1 1M Extra High (NO ZDR)",
+    "claude-sonnet-5-thinking-high - Claude Sonnet 5 1M Thinking",
+    "kimi-k3-high - Kimi K3 High",
+    "kimi-k3-max - Kimi K3",
+    "cursor-grok-4.6-high - Cursor Grok 4.6",
+    "",
+  ].join("\\n"));
+  process.exit(0);
+}
 ${markerProbe}
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "cursor-agent", argv, stdin, cwd: process.cwd() }) + "\\n");
@@ -143,6 +237,10 @@ writeFileSync(
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || "ok";
+if (argv[0] === "models") {
+  process.stdout.write("You are logged in with grok.com.\\n\\nDefault model: grok-4.6\\n\\nAvailable models:\\n  * grok-4.6 (default)\\n  - grok-4.5\\n  - grok-4.10\\n  - grok-4.10\\n  - grok-4.11-preview\\n");
+  process.exit(0);
+}
 ${markerProbe}
 const promptFile = argv[argv.indexOf("--prompt-file") + 1];
 const stdin = fs.readFileSync(promptFile, "utf8");
@@ -273,10 +371,17 @@ test("the partner is chosen, and never the CLI the lead is already running", () 
   assert.equal(detectSelf({ GROK_SESSION_ID: "s" }), "grok");
   assert.equal(detectSelf({ OPENCODE_CLIENT: "cli" }), "opencode");
   assert.equal(detectSelf({}), null);
-  assert.deepEqual(resolvePartner("grok", { CLAUDECODE: "1" }), { partner: "grok", self: "claude" });
-  assert.deepEqual(resolvePartner("cursor", { CODEX_THREAD_ID: "t" }), { partner: "cursor", self: "codex" });
+  assert.deepEqual(resolvePartner("grok", { CLAUDECODE: "1" }), { partner: "grok", self: "claude", identity: "default", identity_home: null });
+  assert.deepEqual(resolvePartner("cursor", { CODEX_THREAD_ID: "t" }), { partner: "cursor", self: "codex", identity: "default", identity_home: null });
   // An undetectable harness still pairs: the choice is explicit either way.
-  assert.deepEqual(resolvePartner("codex", {}), { partner: "codex", self: "lead" });
+  // The default Codex identity is the CLI's own home even before it exists.
+  assert.deepEqual(resolvePartner("codex", {}, { home: root }), {
+    partner: "codex",
+    self: "lead",
+    identity: "default",
+    identity_home: realpathSync(join(root, ".codex")),
+  });
+  assert.equal(resolvePartner("codex", {}, { home: join(root, "fresh-machine") }).identity_home, join(root, "fresh-machine", ".codex"));
   for (const self of AGENT_KINDS) {
     const env = {
       claude: { CLAUDECODE: "1" },
@@ -285,10 +390,426 @@ test("the partner is chosen, and never the CLI the lead is already running", () 
       grok: { GROK_SESSION_ID: "s" },
       opencode: { OPENCODE_CLIENT: "cli" },
     }[self];
-    assert.match(resolvePartner(self, env).error, new RegExp(`refusing to pair ${self} with itself`, "u"));
+    assert.match(resolvePartner(self, env, { home: root }).error, new RegExp(`refusing to pair ${self} with itself`, "u"));
   }
   assert.match(resolvePartner("gemini", {}).error, /unknown partner gemini/u);
   assert.match(resolvePartner(null, {}).error, /missing --partner/u);
+});
+
+// Three Codex homes on one machine: the default one (no session store yet,
+// so its probes stay inconclusive as the older tests expect), a named profile
+// with a store, and an empty named store that can prove an absence.
+const codexHome = join(root, ".codex");
+const laisHome = join(root, ".codex-profiles", "lais");
+const emptyHome = join(root, ".codex-profiles", "empty");
+mkdirSync(codexHome, { recursive: true });
+mkdirSync(join(laisHome, "sessions"), { recursive: true });
+mkdirSync(join(emptyHome, "sessions"), { recursive: true });
+writeFileSync(join(root, ".codex-profiles", "not-a-home"), "");
+
+test("a Codex identity is a home, and only a different home makes a Codex peer", () => {
+  assert.deepEqual(codexHomeFor("default", { home: root }), { identity: "default", codexHome: realpathSync(codexHome) });
+  assert.deepEqual(codexHomeFor("lais", { home: root }), { identity: "lais", codexHome: realpathSync(laisHome) });
+  assert.match(codexHomeFor("ghost", { home: root }).error, /identity ghost has no Codex home/u);
+  assert.match(codexHomeFor("not-a-home", { home: root }).error, /no Codex home|not a directory/u);
+  assert.match(codexHomeFor("../lais", { home: root }).error, /invalid identity name/u);
+  assert.match(codexHomeFor("", { home: root }).error, /invalid identity name/u);
+  assert.deepEqual(listCodexHomes({ home: root }), { default: realpathSync(codexHome), empty: realpathSync(emptyHome), lais: realpathSync(laisHome) });
+
+  assert.deepEqual(partnerIdentity("codex", "lais", { home: root }), { identity: "lais", identity_home: realpathSync(laisHome) });
+  assert.deepEqual(partnerIdentity("codex", undefined, { home: root }), { identity: "default", identity_home: realpathSync(codexHome) });
+  assert.deepEqual(partnerIdentity("claude", "default", { home: root }), { identity: "default", identity_home: null });
+  assert.match(partnerIdentity("claude", "work", { home: root }).error, /claude has no named identities/u);
+
+  // The lead's own home is read from its environment, before any override.
+  assert.equal(selfHome("codex", { CODEX_HOME: laisHome }, root), realpathSync(laisHome));
+  assert.equal(selfHome("codex", {}, root), realpathSync(codexHome));
+  assert.equal(selfHome("claude", { CODEX_HOME: laisHome }, root), null);
+
+  // A Codex lead pairs with the other account, and refuses its own by home,
+  // not by label: `default` named from a lead that runs under the default home
+  // is the same login.
+  const codexLead = { CODEX_SANDBOX: "seatbelt" };
+  assert.equal(resolvePartner("codex", codexLead, { identity: "lais", home: root }).identity_home, realpathSync(laisHome));
+  assert.match(resolvePartner("codex", codexLead, { identity: "default", home: root }).error, /refusing to pair codex with itself[\s\S]*--identity/u);
+  const laisLead = { CODEX_SANDBOX: "seatbelt", CODEX_HOME: laisHome };
+  assert.match(resolvePartner("codex", laisLead, { identity: "lais", home: root }).error, /refusing to pair codex with itself/u);
+  assert.equal(resolvePartner("codex", laisLead, { identity: "default", home: root }).identity_home, realpathSync(codexHome));
+  // A Claude lead has one account, so a Claude partner is still an echo.
+  assert.match(resolvePartner("claude", { CLAUDECODE: "1" }, { identity: "default", home: root }).error, /refusing to pair claude with itself/u);
+
+  // The child always gets its account spelled out, so a lead under a named
+  // home never leaks that home into its partner.
+  assert.equal(partnerEnv({ partner: "codex", identity_home: laisHome }, { CODEX_HOME: codexHome, PATH: "p" }).CODEX_HOME, laisHome);
+  // The lead's own markers never reach the child; provider variables do. A
+  // pre-identity Codex session keeps the CODEX_HOME it always inherited.
+  const inherited = { CODEX_HOME: laisHome, PATH: "p", OPENAI_BASE_URL: "https://example.test", CLAUDECODE: "1", CODEX_SANDBOX: "seatbelt", CODEX_THREAD_ID: "t" };
+  assert.deepEqual(partnerEnv({ partner: "claude", identity_home: null }, inherited), { CODEX_HOME: laisHome, PATH: "p", OPENAI_BASE_URL: "https://example.test" });
+  assert.deepEqual(partnerEnv({ partner: "codex", identity_home: null }, inherited), { CODEX_HOME: laisHome, PATH: "p", OPENAI_BASE_URL: "https://example.test" });
+  assert.equal(partnerEnv({ partner: "codex", identity_home: null }, { PATH: "p" }).CODEX_HOME, undefined, "no home is invented for a legacy session");
+  for (const marker of LEAD_MARKERS) assert.equal(marker in partnerEnv({ partner: "grok", identity_home: null }, Object.fromEntries(LEAD_MARKERS.map((name) => [name, "1"]))), false);
+});
+
+test("a headless Codex partner runs as its named identity across init, send, status, and resume", () => {
+  const repo = newRepo("identity-lais");
+  const created = run("ok", "codex", "init", "--repo", repo, "--partner", "codex", "--identity", "lais", "--model", "gpt-5.6-luna", "--effort", "max");
+  assert.equal(created.receipt.status, "created", created.receipt.reason);
+  assert.equal(created.receipt.identity, "lais");
+  assert.equal(created.receipt.identity_home, realpathSync(laisHome));
+  assert.equal(created.receipt.model, "gpt-5.6-luna");
+  assert.equal(created.receipt.model_resolved, "gpt-5.6-luna");
+  assert.equal(created.receipt.model_source, "explicit");
+  const [init] = invocations();
+  assert.equal(init.codex_home, realpathSync(laisHome), "the partner CLI ran under the named home");
+  assert.deepEqual(init.argv.slice(init.argv.indexOf("-m"), init.argv.indexOf("-m") + 4), ["-m", "gpt-5.6-luna", "-c", 'model_reasoning_effort="max"']);
+  const state = JSON.parse(readFileSync(created.receipt.state_file, "utf8"));
+  assert.equal(state.identity, "lais");
+  assert.equal(state.identity_home, realpathSync(laisHome));
+
+  // The session store probed is the identity's own, so a resume that only
+  // exists in the other home would read as absent. Record it where it lives.
+  writeFileSync(join(laisHome, "sessions", `rollout-${CODEX_SID}.jsonl`), "");
+  const resumed = run("ok", "codex", "init", "--repo", repo, "--partner", "codex", "--identity", "lais");
+  assert.equal(resumed.receipt.status, "resumed");
+  assert.equal(resumed.receipt.identity, "lais");
+  assert.equal(resumed.receipt.model_resolved, "gpt-5.6-luna");
+  // A different account is a different login: its store cannot hold this sid.
+  const changed = run("ok", "claude", "init", "--repo", repo, "--partner", "codex", "--identity", "default");
+  assert.match(changed.receipt.reason, /runs as codex identity lais[\s\S]*end it first/u);
+  assert.deepEqual(invocations(), [], "no partner turn was spent on the refused change");
+
+  // Every later turn is resumed under the recorded home, not the caller's.
+  const sent = run("ok", "codex", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go"));
+  assert.equal(sent.receipt.status, "replied");
+  const [turn] = invocations();
+  assert.equal(turn.codex_home, realpathSync(laisHome));
+  assert.deepEqual(turn.argv.slice(0, 3), ["exec", "resume", CODEX_SID]);
+  const status = run("ok", "codex", "status", "--repo", repo).receipt;
+  assert.equal(status.identity, "lais");
+  assert.equal(status.identity_home, realpathSync(laisHome));
+  assert.equal(status.session_known, true);
+  assert.equal(sessionKnown("codex", CODEX_SID, repo, {}, root, realpathSync(emptyHome)), false, "another account's readable store does not hold it");
+
+  // The same-home refusal and the name checks spend nothing.
+  const same = run("ok", "codex", "init", "--repo", newRepo("identity-same"), "--partner", "codex", "--identity", "default").receipt;
+  assert.match(same.reason, /refusing to pair codex with itself/u);
+  const missing = run("ok", "claude", "init", "--repo", newRepo("identity-missing"), "--partner", "codex", "--identity", "ghost").receipt;
+  assert.match(missing.reason, /identity ghost has no Codex home/u);
+  const claudeNamed = run("ok", "codex", "init", "--repo", newRepo("identity-claude"), "--partner", "claude", "--identity", "work").receipt;
+  assert.match(claudeNamed.reason, /claude has no named identities/u);
+  assert.deepEqual(invocations(), []);
+});
+
+test("a Claude lead's default Codex partner is pinned to the default home even under a stray CODEX_HOME", () => {
+  const repo = newRepo("identity-default");
+  writeFileSync(log, "");
+  const receipt = JSON.parse(execFileSync(process.execPath, [helper, "init", "--repo", repo, "--partner", "codex"], {
+    encoding: "utf8",
+    env: { ...env("ok", "claude"), CODEX_HOME: laisHome },
+    stdio: ["ignore", "pipe", "pipe"],
+  }));
+  assert.equal(receipt.identity, "default");
+  assert.equal(receipt.identity_home, realpathSync(codexHome));
+  assert.equal(invocations()[0].codex_home, realpathSync(codexHome));
+});
+
+test("a resumed pair takes its identity and home from the record, and a lost session stops instead of being replaced", () => {
+  const repo = newRepo("identity-resume");
+  const created = run("ok", "codex", "init", "--repo", repo, "--partner", "codex", "--identity", "lais", "--model", "gpt-5.6-luna", "--effort", "max").receipt;
+  assert.equal(created.status, "created", created.reason);
+  writeFileSync(join(laisHome, "sessions", `rollout-${CODEX_SID}.jsonl`), "");
+  const before = readFileSync(created.state_file, "utf8");
+
+  // Omitting --identity resumes as recorded — not as a defaulted `default`,
+  // which a Codex lead on the default home would even be refused for.
+  const omitted = run("ok", "codex", "init", "--repo", repo, "--partner", "codex").receipt;
+  assert.equal(omitted.status, "resumed", omitted.reason);
+  assert.equal(omitted.identity, "lais");
+  assert.equal(omitted.identity_home, realpathSync(laisHome));
+  assert.deepEqual(invocations(), []);
+
+  // A lead whose own environment moved to the partner's home still resumes:
+  // the record, not the caller, is the pair.
+  writeFileSync(log, "");
+  const movedLead = JSON.parse(execFileSync(process.execPath, [helper, "init", "--repo", repo, "--partner", "codex"], {
+    encoding: "utf8",
+    env: { ...env("ok", "codex"), CODEX_HOME: laisHome },
+    stdio: ["ignore", "pipe", "pipe"],
+  }));
+  assert.equal(movedLead.status, "resumed");
+  assert.equal(movedLead.identity_home, realpathSync(laisHome));
+  assert.equal(readFileSync(created.state_file, "utf8"), before, "the record is untouched");
+
+  // A session proved absent from its own store is a loss to inspect, not a
+  // slot to recreate under whatever identity the caller defaulted to.
+  unlinkSync(join(laisHome, "sessions", `rollout-${CODEX_SID}.jsonl`));
+  const lost = run("ok", "codex", "init", "--repo", repo, "--partner", "codex").receipt;
+  assert.equal(lost.ok, false);
+  assert.match(lost.reason, /recorded codex session .* \(identity lais\) is absent from its session store[\s\S]*end the pair before creating a new one/u);
+  assert.deepEqual(invocations(), [], "no partner turn, no replacement");
+  assert.equal(readFileSync(created.state_file, "utf8"), before, "the lost session's record and history survive");
+  const changed = run("ok", "claude", "init", "--repo", repo, "--partner", "codex", "--identity", "default").receipt;
+  assert.match(changed.reason, /runs as codex identity lais/u);
+});
+
+test("the Codex binary is verified once, recorded, and used for the catalog and every turn", () => {
+  const repo = newRepo("codex-bin");
+  const withOld = (mode, ...args) => {
+    writeFileSync(log, "");
+    try {
+      return JSON.parse(execFileSync(process.execPath, [helper, ...args], {
+        encoding: "utf8",
+        env: { ...env(mode, "claude"), CODEX_BIN: oldCodexBin },
+        stdio: ["ignore", "pipe", "pipe"],
+      }));
+    } catch (error) {
+      return JSON.parse(error.stdout);
+    }
+  };
+  // The old install's catalog has no Astra: the refusal names that binary and
+  // its one page, so the reader knows which install answered.
+  const noAstra = withOld("ok", "init", "--repo", repo, "--partner", "codex", "--model", "latest:astra", "--effort", "high");
+  assert.equal(noAstra.ok, false);
+  assert.match(noAstra.reason, new RegExp(`no visible Codex model in family astra — the catalog has sol, luna, terra \\(catalog of ${oldCodexBin.replaceAll(".", "\\.")}, 1 page, home `, "u"));
+  assert.deepEqual(invocations().map((call) => [call.argv[0], call.bin_path]), [["app-server", oldCodexBin]]);
+
+  // An explicit binary is pinned into the session and used on every resume,
+  // even when the later caller no longer sets CODEX_BIN.
+  const created = withOld("ok", "init", "--repo", repo, "--partner", "codex", "--model", "latest:luna", "--effort", "max");
+  assert.equal(created.status, "created", created.reason);
+  assert.equal(created.partner_bin, oldCodexBin);
+  assert.equal(created.partner_bin_version, "0.147.0-fake");
+  assert.equal(created.model_resolved, "gpt-5.6-luna");
+  assert.ok(invocations().every((call) => call.bin_path === oldCodexBin));
+  const sent = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go")).receipt;
+  assert.equal(sent.status, "replied");
+  assert.equal(invocations()[0].bin_path, oldCodexBin, "the turn ran the recorded binary, not PATH's");
+  assert.equal(run("ok", "claude", "status", "--repo", repo).receipt.partner_bin, oldCodexBin);
+  // PATH discovery is portable, but its selected executable is pinned.
+  const defaultRepo = newRepo("codex-bin-default");
+  const fromPath = run("ok", "claude", "init", "--repo", defaultRepo, "--partner", "codex").receipt;
+  assert.equal(fromPath.partner_bin, join(bin, "codex"));
+  writeFileSync(log, "");
+  const changedPath = JSON.parse(execFileSync(process.execPath, [helper, "send", "--repo", defaultRepo, "--kind", "task", "--body-file", bodyFile("go")], {
+    encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    env: { ...env("ok", "claude"), PATH: `${dirname(oldCodexBin)}:${env("ok", "claude").PATH}` },
+  }));
+  assert.equal(changedPath.status, "replied");
+  assert.equal(invocations()[0].bin_path, join(bin, "codex"), "a changed PATH cannot replace the recorded executable");
+  const missing = JSON.parse((() => { try { return execFileSync(process.execPath, [helper, "init", "--repo", newRepo("codex-bin-none"), "--partner", "codex"], { encoding: "utf8", env: { ...env("ok", "claude"), CODEX_BIN: join(root, "no-such-codex") }, stdio: ["ignore", "pipe", "pipe"] }); } catch (error) { return error.stdout; } })());
+  assert.match(missing.reason, /the Codex binary could not be verified — set CODEX_BIN to an installed codex: cannot run .*no-such-codex --version/u);
+  assert.deepEqual(verifyCodexBinary(join(bin, "codex"), { env: env("ok", "claude") }), { bin: join(bin, "codex"), version: "9.9.9-fake" });
+});
+
+test("a partner never inherits the lead's own harness markers", () => {
+  const repo = newRepo("markers");
+  const spawnWith = (leadEnv, ...args) => {
+    writeFileSync(log, "");
+    return JSON.parse(execFileSync(process.execPath, [helper, ...args], {
+      encoding: "utf8",
+      env: { ...env("ok", "claude"), ...leadEnv },
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
+  };
+  // A Claude lead with every marker set still detects itself as Claude — the
+  // markers are read before the child env is built — and the child sees none.
+  const created = spawnWith({ CLAUDE_CODE_ENTRYPOINT: "cli", CURSOR_AGENT_CHAT_ID: "c", GROK_AGENT: "g" }, "init", "--repo", repo, "--partner", "codex");
+  assert.equal(created.status, "created", created.reason);
+  assert.deepEqual(invocations().map((call) => call.lead_markers), [[]]);
+  assert.match(JSON.parse(readFileSync(created.state_file, "utf8")).self, /claude/u);
+  spawnWith({ CODEX_THREAD_ID: "t" }, "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go"));
+  assert.deepEqual(invocations()[0].lead_markers, []);
+  const claudeRepo = newRepo("markers-claude");
+  spawnWith({ CLAUDECODE: "", CODEX_SANDBOX: "seatbelt", CODEX_THREAD_ID: "t" }, "init", "--repo", claudeRepo, "--partner", "claude");
+  assert.deepEqual(invocations()[0].lead_markers, []);
+
+  // A session recorded before identities existed keeps the CODEX_HOME it
+  // always inherited; the helper does not move it to another account.
+  const legacyRepo = newRepo("markers-legacy");
+  spawnWith({}, "init", "--repo", legacyRepo, "--partner", "codex");
+  const statePath = join(realpathSync(legacyRepo), ".git", "pair", "session.json");
+  const legacy = JSON.parse(readFileSync(statePath, "utf8"));
+  for (const key of ["identity", "identity_home", "partner_bin", "partner_bin_version", "model_resolved", "model_source", "resolved_at"]) delete legacy[key];
+  writeFileSync(statePath, JSON.stringify(legacy));
+  const legacySend = spawnWith({ CODEX_HOME: laisHome }, "send", "--repo", legacyRepo, "--kind", "task", "--body-file", bodyFile("go"));
+  assert.equal(legacySend.status, "replied");
+  assert.equal(invocations()[0].codex_home, laisHome, "the inherited home is preserved for a legacy session");
+  assert.equal(invocations()[0].bin_path, join(bin, "codex"));
+  const status = run("ok", "claude", "status", "--repo", legacyRepo).receipt;
+  assert.equal(status.identity, "default");
+  assert.equal(status.identity_home, null);
+  assert.equal(status.partner_bin, null);
+});
+
+test("latest:<family> resolves by exact family and numeric version, never by guess", () => {
+  assert.deepEqual(parseModelRequest(null), { kind: "default" });
+  assert.deepEqual(parseModelRequest("gpt-5.6-sol"), { kind: "explicit", model: "gpt-5.6-sol" });
+  assert.deepEqual(parseModelRequest("latest:Sol"), { kind: "latest", family: "sol" });
+  assert.match(parseModelRequest("latest").error, /plain `latest` names no family/u);
+  assert.match(parseModelRequest("latest:").error, /not a family/u);
+  assert.match(parseModelRequest("latest:gpt-5.6-sol").error, /not a family/u);
+  assert.ok(compareVersions("6", "5.6") > 0);
+  assert.ok(compareVersions("5.10", "5.6") > 0, "numeric, not lexical");
+  assert.equal(compareVersions("5.0", "5"), 0);
+  assert.deepEqual(CLAUDE_ALIASES, ["fable", "opus", "sonnet"]);
+
+  const catalog = JSON.parse(CODEX_CATALOG);
+  assert.equal(pickLatestCodex(catalog, "sol", "high").model, "gpt-5.6-sol", "5.10-sol is hidden, 5.5 is older");
+  assert.deepEqual(pickLatestCodex(catalog, "sol").considered, ["gpt-5.6-sol", "gpt-5.5-sol"]);
+  assert.equal(pickLatestCodex(catalog, "astra", "ultra").model, "gpt-6-astra");
+  assert.equal(pickLatestCodex(catalog, "luna", "max").model, "gpt-5.6-luna");
+  assert.match(pickLatestCodex(catalog, "luna", "ultra").error, /gpt-5\.6-luna does not accept effort ultra/u);
+  assert.match(pickLatestCodex(catalog, "daybreak").error, /no visible Codex model in family daybreak/u, "promo IDs never match a family");
+  assert.match(pickLatestCodex(catalog, "mars").error, /no visible Codex model in family mars — the catalog has sol, luna, terra, astra, nova/u, "no neighbouring family is substituted");
+  assert.match(pickLatestCodex(catalog, "nova").error, /ambiguous at its newest version: gpt-7-nova, gpt-7-nova/u);
+  assert.match(pickLatestCodex({ data: [] }, "sol").error, /no gpt-<version>-<family> entries/u);
+
+  const grokListing = "Available models:\n  * grok-4.6 (default)\n  - grok-4.5\n  - grok-4.10\n  - grok-4.10\n  - grok-4.11-preview\n  - grok-5 beta\n";
+  assert.equal(pickLatestGrok(grokListing, "grok").model, "grok-4.10", "a suffixed ID is another model, never truncated; a repeated ID is not an ambiguity");
+  assert.deepEqual(pickLatestGrok(grokListing, "grok").considered, ["grok-4.6", "grok-4.5", "grok-4.10"]);
+  assert.match(pickLatestGrok(grokListing, "grokx").error, /no grokx model/u);
+  assert.match(pickLatestGrok("  * grok-4.7-preview (default)\n", "grok").error, /no grok model/u);
+
+  const cursorListing = spawnSync(join(bin, "cursor-agent"), ["--list-models"], { encoding: "utf8" }).stdout;
+  assert.equal(pickLatestCursor(cursorListing, "fable", "high").model, "claude-fable-5-1-high", "5.1 beats 5; thinking variants are not the seat");
+  assert.equal(pickLatestCursor(cursorListing, "fable", "xhigh").model, "claude-fable-5-1-xhigh");
+  assert.equal(pickLatestCursor(cursorListing, "sol", "high").model, "gpt-5.6-sol-high", "the -fast variant is not the seat");
+  assert.equal(pickLatestCursor(cursorListing, "kimi", "max").model, "kimi-k3-max");
+  assert.equal(pickLatestCursor(cursorListing, "grok", "high").model, "cursor-grok-4.6-high");
+  assert.match(pickLatestCursor(cursorListing, "sonnet", "high").error, /no plain sonnet ID in the catalog — only thinking or fast variants/u);
+  assert.match(pickLatestCursor(cursorListing, "fable", "low").error, /the newest plain fable \(claude-fable-5-1\) offers high, xhigh, not low$/u);
+  assert.match(pickLatestCursor(cursorListing, "fable").error, /needs --effort/u);
+  assert.match(pickLatestCursor(cursorListing, "astra", "high").error, /no astra model/u);
+  // The newest version is chosen first; an effort it lacks is a refusal that
+  // names the older ID, never a silent downgrade to the version that has it.
+  const downgradeTrap = "claude-fable-5-2-medium - Fable 5.2 Medium\nclaude-fable-5-1-high - Fable 5.1\nclaude-fable-5-1-high - Fable 5.1 again\n";
+  assert.match(pickLatestCursor(downgradeTrap, "fable", "high").error, /the newest plain fable \(claude-fable-5-2\) offers medium, not high — name claude-fable-5-1-high explicitly to take an older version/u);
+  assert.equal(pickLatestCursor(downgradeTrap, "fable", "medium").model, "claude-fable-5-2-medium");
+  assert.match(pickLatestCursor("composer-2.5 - Composer 2.5\ncomposer-2.5-fast - Composer 2.5 Fast\n", "composer", "high").error, /no composer model/u, "an ID without an effort token is outside the parser; name it exactly");
+
+  assert.equal(parseClaudeInit('{"type":"system","subtype":"init","model":"claude-fable-5-1"}\n{"type":"result"}').model, "claude-fable-5-1");
+  assert.equal(parseClaudeInit('{"type":"result"}'), null);
+});
+
+test("init resolves latest:<family> from each partner's live catalog and records the exact pick", () => {
+  const codexRepo = newRepo("latest-codex");
+  const sol = run("ok", "claude", "init", "--repo", codexRepo, "--partner", "codex", "--identity", "lais", "--model", "latest:sol", "--effort", "high").receipt;
+  assert.equal(sol.status, "created", sol.reason);
+  assert.equal(sol.model, "latest:sol", "the requested form stays the recorded model");
+  assert.equal(sol.model_resolved, "gpt-5.6-sol");
+  assert.equal(sol.model_source, "codex app-server model/list");
+  assert.ok(sol.resolved_at);
+  const calls = invocations();
+  // Both catalog pages are read from the identity's own account, then the
+  // session runs there too.
+  assert.deepEqual(calls.map((call) => [call.argv[0], call.codex_home]), [["app-server", realpathSync(laisHome)], ["app-server", realpathSync(laisHome)], ["exec", realpathSync(laisHome)]], "the catalog is read from the identity's own account");
+  assert.ok(calls[2].argv.includes("gpt-5.6-sol") && !calls[2].argv.includes("latest:sol"));
+  const state = JSON.parse(readFileSync(sol.state_file, "utf8"));
+  assert.deepEqual(state.model_evidence, { considered: ["gpt-5.6-sol", "gpt-5.5-sol"], efforts: ["low", "high", "xhigh"], codex_home: realpathSync(laisHome), codex_bin: join(bin, "codex"), pages: 2 });
+  assert.equal(state.partner_bin, join(bin, "codex"));
+  assert.equal(state.partner_bin_version, "9.9.9-fake");
+  assert.equal(run("ok", "claude", "status", "--repo", codexRepo).receipt.model_resolved, "gpt-5.6-sol");
+  // Astra is on the second page: a one-page read would miss it.
+  const astra = run("ok", "claude", "init", "--repo", newRepo("latest-astra"), "--partner", "codex", "--model", "latest:astra", "--effort", "high").receipt;
+  assert.equal(astra.model_resolved, "gpt-6-astra", astra.reason);
+  assert.match(run("rpc-loop", "claude", "init", "--repo", newRepo("latest-loop"), "--partner", "codex", "--model", "latest:astra", "--effort", "high").receipt.reason, /repeated cursor "page-2" on page 2 — refusing to loop/u);
+
+  const refused = run("ok", "claude", "init", "--repo", newRepo("latest-bad-effort"), "--partner", "codex", "--model", "latest:luna", "--effort", "ultra").receipt;
+  assert.match(refused.reason, /does not accept effort ultra/u);
+  assert.match(run("ok", "claude", "init", "--repo", newRepo("latest-plain"), "--partner", "codex", "--model", "latest", "--effort", "high").receipt.reason, /plain `latest`/u);
+  assert.match(run("rpc-silent", "claude", "init", "--repo", newRepo("latest-silent"), "--partner", "codex", "--model", "latest:sol", "--effort", "high", "--idle-min", "1").receipt.reason, /cannot read the Codex model catalog/u);
+  assert.match(run("ok", "claude", "init", "--repo", newRepo("latest-opencode"), "--partner", "opencode", "--model", "latest:sol").receipt.reason, /opencode has no latest:<family> resolution/u);
+
+  const grokRepo = newRepo("latest-grok");
+  const grok = run("ok", "claude", "init", "--repo", grokRepo, "--partner", "grok", "--model", "latest:grok", "--effort", "high").receipt;
+  assert.equal(grok.model_resolved, "grok-4.10");
+  assert.equal(grok.model_source, "grok models");
+  assert.ok(invocations()[0].argv.includes("grok-4.10"));
+
+  const cursorRepo = newRepo("latest-cursor");
+  const cursor = run("ok", "claude", "init", "--repo", cursorRepo, "--partner", "cursor", "--model", "latest:fable", "--effort", "high").receipt;
+  assert.equal(cursor.model_resolved, "claude-fable-5-1-high");
+  assert.equal(cursor.effort, "high");
+  const cursorArgs = invocations()[0].argv;
+  assert.equal(cursorArgs[cursorArgs.indexOf("--model") + 1], "claude-fable-5-1-high", "the catalog ID already carries the effort; no [effort=] suffix");
+});
+
+test("a Claude partner records the exact model its init event reports and is re-pinned on resume", () => {
+  const repo = newRepo("latest-claude");
+  const created = run("ok", "codex", "init", "--repo", repo, "--partner", "claude", "--model", "latest:fable", "--effort", "high").receipt;
+  assert.equal(created.status, "created", created.reason);
+  assert.equal(created.model, "latest:fable");
+  assert.equal(created.model_resolved, "claude-fable-5-1");
+  assert.equal(created.model_source, "claude system.init.model");
+  const [init] = invocations();
+  assert.equal(init.argv[init.argv.indexOf("--model") + 1], "fable", "the documented alias goes to the CLI");
+  run("ok", "codex", "send", "--repo", repo, "--kind", "review", "--body-file", bodyFile("look"));
+  const [turn] = invocations();
+  assert.deepEqual(turn.argv.slice(0, 3), ["-p", "--resume", CLAUDE_SID]);
+  assert.equal(turn.argv[turn.argv.indexOf("--model") + 1], "claude-fable-5-1", "the resumed turn pins the exact ID, not the alias");
+
+  // A CLI default is still pinned once the init event names it.
+  const defaulted = run("ok", "codex", "init", "--repo", newRepo("claude-default"), "--partner", "claude").receipt;
+  assert.equal(defaulted.model, null);
+  assert.equal(defaulted.model_resolved, "claude-opus-5");
+  // An alias that lands outside its family is a moved default, not the seat.
+  const moved = run("moved-alias", "codex", "init", "--repo", newRepo("claude-moved"), "--partner", "claude", "--model", "latest:fable").receipt;
+  assert.match(moved.reason, /claude resolved alias fable to claude-opus-5 — not a fable model/u);
+  assert.match(run("ok", "codex", "init", "--repo", newRepo("claude-haiku"), "--partner", "claude", "--model", "latest:haiku").receipt.reason, /claude resolves only the documented aliases fable, opus, sonnet/u);
+
+  // The bare alias is the same request: it goes to the CLI as given, the
+  // init report is recorded, and a report outside the family refuses.
+  const bare = run("ok", "codex", "init", "--repo", newRepo("claude-bare-alias"), "--partner", "claude", "--model", "fable").receipt;
+  assert.equal(bare.model, "fable");
+  assert.equal(bare.model_resolved, "claude-fable-5-1");
+  const bareMoved = run("moved-alias", "codex", "init", "--repo", newRepo("claude-bare-moved"), "--partner", "claude", "--model", "opus").receipt;
+  assert.equal(bareMoved.ok, true, "opus resolving to claude-opus-5 is in family");
+  assert.match(run("moved-alias", "codex", "init", "--repo", newRepo("claude-bare-moved-2"), "--partner", "claude", "--model", "sonnet").receipt.reason, /claude resolved alias sonnet to claude-opus-5 — not a sonnet model; the bootstrap session claude-session-abc exists in Claude's store but no pair was recorded/u);
+  const explicit = run("ok", "codex", "init", "--repo", newRepo("claude-explicit"), "--partner", "claude", "--model", "claude-fable-5-1").receipt;
+  assert.equal(explicit.model_resolved, "claude-fable-5-1");
+  // A bootstrap the CLI marks as an error is not a created pair.
+  const errored = run("error", "codex", "init", "--repo", newRepo("claude-init-error"), "--partner", "claude").receipt;
+  assert.equal(errored.ok, false);
+  assert.match(errored.reason, /reported is_error during init — the claude session claude-session-abc exists in its store but no pair was recorded/u);
+  assert.equal(existsSync(join(realpathSync(newRepo("claude-init-error")), ".git", "pair", "session.json")), false);
+});
+
+test("codexRead speaks the app-server handshake for the three read methods and nothing else", async () => {
+  const options = { codexHome: laisHome, env: env("ok", "claude"), timeoutMs: 5000 };
+  writeFileSync(log, "");
+  const catalog = await codexRead("model/list", {}, options);
+  assert.equal(catalog.data[0].id, "gpt-5.6-sol");
+  assert.equal(catalog.nextCursor, "page-2");
+  assert.equal(invocations()[0].codex_home, laisHome, "the account is selected by CODEX_HOME");
+  const whole = await codexModelCatalog(options);
+  assert.deepEqual(whole.data.map((entry) => entry.id).slice(-3), ["gpt-6-astra", "gpt-7-nova", "gpt-7-nova"]);
+  assert.equal(whole.pages, 2);
+  await assert.rejects(codexModelCatalog({ ...options, env: env("rpc-loop", "claude") }), /repeated cursor "page-2"/u);
+  const oldCatalog = await codexModelCatalog({ ...options, bin: oldCodexBin });
+  assert.equal(oldCatalog.pages, 1);
+  assert.ok(!oldCatalog.data.some((entry) => entry.id === "gpt-6-astra"), "the old install publishes no Astra");
+  const account = await codexRead("account/read", {}, options);
+  assert.equal(account.account.planType, "pro");
+  const limits = await codexRead("account/rateLimits/read", {}, options);
+  assert.equal(limits.rateLimits.limitId, "codex");
+  assert.deepEqual([...CODEX_READ_METHODS], ["account/read", "account/rateLimits/read", "model/list"]);
+  await assert.rejects(codexRead("thread/start", {}, options), /allows only account\/read, account\/rateLimits\/read, model\/list, not thread\/start/u);
+  await assert.rejects(codexRead("model/list", {}, { ...options, env: env("rpc-silent", "claude"), timeoutMs: 300 }), /did not answer model\/list within 300ms/u);
+  await assert.rejects(codexRead("model/list", {}, { ...options, bin: join(root, "no-such-codex") }), /cannot run/u);
+  await assert.rejects(codexRead("model/list", {}, { ...options, timeoutMs: 0 }), /positive finite timeoutMs/u);
+  // A server that ignores TERM is killed within the grace period, and the
+  // timeout error carries no stderr.
+  writeFileSync(log, "");
+  const started = Date.now();
+  await assert.rejects(codexRead("model/list", {}, { ...options, env: env("rpc-ignore-term", "claude"), timeoutMs: 300 }), /^Error: codex app-server did not answer model\/list within 300ms$/u);
+  const stubborn = invocations().find((call) => call.argv[0] === "app-server");
+  const deadline = Date.now() + 3000;
+  while (processAlive(stubborn.pid) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(processAlive(stubborn.pid), false, "the TERM-ignoring server was killed");
+  assert.ok(Date.now() - started < 3000);
+  // Nothing from the log line above names a token or a login; the helper
+  // only ever forwards the server's own JSON answer.
+  assert.doesNotMatch(readFileSync(log, "utf8"), /auth\.json|token/u);
 });
 
 test("the role sets the default lease and any turn may override it", () => {
@@ -832,7 +1353,7 @@ test("a partner that cannot spawn returns a failed receipt before running", (t) 
     receipt = JSON.parse(error.stdout);
   }
   assert.equal(receipt.status, "failed");
-  assert.match(receipt.reason, /cannot run codex/u);
+  assert.ok(receipt.reason.startsWith(`cannot run ${binary}:`), receipt.reason);
   assert.equal(existsSync(join(realpathSync(repo), ".git", "pair", "in-flight.json")), false);
 });
 

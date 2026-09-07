@@ -6,7 +6,8 @@
 // did not, and the transcript is the evidence either way.
 //
 //   node pair-headless.mjs init   --repo <root> --partner claude|codex|cursor|grok|opencode
-//                                 [--model <name>] [--effort <level>] [--role peer|executor]
+//                                 [--identity <name>] [--model <id|latest:family>] [--effort <level>]
+//                                 [--role peer|executor]
 //   node pair-headless.mjs send   --repo <root> --kind <kind> --body-file <path> [--write|--read-only]
 //                                 [--background]
 //   node pair-headless.mjs wait   --repo <root> [--seq N] [--timeout-min 125]
@@ -51,6 +52,7 @@ import {
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { codexBinary, codexHomeFor, codexModelCatalog, verifyCodexBinary } from "./codex-rpc.mjs";
 
 const POLL_MS = 2000;
 const WAIT_POLL_MS = 100;
@@ -119,9 +121,42 @@ export const detectSelf = (env = process.env) => {
   return null;
 };
 
+// An identity is the account a partner CLI runs as. Codex keeps one login per
+// `CODEX_HOME`, so a named Codex identity is a separate home under
+// `~/.codex-profiles/<name>` and `default` is `~/.codex`. The other CLIs have
+// one account on this machine, so only `default` is accepted for them and the
+// child inherits whatever their own environment already points at.
+export const partnerIdentity = (partner, identity = "default", { home = homedir() } = {}) => {
+  const name = identity ?? "default";
+  if (partner === "codex") {
+    const resolved = codexHomeFor(name, { home });
+    if (resolved.error) return { error: resolved.error };
+    return { identity: resolved.identity, identity_home: resolved.codexHome };
+  }
+  if (name !== "default") {
+    return { error: `${partner} has no named identities — only Codex keeps one account per home; drop --identity or use default` };
+  }
+  return { identity: "default", identity_home: null };
+};
+
+// The account the lead itself runs as, read from its own environment before
+// anything is overridden for a child. Only Codex can differ per home; for the
+// other CLIs the answer is "the one account", spelled as null.
+const realpathOrSelf = (path) => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+export const selfHome = (kind, env = process.env, home = homedir()) =>
+  kind === "codex" ? realpathOrSelf(env.CODEX_HOME || join(home, ".codex")) : null;
+
 // The partner is always chosen, never derived: with several CLIs there is no
-// "opposite" to fall back on. The only rule is that it differs from the lead.
-export const resolvePartner = (requested, env = process.env) => {
+// "opposite" to fall back on. The rule is that it differs from the lead — as
+// a CLI, or, for two Codex processes, as an account: a second Codex home is a
+// separate login and a real peer, while the same home would echo.
+export const resolvePartner = (requested, env = process.env, { identity = "default", home = homedir() } = {}) => {
   const self = detectSelf(env);
   if (!requested) {
     return { error: `missing --partner — choose one of ${kindList}, other than the CLI you are` };
@@ -129,12 +164,49 @@ export const resolvePartner = (requested, env = process.env) => {
   if (!AGENT_KINDS.includes(requested)) {
     return { error: `unknown partner ${requested} — use one of ${kindList}` };
   }
+  const account = partnerIdentity(requested, identity, { home });
+  if (account.error) return { error: account.error };
   if (self && requested === self) {
-    return {
-      error: `refusing to pair ${self} with itself — the partner must be a different CLI (${AGENT_KINDS.filter((kind) => kind !== self).join(", ")})`,
-    };
+    const own = selfHome(self, env, home);
+    if (requested !== "codex" || !own || own === account.identity_home) {
+      return {
+        error: `refusing to pair ${self} with itself — the partner must be a different CLI (${AGENT_KINDS.filter((kind) => kind !== self).join(", ")})${self === "codex" ? ", or a different Codex account named with --identity" : ""}`,
+      };
+    }
   }
-  return { partner: requested, self: self ?? "lead" };
+  return { partner: requested, self: self ?? "lead", identity: account.identity, identity_home: account.identity_home };
+};
+
+// Only Codex takes an account override, and it always gets one: a lead that
+// runs under a named home would otherwise hand that home to its partner.
+// The variables each harness exports to mark its own shells. They are read by
+// `detectSelf` above, on the lead's own environment, and stripped from the
+// child's: a partner that inherited them would take itself for the lead's CLI
+// and account when it runs this helper in turn. Provider auth and config
+// variables are not in this list and pass through untouched.
+export const LEAD_MARKERS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CODEX_THREAD_ID",
+  "CODEX_SANDBOX",
+  "CURSOR_AGENT",
+  "CURSOR_AGENT_CHAT_ID",
+  "GROK_SESSION_ID",
+  "GROK_AGENT",
+  "OPENCODE_CLIENT",
+  "OPENCODE_PID",
+  "OPENCODE_WORKSPACE_ID",
+];
+
+export const partnerEnv = ({ partner, identity_home: identityHome }, env = process.env) => {
+  const child = { ...env };
+  for (const marker of LEAD_MARKERS) delete child[marker];
+  // A session that recorded its Codex home runs under it. A session recorded
+  // before identities existed keeps what it always had — the inherited
+  // CODEX_HOME — because switching it here would move a live pair to another
+  // account without anyone choosing that.
+  if (partner === "codex" && identityHome) child.CODEX_HOME = identityHome;
+  return child;
 };
 
 export const ROLES = ["peer", "executor"];
@@ -355,9 +427,9 @@ const storeHolds = (store, sid) => {
   return walk(store, 0) || unreadable;
 };
 
-export const sessionKnown = (partner, sid, root, env = process.env, home = homedir()) => {
+export const sessionKnown = (partner, sid, root, env = process.env, home = homedir(), identityHome = null) => {
   if (partner === "codex") {
-    return storeHolds(join(env.CODEX_HOME || join(home, ".codex"), "sessions"), sid);
+    return storeHolds(join(identityHome || env.CODEX_HOME || join(home, ".codex"), "sessions"), sid);
   }
   if (partner === "grok") {
     return storeHolds(join(env.GROK_HOME || join(home, ".grok"), "sessions"), sid);
@@ -418,7 +490,7 @@ export const cursorModel = (model, effort) => {
 // commands denied, Grok self-cancelled calls). The write lease, scope
 // contract, and review gates are the restraint on a writable turn; read-only
 // turns keep each CLI's restraining mode.
-export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, write, model, effort }) => {
+export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root, write, model, effort, bin = null }) => {
   if (partner === "codex") {
     const sandbox = write ? "danger-full-access" : "read-only";
     // The sandbox and the approval policy are separate controls: a machine
@@ -426,15 +498,18 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
     // writable turn, so the bypass forces both. Config form, because
     // `codex exec resume` does not accept -a.
     const approval = write ? ["-c", 'approval_policy="never"'] : [];
+    // The binary is the one the session recorded: the catalog it resolved
+    // against and the sessions it wrote belong to that install.
+    const codex = bin ?? "codex";
     if (resume) {
       return {
-        bin: "codex",
+        bin: codex,
         args: ["exec", "resume", sid, "-c", `sandbox_mode="${sandbox}"`, ...approval, "--json", "-o", replyFile, "-"],
         promptVia: "stdin",
       };
     }
     return {
-      bin: "codex",
+      bin: codex,
       args: [
         "exec",
         "-s",
@@ -462,13 +537,16 @@ export const turnCommand = ({ partner, sid, resume, replyFile, promptFile, root,
     // an approval no headless run can give, so the partner could edit but never
     // validate (proved on mcp-901, 2026-08-22: bun, git, and gh all "requires
     // approval"). Writable turns therefore run bypassPermissions.
+    // The model is passed on resume too: an alias such as `fable` names
+    // whatever is latest at that moment, so a resumed turn pins the exact ID
+    // the first run reported rather than letting the alias move underneath.
     const tail = [
       "--output-format",
       "stream-json",
       "--verbose",
       "--strict-mcp-config",
       "--no-chrome",
-      ...(model && !resume ? ["--model", model] : []),
+      ...(model ? ["--model", model] : []),
       ...(effort ? ["--effort", effort] : []),
       "--permission-mode",
       write ? "bypassPermissions" : "plan",
@@ -739,10 +817,10 @@ const writeReply = (partner, replyFile, transcript) => {
 
 // Detached so a signal aimed at this helper's process group cannot decapitate a
 // partner turn that is mid-edit; killed by PID, never by group.
-const supervise = ({ bin, args, cwd, prompt, transcriptPath, idleMs, totalMs, onSpawn, onExit, onHang }) => {
+const supervise = ({ bin, args, cwd, env = process.env, prompt, transcriptPath, idleMs, totalMs, onSpawn, onExit, onHang }) => {
   const startedAt = Date.now();
   const fd = openSync(transcriptPath, "w");
-  const child = spawn(bin, args, { cwd, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(bin, args, { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
   onSpawn?.(child.pid);
   let text = "";
   let lastGrowth = Date.now();
@@ -817,9 +895,255 @@ const supervise = ({ bin, args, cwd, prompt, transcriptPath, idleMs, totalMs, on
   }, POLL_MS);
 };
 
+// --- model resolution -------------------------------------------------------
+//
+// `--model` takes either an exact ID the CLI accepts or `latest:<family>`,
+// which the helper resolves against the partner's live catalog before the
+// session is created and records as `model_resolved`. Resolution is by exact
+// family token and numeric version order — never a lexical sort (5.0 would
+// beat 5.1 there), never a hidden or promo entry, never a neighbouring family
+// when the asked one is absent. Two candidates at the same top version fail as
+// ambiguous rather than guess.
+
+const LATEST = /^latest:([a-z0-9]+)$/iu;
+// Claude Code documents family aliases for --model; the CLI resolves them and
+// the stream's `system.init.model` reports the exact ID it chose. Haiku is
+// excluded by Henrique's roster.
+export const CLAUDE_ALIASES = ["fable", "opus", "sonnet"];
+
+export const parseModelRequest = (model) => {
+  if (!model) return { kind: "default" };
+  if (/^latest$/iu.test(model)) {
+    return { error: "plain `latest` names no family — use latest:<family>, for example latest:sol" };
+  }
+  const latest = model.match(LATEST);
+  if (latest) return { kind: "latest", family: latest[1].toLowerCase() };
+  if (/^latest:/iu.test(model)) {
+    return { error: `${model} is not a family — use latest:<family> with letters and digits only` };
+  }
+  return { kind: "explicit", model };
+};
+
+// "5.6" < "6" < "6.1": numeric per segment, a missing segment reads as zero.
+export const compareVersions = (a, b) => {
+  const left = String(a).split(".").map(Number);
+  const right = String(b).split(".").map(Number);
+  for (let index = 0; index < Math.max(left.length, right.length); index++) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference;
+  }
+  return 0;
+};
+
+const newestByVersion = (candidates) => {
+  if (candidates.length === 0) return { none: true };
+  const sorted = [...candidates].sort((a, b) => compareVersions(b.version, a.version));
+  const top = sorted.filter((candidate) => compareVersions(candidate.version, sorted[0].version) === 0);
+  if (top.length > 1) return { ambiguous: top.map((candidate) => candidate.id) };
+  return { pick: sorted[0] };
+};
+
+// Codex catalog entries are `gpt-<version>-<family>`; the version is the
+// numeric run between the vendor prefix and the family token.
+const CODEX_ID = /^gpt-(\d+(?:\.\d+)*)-([a-z0-9]+)$/iu;
+
+export const pickLatestCodex = (catalog, family, effort = null) => {
+  const entries = Array.isArray(catalog?.data) ? catalog.data : Array.isArray(catalog) ? catalog : [];
+  const wanted = String(family).toLowerCase();
+  const candidates = [];
+  for (const entry of entries) {
+    const id = typeof entry?.model === "string" ? entry.model : entry?.id;
+    if (typeof id !== "string" || entry?.hidden === true) continue;
+    const match = id.match(CODEX_ID);
+    if (!match || match[2].toLowerCase() !== wanted) continue;
+    const efforts = (entry.supportedReasoningEfforts ?? [])
+      .map((item) => (typeof item === "string" ? item : item?.reasoningEffort))
+      .filter((item) => typeof item === "string");
+    candidates.push({ id, version: match[1], efforts });
+  }
+  const outcome = newestByVersion(candidates);
+  if (outcome.none) {
+    const families = [...new Set(entries.map((entry) => (entry?.model ?? entry?.id ?? "").match(CODEX_ID)?.[2]).filter(Boolean))];
+    return { error: `no visible Codex model in family ${wanted} — the catalog has ${families.length ? families.join(", ") : "no gpt-<version>-<family> entries"}` };
+  }
+  if (outcome.ambiguous) {
+    return { error: `family ${wanted} is ambiguous at its newest version: ${outcome.ambiguous.join(", ")} — name one explicitly` };
+  }
+  const { pick } = outcome;
+  if (effort && !pick.efforts.includes(effort)) {
+    return { error: `${pick.id} does not accept effort ${effort} — the catalog lists ${pick.efforts.join(", ") || "no efforts"}` };
+  }
+  return { model: pick.id, efforts: pick.efforts, considered: candidates.map((candidate) => candidate.id) };
+};
+
+// `grok models` prints one model per line under "Available models:", the
+// default marked with `*`. Grok has one family, so `latest:grok` is the only
+// request and its version is the trailing number.
+export const pickLatestGrok = (text, family = "grok") => {
+  const wanted = String(family).toLowerCase();
+  const candidates = [];
+  const seen = new Set();
+  for (const line of String(text).split("\n")) {
+    // The whole line is the ID plus, at most, the CLI's own parenthesised
+    // annotation such as "(default)". A suffixed ID like grok-4.7-preview is
+    // a different model and never truncated into a stable one.
+    const match = line.match(/^\s*[*-]\s+([a-z0-9]+)-(\d+(?:\.\d+)*)(?:\s+\([^)]*\))?\s*$/iu);
+    if (!match || match[1].toLowerCase() !== wanted) continue;
+    const id = `${match[1]}-${match[2]}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    candidates.push({ id, version: match[2] });
+  }
+  const outcome = newestByVersion(candidates);
+  if (outcome.none) return { error: `no ${wanted} model in the \`grok models\` listing` };
+  if (outcome.ambiguous) return { error: `family ${wanted} is ambiguous at its newest version: ${outcome.ambiguous.join(", ")}` };
+  return { model: outcome.pick.id, considered: candidates.map((candidate) => candidate.id) };
+};
+
+// Cursor encodes effort in the ID, so a family resolves only together with an
+// effort. IDs come in two shapes — `<vendor>-<version>-<family>-<effort>` for
+// GPT and `<vendor>-<family>-<version>-<effort>` for the others — and both
+// carry optional `thinking` and `-fast` variants. The plain form is the seat;
+// variants are chosen only by exact ID.
+const CURSOR_LINE = /^\s*([a-z0-9.-]+)\s+-\s+(.*)$/iu;
+const CURSOR_VERSION = "([a-z]?\\d+(?:[.-]\\d+)*)";
+
+export const pickLatestCursor = (text, family, effort) => {
+  const wanted = String(family).toLowerCase();
+  if (!effort) return { error: `cursor encodes effort in the model ID, so latest:${wanted} needs --effort` };
+  const shapes = [
+    new RegExp(`^(?:[a-z]+-)?${CURSOR_VERSION}-${wanted}(-thinking)?-(low|medium|high|xhigh|max)(-fast)?$`, "iu"),
+    new RegExp(`^(?:[a-z]+-)?${wanted}-${CURSOR_VERSION}(-thinking)?-(low|medium|high|xhigh|max)(-fast)?$`, "iu"),
+  ];
+  const seen = [];
+  const plain = [];
+  for (const line of String(text).split("\n")) {
+    const id = line.match(CURSOR_LINE)?.[1];
+    if (!id || seen.includes(id)) continue;
+    for (const shape of shapes) {
+      const match = id.match(shape);
+      if (!match) continue;
+      seen.push(id);
+      const [, version, thinking, level, fast] = match;
+      if (thinking || fast) continue;
+      plain.push({ id, version: version.replace(/^[a-z]/iu, "").replaceAll("-", "."), level: level.toLowerCase() });
+      break;
+    }
+  }
+  if (seen.length === 0) return { error: `no ${wanted} model in \`cursor-agent --list-models\`` };
+  // The newest version is decided over every plain member first; only then is
+  // the effort required there. Otherwise a version that lacks the requested
+  // effort would silently hand the seat to an older one.
+  const newest = plain.reduce((top, candidate) => (!top || compareVersions(candidate.version, top.version) > 0 ? candidate : top), null);
+  if (!newest) {
+    return { error: `no plain ${wanted} ID in the catalog — only thinking or fast variants; name one explicitly if you want it` };
+  }
+  const atNewest = plain.filter((candidate) => compareVersions(candidate.version, newest.version) === 0);
+  const outcome = newestByVersion(atNewest.filter((candidate) => candidate.level === effort.toLowerCase()));
+  if (outcome.none) {
+    const offered = [...new Set(atNewest.map((candidate) => candidate.level))];
+    const older = plain.filter((candidate) => candidate.level === effort.toLowerCase()).map((candidate) => candidate.id);
+    return {
+      error: `the newest plain ${wanted} (${atNewest[0].id.replace(/-(?:low|medium|high|xhigh|max)$/iu, "")}) offers ${offered.join(", ")}, not ${effort}${older.length ? ` — name ${older.join(" or ")} explicitly to take an older version` : ""}`,
+    };
+  }
+  if (outcome.ambiguous) return { error: `family ${wanted} is ambiguous at its newest version: ${outcome.ambiguous.join(", ")}` };
+  return { model: outcome.pick.id, considered: seen };
+};
+
+export const parseClaudeInit = (transcript) =>
+  parseJsonObjects(transcript).find((event) => event.type === "system" && event.subtype === "init") ?? null;
+
+const catalogText = (bin, args, env) => {
+  const run = spawnSync(bin, args, { encoding: "utf8", env, timeout: 30000 });
+  if (run.error) return { error: `cannot run ${bin} ${args.join(" ")}: ${run.error.message}` };
+  if (run.status !== 0) return { error: `${bin} ${args.join(" ")} exited ${run.status}: ${(run.stderr || "").trim().slice(-300)}` };
+  return { text: run.stdout };
+};
+
+// What the first run is started with, and what the session will record.
+// Claude is the one partner resolved after the run: its alias goes to the CLI
+// as-is and the init event reports the exact ID.
+export const resolveModelRequest = async ({ partner, model, effort, identityHome, codexBin = null, env = process.env }) => {
+  const request = parseModelRequest(model);
+  if (request.error) return { error: request.error };
+  const at = new Date().toISOString();
+  if (request.kind === "default") {
+    return { command: { model: null, effort }, model_resolved: null, model_source: partner === "claude" ? "claude system.init.model" : "CLI default", resolved_at: null };
+  }
+  if (request.kind === "explicit") {
+    // A bare Claude alias is the same request as latest:<alias>: the CLI
+    // resolves it, and the init report has to land in that family.
+    const alias = partner === "claude" && CLAUDE_ALIASES.includes(request.model.toLowerCase())
+      ? request.model.toLowerCase()
+      : null;
+    return {
+      command: { model: request.model, effort },
+      model_resolved: partner === "claude" ? null : request.model,
+      model_source: partner === "claude" ? "claude system.init.model" : "explicit",
+      resolved_at: partner === "claude" ? null : at,
+      ...(alias ? { family: alias } : {}),
+    };
+  }
+  const { family } = request;
+  if (partner === "codex") {
+    const bin = codexBin ?? codexBinary(env);
+    let catalog;
+    try {
+      catalog = await codexModelCatalog({ codexHome: identityHome, bin, env });
+    } catch (error) {
+      return { error: `cannot read the Codex model catalog through ${bin}: ${error.message}` };
+    }
+    const pick = pickLatestCodex(catalog, family, effort);
+    if (pick.error) return { error: `${pick.error} (catalog of ${bin}, ${catalog.pages} page${catalog.pages === 1 ? "" : "s"}, home ${identityHome ?? "inherited"})` };
+    return {
+      command: { model: pick.model, effort },
+      model_resolved: pick.model,
+      model_source: "codex app-server model/list",
+      model_evidence: { considered: pick.considered, efforts: pick.efforts, codex_home: identityHome, codex_bin: bin, pages: catalog.pages },
+      resolved_at: at,
+    };
+  }
+  if (partner === "grok") {
+    const listing = catalogText("grok", ["models"], env);
+    if (listing.error) return { error: listing.error };
+    const pick = pickLatestGrok(listing.text, family);
+    if (pick.error) return { error: pick.error };
+    return {
+      command: { model: pick.model, effort },
+      model_resolved: pick.model,
+      model_source: "grok models",
+      model_evidence: { considered: pick.considered },
+      resolved_at: at,
+    };
+  }
+  if (partner === "cursor") {
+    const listing = catalogText("cursor-agent", ["--list-models"], env);
+    if (listing.error) return { error: listing.error };
+    const pick = pickLatestCursor(listing.text, family, effort);
+    if (pick.error) return { error: pick.error };
+    // The resolved ID already carries the effort, so the command gets no
+    // separate suffix; the session still records the requested effort.
+    return {
+      command: { model: pick.model, effort: null },
+      model_resolved: pick.model,
+      model_source: "cursor-agent --list-models",
+      model_evidence: { considered: pick.considered },
+      resolved_at: at,
+    };
+  }
+  if (partner === "claude") {
+    if (!CLAUDE_ALIASES.includes(family)) {
+      return { error: `claude resolves only the documented aliases ${CLAUDE_ALIASES.join(", ")} — latest:${family} has no live catalog here` };
+    }
+    return { command: { model: family, effort }, model_resolved: null, model_source: "claude system.init.model", resolved_at: null, family };
+  }
+  return { error: `${partner} has no latest:<family> resolution — name an exact model from \`opencode models\`` };
+};
+
 // --- prompts ----------------------------------------------------------------
 
-export const bootstrapPrompt = ({ self, partner, root, role = "peer" }) =>
+export const bootstrapPrompt =({ self, partner, root, role = "peer" }) =>
   [
     `You are the pair partner for a ${self} lead working in ${root}.`,
     role === "executor"
@@ -893,30 +1217,64 @@ const deadlines = ({ kind, write } = {}) => {
   return { idleMs: idle.ms, totalMs: total.ms };
 };
 
-const runInit = () => {
+// The fields a receipt and `status` report about the recorded staffing.
+const staffingFields = (state) => ({
+  model: state.model ?? null,
+  effort: state.effort ?? null,
+  identity: state.identity ?? "default",
+  identity_home: state.identity_home ?? null,
+  model_resolved: state.model_resolved ?? null,
+  model_source: state.model_source ?? null,
+  resolved_at: state.resolved_at ?? null,
+  partner_bin: state.partner_bin ?? null,
+  partner_bin_version: state.partner_bin_version ?? null,
+});
+
+const runInit = async () => {
   const place = requirePlace();
-  const { partner, self, error } = resolvePartner(opt("partner"));
-  if (error) fail(error, 2);
+  const requestedPartner = opt("partner");
+  const requestedIdentity = opt("identity");
+  if (!requestedPartner) fail(`missing --partner — choose one of ${kindList}, other than the CLI you are`, 2);
+  if (!AGENT_KINDS.includes(requestedPartner)) fail(`unknown partner ${requestedPartner} — use one of ${kindList}`, 2);
   const role = opt("role", "peer");
   if (!ROLES.includes(role)) fail(`unknown role ${role} — use ${ROLES.join(" or ")}`, 2);
   const model = opt("model");
   const effort = opt("effort");
-  if (effort && !EFFORT_SUPPORT[partner]) {
-    fail(`${partner} has no reasoning-effort control — drop --effort`, 2);
+  if (effort && !EFFORT_SUPPORT[requestedPartner]) {
+    fail(`${requestedPartner} has no reasoning-effort control — drop --effort`, 2);
   }
-  if (partner === "cursor" && effort && !model) {
+  if (requestedPartner === "cursor" && effort && !model) {
     fail("cursor carries effort inside the model name, so --effort needs --model", 2);
   }
+
+  // The recorded session is read before anything is resolved for a new one:
+  // a resume takes its partner, identity, and home from the record, never from
+  // the caller's current environment or a defaulted flag.
   const existing = readState(place.statePath);
   // A recorded pair with the other partner is an active choice, never an
   // overwrite: replacing it here would discard that pair's sid and history
   // behind a receipt that reads as a plain create.
-  if (existing?.sid && existing.partner !== partner) {
+  if (existing?.sid && existing.partner !== requestedPartner) {
     fail(
       `a ${existing.partner} pair already exists here (sid ${existing.sid}) — end it first, or pass --partner ${existing.partner} to resume it`,
     );
   }
-  if (existing?.sid && existing.partner === partner && sessionKnown(partner, existing.sid, place.root)) {
+  if (existing?.sid) {
+    // The account is part of the session: a different one is a different
+    // login, and its store cannot hold this sid.
+    const recordedIdentity = existing.identity ?? "default";
+    if (requestedIdentity && requestedIdentity !== recordedIdentity) {
+      fail(
+        `this pair runs as ${existing.partner} identity ${recordedIdentity} (sid ${existing.sid}) — end it first to pair with identity ${requestedIdentity}`,
+      );
+    }
+    if (!sessionKnown(existing.partner, existing.sid, place.root, process.env, homedir(), existing.identity_home ?? null)) {
+      // A proved absence is a lost session, and replacing it here would bury
+      // that loss — and the pair's history — under a fresh create.
+      fail(
+        `the recorded ${existing.partner} session ${existing.sid} (identity ${recordedIdentity}) is absent from its session store — inspect ${place.statePath}, then end the pair before creating a new one`,
+      );
+    }
     emit(
       {
         ok: true,
@@ -924,14 +1282,31 @@ const runInit = () => {
         sid: existing.sid,
         partner: existing.partner,
         role: existing.role ?? "peer",
-        model: existing.model ?? null,
-        effort: existing.effort ?? null,
+        ...staffingFields(existing),
         state_file: place.statePath,
         transcripts: existing.transcripts ?? place.transcripts,
       },
       0,
     );
   }
+
+  const { partner, self, identity, identity_home: identityHome, error } = resolvePartner(requestedPartner, process.env, {
+    identity: requestedIdentity ?? "default",
+  });
+  if (error) fail(error, 2);
+  // The Codex binary is chosen once, verified, and recorded: the catalog it
+  // publishes is the one resolved against, and every later turn runs it.
+  let codexBin = null;
+  let codexBinVersion = null;
+  if (partner === "codex") {
+    const verified = verifyCodexBinary(codexBinary(process.env));
+    if (verified.error) fail(`the Codex binary could not be verified — set CODEX_BIN to an installed codex: ${verified.error}`, 2);
+    codexBin = verified.bin;
+    codexBinVersion = verified.version;
+  }
+
+  const resolved = await resolveModelRequest({ partner, model, effort, identityHome, codexBin, env: process.env });
+  if (resolved.error) fail(resolved.error, 2);
 
   mkdirSync(place.transcripts, { recursive: true });
   const transcriptPath = join(place.transcripts, "0000-init.log");
@@ -946,8 +1321,9 @@ const runInit = () => {
     promptFile,
     root: place.root,
     write: false,
-    model,
-    effort,
+    model: resolved.command.model,
+    effort: resolved.command.effort,
+    bin: codexBin,
   });
   const { idleMs, totalMs } = deadlines();
   const prompt = bootstrapPrompt({ self, partner, root: place.root, role });
@@ -958,6 +1334,7 @@ const runInit = () => {
     bin,
     args: invocationArgs,
     cwd: place.root,
+    env: partnerEnv({ partner, identity_home: identityHome }),
     prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath,
     idleMs,
@@ -971,19 +1348,50 @@ const runInit = () => {
       if (!sid) {
         fail(`${bin} produced no session id — a pair needs a resumable session; see ${transcriptPath}`);
       }
+      // A bootstrap that the CLI itself marks as an error is not a pair, even
+      // when it exited 0 and left a session id behind.
+      if (
+        (partner === "claude" && parseClaudeResult(transcript)?.is_error) ||
+        (partner === "cursor" && parseCursorResult(transcript)?.is_error)
+      ) {
+        fail(`${bin} reported is_error during init — the ${partner} session ${sid} exists in its store but no pair was recorded; see ${transcriptPath}`);
+      }
+      // Claude reports the exact model it resolved in its init event. That
+      // report is the record; an alias that resolved outside its family is a
+      // moved default, not the requested seat.
+      let modelResolved = resolved.model_resolved;
+      let resolvedAt = resolved.resolved_at;
+      if (partner === "claude") {
+        const init = parseClaudeInit(transcript);
+        modelResolved = typeof init?.model === "string" ? init.model : null;
+        if (resolved.family && (!modelResolved || !modelResolved.includes(resolved.family))) {
+          fail(
+            `claude resolved alias ${resolved.family} to ${modelResolved ?? "no reported model"} — not a ${resolved.family} model; the bootstrap session ${sid} exists in Claude's store but no pair was recorded; see ${transcriptPath}`,
+          );
+        }
+        resolvedAt = modelResolved ? new Date().toISOString() : null;
+      }
       writeReply(partner, replyFile, transcript);
-      writeState(place.statePath, {
+      const state = {
         schema: SCHEMA,
         partner,
         self,
         role,
         model: model ?? null,
         effort: effort ?? null,
+        identity,
+        identity_home: identityHome,
+        ...(codexBin ? { partner_bin: codexBin, partner_bin_version: codexBinVersion } : {}),
+        model_resolved: modelResolved,
+        model_source: resolved.model_source,
+        ...(resolved.model_evidence ? { model_evidence: resolved.model_evidence } : {}),
+        resolved_at: resolvedAt,
         sid,
         seq: 0,
         created_at: new Date().toISOString(),
         transcripts: place.transcripts,
-      });
+      };
+      writeState(place.statePath, state);
       emit(
         {
           ok: true,
@@ -991,8 +1399,7 @@ const runInit = () => {
           sid,
           partner,
           role,
-          model: model ?? null,
-          effort: effort ?? null,
+          ...staffingFields(state),
           state_file: place.statePath,
           transcripts: place.transcripts,
           transcript: transcriptPath,
@@ -1187,7 +1594,11 @@ const runWorker = () => {
     promptFile: paths.promptFile,
     root: place.root,
     write,
+    // Claude is re-pinned to the exact ID its first run reported; every other
+    // CLI keeps model as a setting of the session it resumes.
+    model: state.partner === "claude" ? state.model_resolved ?? null : null,
     effort: ["claude", "opencode"].includes(state.partner) ? state.effort : null,
+    bin: state.partner_bin ?? null,
   });
   const prompt = readFileSync(paths.promptFile, "utf8");
   const invocationArgs = promptVia === "argv" ? [...args, prompt] : args;
@@ -1230,6 +1641,7 @@ const runWorker = () => {
     bin,
     args: invocationArgs,
     cwd: place.root,
+    env: partnerEnv(state),
     prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath: paths.transcriptPath,
     idleMs,
@@ -1520,13 +1932,12 @@ const runStatus = () => {
       sid: state.sid,
       partner: state.partner,
       role: state.role ?? "peer",
-      model: state.model ?? null,
-      effort: state.effort ?? null,
+      ...staffingFields(state),
       seq: state.seq ?? 0,
       created_at: state.created_at,
       state_file: place.statePath,
       transcripts: state.transcripts ?? place.transcripts,
-      session_known: sessionKnown(state.partner, state.sid, place.root),
+      session_known: sessionKnown(state.partner, state.sid, place.root, process.env, homedir(), state.identity_home ?? null),
       in_flight: readMarker(place.lockPath),
       latest_receipt: latestReceipt,
       grok_cancelled_consecutive: state.grok_cancelled_consecutive ?? 0,
@@ -1654,9 +2065,12 @@ if (invokedAsMain) {
   const run = COMMANDS[command];
   if (!run) {
     fail(
-      `usage: pair-headless.mjs <init|send|wait|fork|status|clear|end> --repo <root> [--partner ${kindList}] [--model <name>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--background] [--seq N] [--timeout-min N] [--idle-min N] [--total-min N]`,
+      `usage: pair-headless.mjs <init|send|wait|fork|status|clear|end> --repo <root> [--partner ${kindList}] [--identity <name>] [--model <id|latest:family>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--background] [--seq N] [--timeout-min N] [--idle-min N] [--total-min N]`,
       2,
     );
   }
-  run();
+  // init awaits a live catalog read; a rejection there is still a receipt.
+  Promise.resolve()
+    .then(run)
+    .catch((error) => fail(error?.message ?? String(error)));
 }

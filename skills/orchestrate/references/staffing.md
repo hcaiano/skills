@@ -1,74 +1,82 @@
 # Staffing
 
-Read this reference before each unit wave and each restaff. Pair's
-[`models.md`](../../pair/references/models.md) owns the model-choice rubric and
-the Roster subsections Operational preferences, Seats por papel, Pace and
-fallback, and Effort. This file owns arena floors, capacity evidence, and the
-orchestration decision record. Last calibrated 2026-08-23.
+Read before every wave and restaff. Pair's
+[`models.md`](../../pair/references/models.md) owns family selection, current
+roles, effort and catalog resolution. This file owns orchestration capacity and
+the decision record. Preserve the user's explicit model choices and current
+repository instructions over older preference tables.
 
 ## Decide
 
-Match model intelligence to task difficulty. Apply the roster before these
-arena floors. When two legal choices meet the same tier and bar, use Taste;
-when both tie, use lower pool pace, lower used percentage, then speed. Choose
-effort on the Roster's Seats por papel and Effort subsections. The current
-orchestrator CLI is not a legal partner; pair refuses same-CLI pairing.
+Match model intelligence to task difficulty. Joint planning uses Fable and Astra.
+Execution receives the accepted plan and required evidence. Choose a family
+that meets the scope and risk bar, then a working harness and an available
+account. Balance equal-bar work across subscriptions; Grok is eligible for
+bounded simple tasks instead of waiting for every premium pool to be exhausted.
+Reserve strong-model capacity for review, corrections and ambiguous decisions.
+Available quota never lowers the required proof or authorizes more work.
 
-Direct unit partners have this floor:
+Use the family's latest supported version for a new session and preserve the
+resolved model for an existing one. Record both the requested family/alias and
+the resolved model reported by Pair. An unknown catalog is not permission to
+invent a model ID or substitute another family. Explicit version pins remain
+valid when Henrique requests them.
+Use `--backend headless` for `latest:<family>` and named Codex identities,
+even when the lead runs in Herdr; that backend does not yet resolve these inputs.
 
-| arena | normal lane | hard lane | excluded direct lane |
-|---|---|---|---|
-| Claude | `claude-opus-5` for UI/design units; general/back-end units prefer the Codex or Grok arenas per the Roster | `claude-opus-5` for UI/design units; general/back-end units prefer the Codex or Grok arenas per the Roster | `claude-fable-5`; advisor and orchestrator only—it plans, it does not run units |
-| Codex | `gpt-5.6-sol`; `gpt-5.6-luna` is the B-tier fallback when it meets the task bar | `gpt-5.6-sol` | `gpt-5.6-terra`; Luna is excluded from hard and UI lanes |
-| Cursor | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
-| Grok | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
-| OpenCode | a current Roster seat with evidence for the task | the strongest current Roster seat justified by risk and context | undocumented names |
-
-The floor table restricts orchestration roles; it does not create another
-roster.
-
-## Read capacity
-
-Run:
+## Read capacity and choose an account
 
 ```bash
-node <orchestrate-dir>/scripts/usage-state.mjs
+node <orchestrate-dir>/scripts/usage-state.mjs --live
 ```
 
-It reports Claude and Codex weekly use plus both monthly Cursor pools, with
-pace, time to reset, and snapshot age. Apply the available, protected, and
-unavailable classification in Pair's `models.md`. A null pool is unavailable
-evidence, not a reason to degrade a choice. A stale snapshot is a floor: when it
-already shows `pace > 1` or `used_percent >= 90`, act on that state. Use a
-same-bar fallback before a new unit consumes a protected or unavailable pool.
-Pool state never changes the required intelligence or proof; if no fallback
-meets the bar, report the unit blocked to the user.
+The default invocation reads local snapshots and both monthly Cursor pools.
+`--live` additionally queries Codex's read-only `account/rateLimits/read` for
+each existing home; it starts no model turn. It retains the legacy `codex` key
+and adds `codex_identities`: `default` from `~/.codex` and named homes under
+`~/.codex-profiles/<name>`. Each entry reports canonical `home`, `pool`, `source`
+and `state`. Symlink aliases to one home are deduplicated. These are configured
+login homes, not Codex's `--profile` configuration layers. The helper neither
+creates homes nor copies credentials. Confirm a discovered home belongs to the
+intended user/account before first use.
 
-For Cursor, apply the roster's catalog refresh and map the selected model to
-`cursor.cursor_models` or `cursor.other_models` before staffing. Grok outside
-Cursor and OpenCode still use a successful CLI start as availability evidence.
-A refusal restaffs the unit.
+`recommended_codex_identity` ranks available readings by lower pace, then lower
+used percentage. This is a capacity hint: the selected account must also expose
+the chosen model, and the active lead account may be ineligible as its own
+partner. The recommendation does not reserve quota. Recheck before the next wave.
 
-On a machine where a headless `cursor-agent` run proves that shell commands are
-rejected, treat Cursor as a consult and read-only review arena. It cannot own a
-unit that must validate or commit. This limit is machine- and backend-specific:
-a Cursor pane on the Herdr backend keeps its own permission plumbing and is
-eligible for implementation when its live checks succeed.
+An account is unavailable at 90% weekly or short-window use, protected when
+`pace > 1`, and unknown when usable evidence is absent or over 15 minutes old.
+Stale protected/unavailable readings remain a floor; failed live reads never
+promote an old reading to current availability. A null reading is unknown, not
+zero usage. Ask before spending protected capacity; a refusal or rate limit
+requires a different eligible account or a blocked result.
+
+For headless Codex, pass `--identity <name>` to unit create/restaff. Pair pins
+the selected home and reports it on resume/status. Existing sessions keep their
+account; changing identity requires restaff with its checkpoint, not switching
+login globally. Two homes do not prove two independent subscriptions: confirm
+the account mapping once. A same-CLI partner requires an explicitly selected,
+different Codex home (`default` is valid when the lead uses a named home).
+Herdr does not yet support named account routing and must refuse it.
+
+Claude's local usage timestamp can be stale. Grok has no local numeric quota
+source here; a successful start is only evidence it can currently run, not a
+claim of unlimited capacity. For Cursor, map the live model to
+`cursor.cursor_models` or `cursor.other_models` and inspect that pool. If a
+headless `cursor-agent` run proves that shell commands are rejected, use it for
+consultation and read-only review. A Cursor pane on the Herdr backend keeps its
+own permission plumbing; verify that lane separately.
 
 ## Record and restaff
 
-Every unit record names partner, model (or `CLI default`), effort, timestamp,
-and one-line reason. The reason states:
+Each unit records partner, account identity, requested model, resolved model
+when proved, effort, timestamp and a one-line reason naming difficulty, role,
+capacity evidence and any unavailable alternative. The registry and pair's
+receipt own these facts; do not duplicate them in a parallel task database.
 
-1. task difficulty and context;
-2. why the model meets that bar;
-3. the compared roster tiers and Taste when either breaks the tie;
-4. the pool, pace, used percentage, or speed tie-break, if one decided the arena;
-5. the current-harness exclusion when it removed the preferred arena.
-
-Restaff before a new unit or correction cycle uses a protected pool, and
-immediately on refusal or rate limit. Keep feedback that is already in flight on
-the existing pair; a new bounded correction is a new capacity decision. Restaff
-after a proved capability miss, preserving the HEAD, diff, and receipt
-checkpoint in staffing history. If no legal arena meets the bar, report the
-unit blocked to the user.
+Restaff after refusal, rate limit or a proved capability miss. Keep normal
+feedback on the current pair, then raise capability when a bounded correction
+fails. Preserve the HEAD, worktree diff and receipt checkpoint. If neither the
+required planning pair nor an adequate executor/reviewer is available, report
+the exact blocker rather than silently dropping a required gate.

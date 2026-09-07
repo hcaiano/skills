@@ -24,26 +24,23 @@ test("the skill routes to exactly one backend", () => {
   assert.match(skill, /Otherwise → \[Headless backend\]\(references\/headless\.md\)/u);
   assert.match(
     skill,
-    /An inbound `\[agent \.\.\.\]` or `\[herdr-pair control \.\.\.\]` line always means the\s+Herdr backend/u,
+    /An `\[agent \.\.\.\]` header is\s+shared by both transports: use the recorded session/u,
   );
+  assert.match(skill, /explicit headless request/u);
+  assert.match(skill, /`\[herdr-pair control \.\.\.\]` line identifies Herdr/u);
 });
 
 test("the description carries every trigger", () => {
   const description = skill.match(/^description: "(.+)"$/mu)[1];
   for (const trigger of [
     /live peer work/u,
-    /workflows requesting a pair/u,
-    /`\[agent \.\.\.\]` \/ `\[herdr-pair control \.\.\.\]` line/u,
+    /Pair persistently/u,
+    /`\[agent \.\.\.\]` or `\[herdr-pair control \.\.\.\]` messages/u,
     /after context compaction/u,
-    /when Herdr is absent/u,
   ]) {
     assert.match(description, trigger);
   }
-  // The pair is no longer two fixed CLIs, and the description is where each
-  // supported harness finds that out.
-  for (const kind of ["claude", "codex", "cursor", "grok", "opencode"]) {
-    assert.match(description, new RegExp(`\\b${kind}\\b`, "u"));
-  }
+  // Provider details belong in the body; the pointer carries trigger branches.
   assert.doesNotMatch(description, /Claude-Codex/u);
 });
 
@@ -52,13 +49,30 @@ test("the five kinds, the partner rule, and the roles are the same everywhere", 
   for (const kind of kinds) {
     assert.match(skill, new RegExp(`\`${kind}\``, "u"), `SKILL.md must name ${kind}`);
   }
-  // Same CLI on both sides is the one combination that is refused, in prose
-  // and in both helpers.
-  assert.match(skill, /except the CLI you are\s+already running/u);
-  assert.match(skill, /refusal is based only on the CLI kind/u);
+  // Same CLI on both sides is refused, in prose and in both helpers — with one
+  // exception both prose and the headless helper carry: a second Codex account
+  // is a different login, so a named identity on another home is a peer.
+  assert.match(skill, /transports require a\s+different CLI, except headless Codex can use a different account home/u);
+  assert.match(skill, /separate accounts\s+do not themselves guarantee independent reasoning/u);
+  assert.match(skill, /with `--identity <name>`\. The helper proves home separation/u);
   assert.match(skill, /same underlying model or provider/u);
   assert.match(helper, /refusing to pair \$\{self\.agent\} with itself/u);
   assert.match(headlessHelper, /refusing to pair \$\{self\} with itself/u);
+  assert.match(headlessHelper, /requested !== "codex" \|\| !own \|\| own === account\.identity_home/u);
+  assert.match(headlessHelper, /if \(partner === "codex" && identityHome\) child\.CODEX_HOME = identityHome/u);
+  assert.match(headlessHelper, /for \(const marker of LEAD_MARKERS\) delete child\[marker\]/u);
+  assert.match(headlessBackend, /strips the lead's own harness\s+markers/u);
+  assert.match(headlessBackend, /recorded\s+before identities existed keeps the `CODEX_HOME` it inherited/u);
+  assert.match(headlessBackend, /`CODEX_BIN`/u);
+  assert.match(headlessBackend, /`partner_bin`/u);
+  assert.match(headlessHelper, /verifyCodexBinary\(codexBinary\(process\.env\)\)/u);
+  assert.match(headlessBackend, /except two Codex accounts[\s\S]*same home is refused by the transport/u);
+  assert.match(headlessBackend, /runs\s+with `CODEX_HOME` set to that recorded home, never to the caller's own/u);
+  // The Herdr backend has no identity plumbing, and says so instead of
+  // starting the wrong account.
+  assert.match(herdrBackend, /refuse `--identity` other than `default` and any `--model latest…`/u);
+  assert.match(helper, /is not supported on the Herdr backend/u);
+  assert.match(helper, /is not resolved on the Herdr backend/u);
   assert.deepEqual(
     JSON.parse(helper.match(/^const agentKinds = (\[[^\]]+\]);$/mu)[1].replaceAll(/(\w+)/gu, '"$1"').replaceAll('""', '"')),
     kinds,
@@ -85,9 +99,9 @@ test("an existing pair is capacity-checked and never respawned to change its mod
     /respawning discards the pair's whole\s+history, and a model is changed by ending the pair/u,
   );
   // No hardcoded catalog: cursor's own list is the catalog.
-  assert.match(skill, /cursor-agent --list-models/u);
-  assert.match(skill, /grok models/u);
-  assert.match(skill, /opencode models/u);
+  assert.match(models, /cursor-agent --list-models/u);
+  assert.match(models, /grok models/u);
+  assert.match(models, /opencode models/u);
   assert.match(skill, /`CLI default`/u);
   assert.match(skill, /references\/models\.md/u);
   assert.match(models, /Risk/u);
@@ -98,7 +112,7 @@ test("an existing pair is capacity-checked and never respawned to change its mod
   assert.match(models, /A Codex pair spawn always\s+sets\s+effort\s+explicitly, including medium/u);
   assert.match(models, /SKILL_DIR[\s\S]*usage-state\.mjs/u);
   // Claude Code has an effort door; the backend and prose must carry it.
-  assert.match(skill, /Claude Code\s+\(`--effort low\|medium\|high\|xhigh\|max`\)/u);
+  assert.match(skill, /effort controls, and account capacity/u);
   assert.match(models, /Claude Code accepts\s+`--effort low\|medium\|high\|xhigh\|max`/u);
   assert.match(headlessBackend, /Claude receives\s+`--effort low\|medium\|high\|xhigh\|max`/u);
   assert.match(headlessHelper, /EFFORT_SUPPORT = \{ claude: true/u);
@@ -107,114 +121,140 @@ test("an existing pair is capacity-checked and never respawned to change its mod
   assert.match(models, /OpenCode[\s\S]*`--variant`/u);
 });
 
-test("the roster is the single editable model preference source", () => {
+test("the roster is the single editable model preference source, by family", () => {
   const roster = models.slice(models.indexOf("## Roster"));
-  const preferences = roster.slice(
-    roster.indexOf("### Operational preferences"),
+  const families = roster.slice(
+    roster.indexOf("### Families"),
     roster.indexOf("### Seats por papel"),
   );
   const seats = roster.slice(
     roster.indexOf("### Seats por papel"),
-    roster.indexOf("### Pace and fallback"),
+    roster.indexOf("### Accounts and pace"),
   );
   const pace = roster.slice(
-    roster.indexOf("### Pace and fallback"),
+    roster.indexOf("### Accounts and pace"),
     roster.indexOf("### Effort"),
   );
   const effort = roster.slice(
     roster.indexOf("### Effort"),
     roster.indexOf("### Specialists and excluded"),
   );
-  assert.match(preferences, /A model appears only when its native harness or the live\s+Cursor catalog exposes it/u);
-  assert.match(preferences, /Recheck both sources before adding a model; omit it\s+while neither source has it/u);
-  assert.doesNotMatch(models, /### Henrique's tier list|### Dimension scores/u);
+  // Families, not IDs: the catalog decides the current member, and the prose
+  // states the resolution rule the helper implements.
+  assert.match(roster, /The roster names \*\*families\*\*, not IDs/u);
+  assert.match(families, /A family appears only when its native harness or the live Cursor catalog\s+exposes it/u);
+  assert.match(families, /Recheck both sources before adding a family; omit it while neither\s+source has it/u);
+  assert.match(families, /`--model latest:<family>`/u);
+  assert.match(families, /`model_resolved`[\s\S]*`model_source`[\s\S]*`resolved_at`/u);
+  assert.match(families, /never\s+substitutes a neighbouring family, never picks a hidden or promo entry, and\s+fails when two members tie at the newest version/u);
+  assert.match(families, /change a model by ending the pair, never mid-session/u);
+  assert.doesNotMatch(models, /### Henrique's tier list|### Dimension scores|### Operational preferences|\| Tier \||S\+ \||D-tier/u);
 
-  const preferenceRows = preferences.split("\n").filter((line) => /^\| `[^`]+`/u.test(line));
-  assert.equal(preferenceRows.length, 12);
-  const preference = Object.fromEntries(preferenceRows.map((line) => {
-    const [model, tier, taste, speed, cost, automaticUse] = line
-      .split("|")
-      .slice(1, 7)
-      .map((cell) => cell.trim().replaceAll("`", ""));
-    return [model, { tier, taste, speed, cost, automaticUse }];
+  const familyRows = families.split("\n").filter((line) => /^\| `[^`]+` \|/u.test(line));
+  const family = Object.fromEntries(familyRows.map((line) => {
+    const [name, harness, resolution, evidence] = line.split("|").slice(1, 5).map((cell) => cell.trim().replaceAll("`", ""));
+    return [name, { harness, resolution, evidence }];
   }));
-  assert.deepEqual(Object.fromEntries(Object.entries(preference).map(([model, value]) => [model, value.tier])), {
-    "claude-fable-5": "S+",
-    "gpt-5.6-sol": "A",
-    "kimi-k3": "B",
-    "gpt-5.6-luna": "B",
-    "grok-4.6": "C",
-    "claude-opus-5": "D",
-    "composer-2.5": "D",
-    "gpt-5.6-terra": "D",
-    "claude-sonnet-5": "D",
-    "gemini-3.7-flash": "excluded",
-    "gemini-3.1-pro": "excluded",
-    "gpt-daybreak-blue-latest": "specialist",
+  assert.deepEqual(Object.fromEntries(Object.entries(family).map(([name, value]) => [name, value.harness])), {
+    fable: "claude",
+    astra: "codex",
+    sol: "codex",
+    luna: "codex",
+    opus: "claude",
+    sonnet: "claude",
+    grok: "grok",
+    kimi: "cursor",
   });
-  for (const unavailable of ["deepseek-v4-flash", "muse-spark-1.2", "glm-5.3", "deepseek-v4-pro"]) {
-    assert.doesNotMatch(preferences, new RegExp(unavailable.replaceAll(".", "\\."), "u"));
+  // Each family's request form is the helper's own accepted syntax, and the
+  // evidence column carries dated exact IDs — the only place IDs may live.
+  for (const [name, value] of Object.entries(family)) {
+    assert.match(value.resolution, new RegExp(`latest:${name}`, "u"));
+    assert.match(value.evidence, /^[a-z][a-z0-9.-]+$/u, `${name} evidence must be one exact ID`);
   }
-  assert.equal(preference["claude-fable-5"].automaticUse, "planning and orchestration");
-  assert.equal(preference["gpt-5.6-sol"].automaticUse, "high-quality general execution and review");
-  assert.equal(preference["gpt-5.6-luna"].automaticUse, "general fallback and volume execution");
-  assert.equal(preference["grok-4.6"].automaticUse, "fast fallback and live research");
-  assert.equal(preference["claude-opus-5"].automaticUse, "UI/design fallback only");
-  assert.equal(preference["gemini-3.7-flash"].automaticUse, "never");
-  assert.equal(preference["gemini-3.1-pro"].automaticUse, "never");
-  assert.match(preferences, /Tier ranks models that already meet the risk, context, role, and proof bar/u);
-  assert.match(preferences, /Prefer a native harness over a Cursor duplicate when tier, role, and pool are\s+equal/u);
-  assert.match(preferences, /machine-specific headless[\s\S]*`staffing\.md`/u);
-  assert.doesNotMatch(preferences, /API (?:input|output)|\$[0-9.]+\/M/u);
-  const seatModels = [
-    "claude-fable-5",
-    "claude-opus-5",
-    "gpt-5.6-sol",
-    "gpt-5.6-luna",
-    "kimi-k3",
-    "gpt-daybreak-blue-latest",
-    "grok-4.6",
-  ];
-  assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 8);
-  for (const seat of seatModels) assert.match(seats, new RegExp(`\`${seat.replaceAll(".", "\\.")}\``, "u"));
-  assert.match(seats, /Planear \/ orquestrar[\s\S]*medium[\s\S]*opening planning prompt[\s\S]*never max/u);
-  assert.match(seats, /Execução de alta qualidade \(back-end e geral\)[\s\S]*`gpt-5\.6-sol`[\s\S]*`gpt-5\.6-luna` high\/xhigh → `grok-4\.6` high/u);
-  assert.match(seats, /Execução rápida[\s\S]*`gpt-5\.6-luna`[\s\S]*`grok-4\.6` high/u);
-  assert.match(seats, /Execução barata em volume[\s\S]*xhigh\/max[\s\S]*never for UI work[\s\S]*verbose at max/u);
-  assert.match(seats, /UI \/ design \(taste\)[\s\S]*`kimi-k3`[\s\S]*`claude-fable-5` medium\/high → `claude-opus-5`/u);
-  assert.match(seats, /Image gen \(UI ideas, imagens, app logos, qualquer coisa que precise de imagem\) \| \*\*Image Gen 2 with `gpt-5\.6`\*\* \| the `gpt-5\.6` surface that exposes Image Gen 2 \| — \| — \|/u);
-  assert.match(seats, /Kimi is the primary UI\/design seat[\s\S]*Fable is the stronger fallback[\s\S]*Opus is D-tier[\s\S]*last UI\/design specialist fallback/u);
+  assert.equal(family.fable.evidence, "claude-fable-5-1");
+  assert.equal(family.astra.evidence, "gpt-6-astra");
+  assert.match(family.fable.resolution, /system\.init\.model[\s\S]*every resumed turn pins it/u);
+  assert.match(family.kimi.resolution, /--effort[\s\S]*the ID carries the effort/u);
+  assert.match(families, /Cursor had no Astra on 2026-09-07/u);
+  assert.match(families, /OpenCode has no family\s+resolution/u);
+  assert.match(families, /Prefer a native harness over a Cursor duplicate when role and\s+pool are equal/u);
+  assert.match(families, /machine-specific headless[\s\S]*`staffing\.md`/u);
+  assert.match(families, /Promo IDs belong\s+only in roster data, never in scripts/u);
+  assert.doesNotMatch(families, /API (?:input|output)|\$[0-9.]+\/M/u);
+  for (const stale of ["claude-fable-5`", "gpt-5.6-sol`", "gpt-5.6-luna`", "grok-4.6`"]) {
+    assert.doesNotMatch(seats, new RegExp(`\`${stale.replaceAll(".", "\\.")}`, "u"), `seats name families, never the stale ID ${stale}`);
+  }
+  for (const [kind, pattern] of [
+    ["codex", /LATEST = \/\^latest:\(\[a-z0-9\]\+\)\$\/iu/u],
+    ["codex", /CODEX_ID = \/\^gpt-\(\\d\+\(\?:\\\.\\d\+\)\*\)-\(\[a-z0-9\]\+\)\$\/iu/u],
+    ["codex", /entry\?\.hidden === true\) continue/u],
+    ["claude", /CLAUDE_ALIASES = \["fable", "opus", "sonnet"\]/u],
+    ["grok", /catalogText\("grok", \["models"\]/u],
+    ["cursor", /catalogText\("cursor-agent", \["--list-models"\]/u],
+  ]) {
+    assert.match(headlessHelper, pattern, `the headless helper resolves ${kind} families as documented`);
+  }
+
+  // Henrique's current policy is the seat table; the earlier tier list is gone.
+  assert.equal(seats.split("\n").filter((line) => /^\| (?!Papel \|)[^|-].* \|$/u.test(line)).length, 11);
+  assert.match(seats, /Planear \/ orquestrar \| `fable` \*\*and\*\* `astra`, always both[\s\S]*independent proposal after the one user interview[\s\S]*synthesises/u);
+  assert.match(seats, /Fable \*\*medium\*\* for normal work, \*\*high\*\* on the opening planning prompt[\s\S]*never max; Astra \*\*high\*\*, \*\*xhigh\*\* for hard analysis \| none — planning without both seats is reported, not substituted/u);
+  assert.match(seats, /Execução limitada \(implementação, testes, lookup\) \| `luna` \| codex \| \*\*max\*\* \| `grok` high for simple bounded tasks/u);
+  assert.match(seats, /Inspeção rápida \| `sol` \| codex \| \*\*low\*\*/u);
+  assert.match(seats, /Review \/ segurança \| `sol` \| codex \| \*\*high\*\*/u);
+  assert.match(seats, /Análise difícil \| `sol` \| codex \| \*\*xhigh\*\*/u);
+  assert.match(seats, /Execução delegada em Claude, limitada \| `sonnet` \| claude/u);
+  assert.match(seats, /Execução delegada em Claude, transversal ou review \| `opus` \| claude \| \*\*high\*\*/u);
+  assert.match(seats, /Tarefas simples e research live web\/X \| `grok` \| grok \| \*\*high\*\* \(CLI default\)/u);
+  assert.match(seats, /UI \/ design \(taste\) \| `kimi` \| cursor \| `kimi-k3-high`[\s\S]*`fable` medium\/high → `opus` high for design review or medium for UI diffs/u);
+  assert.match(seats, /Image gen \(UI ideas, imagens, app logos, qualquer coisa que precise de imagem\) \| the image-generation product surface, not a pair seat \| whichever GPT surface currently exposes it \| — \| — \|/u);
+  assert.match(seats, /`daybreak-blue`, by exact ID from the catalog[\s\S]*unversioned, so `latest:` cannot resolve it/u);
+  assert.match(seats, /`composer` has one niche[\s\S]*no effort token, so it is named exactly/u);
+  assert.match(seats, /Cyber \(defensivo\) \| `daybreak-blue`, by exact ID from the catalog \(`gpt-daybreak-blue-latest` on 2026-09-07/u);
+  assert.match(seats, /Sol `max` or `ultra` needs Henrique's explicit request\. `terra` has no seat\.\s+`haiku` has no seat/u);
+  assert.match(seats, /Grok is eligible for simple bounded tasks in its own right[\s\S]*instead of queueing behind a busy or\s+expensive pool/u);
   // Staffing reads the cancel/fork/restaff ladder here, before an incident,
   // not inside a failed wait receipt mid-incident.
-  assert.match(seats, /Grok is the C-tier fast fallback after eligible B-tier general models[\s\S]*headless recovery\s+ladder[\s\S]*two\s+consecutive proved cancellations schedule a session fork[\s\S]*proved capability miss — restaff the unit/u);
+  assert.match(seats, /headless recovery ladder[\s\S]*two consecutive proved cancellations schedule a session\s+fork[\s\S]*proved capability miss — restaff the unit/u);
   assert.match(seats, /Claude Code's\s+`\/design`/u);
-  assert.match(seats, /composer-2\.5[\s\S]*"Grok plans, Composer builds"[\s\S]*56\.1 and 69\.9[\s\S]*not a headline seat/u);
+  assert.match(seats, /`composer` has one niche[\s\S]*"Grok plans, Composer builds"[\s\S]*not a headline seat/u);
+  assert.doesNotMatch(seats, /56\.1|69\.9|CursorBench/u, "benchmark assertions are out; the policy is the seat");
+  // Explicit or orchestrate-approved staffing is never re-asked.
+  assert.match(seats, /An explicit choice is final[\s\S]*do not ask again[\s\S]*Ask only for a material choice that is missing in\s+a standalone pairing/u);
+  assert.match(skill, /take every choice the user or an orchestrate unit has\s+already made[\s\S]*as final and do not\s+ask for it again/u);
 
+  assert.match(pace, /An \*\*identity\*\* is the account a partner CLI runs as/u);
+  assert.match(pace, /`default` is `~\/\.codex` and a named identity is\s+`~\/\.codex-profiles\/<name>`/u);
+  assert.match(pace, /every init, send, status, and\s+resume uses that recorded home, never the caller's environment/u);
+  assert.match(pace, /The Herdr backend has no identity support/u);
   assert.match(pace, /usage-state\.mjs/u);
+  assert.match(pace, /`account\/rateLimits\/read`[\s\S]*`scripts\/codex-rpc\.mjs`, which reads and never starts a turn/u);
+  assert.match(pace, /Account capacity is read after the task bar is set, never before/u);
   assert.match(pace, /`cursor\.cursor_models`[\s\S]*`cursor\.other_models`/u);
   assert.match(pace, /\*\*protected\*\* — `pace > 1`/u);
   assert.match(pace, /\*\*unavailable\*\* — `used_percent >= 90`, refusal, or rate limit/u);
+  assert.match(pace, /the other Codex identity for a Codex seat, then the seat's listed\s+fallback/u);
   assert.match(pace, /Cursor is the deliberate universal fallback harness/u);
   assert.match(pace, /prefer lower `pace`, then lower\s+`used_percent`, then speed/u);
-  assert.match(pace, /Balance equal-bar work across subscriptions/u);
-  assert.match(pace, /Grok 4\.6 "unlimited" has a quota in practice/u);
+  assert.match(pace, /Balance equal-bar work across subscriptions and\s+across the two Codex identities/u);
+  assert.match(pace, /Grok 4\.6 "unlimited" has a quota\s+in practice/u);
 
   assert.match(effort, /per-seat guidance in Seats por papel overrides these generic ladders/u);
-  assert.match(effort, /Sol `ultra`[\s\S]*multi-subagent delegation mode[\s\S]*Never set it by default/u);
+  assert.match(effort, /checked\s+against the catalog's effort list for the resolved model/u);
+  assert.match(effort, /Sol `ultra` requires explicit user selection and support in the live catalog/u);
   assert.match(effort, /Fable max has an overthinking regression/u);
   assert.match(effort, /Opus high is suitable for design review[\s\S]*medium for UI diffs/u);
-  assert.match(effort, /Luna's hidden `max`[\s\S]*volume execution under external[\s\S]*review/u);
+  assert.match(effort, /Luna `max` is the setting for bounded execution under external planning and\s+review/u);
 
-  const removed = ["claude-haiku-4-5", "ox-alpha"];
+  const removed = ["haiku", "ox-alpha"];
   for (const model of removed) {
-    assert.doesNotMatch(seats, new RegExp(model.replaceAll(".", "\\."), "u"));
     assert.match(roster, new RegExp(model.replaceAll(".", "\\."), "u"));
   }
-  assert.match(roster, /`claude-haiku-4-5` is removed by decision/u);
-  assert.doesNotMatch(seats, /gpt-5\.6-terra|claude-sonnet-5/u);
-  assert.match(roster, /Harness sub-agents already\s+delegate to cheap and mid-tier models/u);
-  assert.match(roster, /Promo IDs belong only in roster data, never in scripts/u);
-  assert.doesNotMatch(`${helper}\n${headlessHelper}`, /x-preview-f-free/u);
+  assert.match(roster, /`haiku` is removed by decision/u);
+  assert.match(roster, /`terra` \(`gpt-5\.6-terra`\) is excluded by Henrique's decision/u);
+  assert.doesNotMatch(seats, /`terra`[^\n]*\| codex/u);
+  assert.match(roster, /Harness sub-agents already delegate to cheap\s+and mid-tier models/u);
+  assert.doesNotMatch(`${helper}\n${headlessHelper}`, /x-preview-f-free|gpt-5\.6|claude-fable-5|grok-4\.6/u, "scripts carry no model IDs");
 
   for (const excluded of [
     "gpt-5.6-cyber",
@@ -226,8 +266,7 @@ test("the roster is the single editable model preference source", () => {
   ]) {
     assert.match(roster, new RegExp(excluded.replaceAll(".", "\\."), "u"));
   }
-  assert.match(preferences, /`gemini-3\.7-flash`[\s\S]*\| never \|/u);
-  assert.match(preferences, /`gemini-3\.1-pro`[\s\S]*\| never \|/u);
+  assert.match(roster, /`gemini` families are excluded through every harness, including Cursor/u);
   // ox-alpha's removal must leave OpenCode seatless until Henrique scores a
   // replacement, not silently fall back to an undocumented model.
   assert.match(roster, /OpenCode has no roster seat until he\s+scores a new one/u);

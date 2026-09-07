@@ -1,6 +1,6 @@
 ---
 name: orchestrate
-description: "Manual-only orchestration of an explicit task list through isolated worktrees, persistent pairs, pull requests, verified merges, and cleanup."
+description: "Plan with Fable and Astra, then deliver a bounded batch of ready issues or explicit tasks through isolated worktrees, persistent pairs, and reviewed pull requests."
 disable-model-invocation: true
 ---
 
@@ -38,6 +38,9 @@ units use the `herdr` backend. `--backend headless|herdr` overrides that choice
 at creation. The backend is then immutable and recorded. For a Herdr unit,
 read pair's [`herdr.md`](../pair/references/herdr.md) and complete its caller
 pane proof once. Keep the returned `CALLER_ID`; the create command consumes it.
+When staffing requires `latest:<family>` resolution or a named Codex account,
+select `--backend headless` explicitly, including from inside Herdr. Do not
+send these unsupported selectors to the Herdr backend.
 
 The unit registry is
 `<git-common-dir>/orchestrate/units/<unit-id>.json`. It is the durable recovery
@@ -56,6 +59,66 @@ unrecorded resource. One orchestrator operates a repository at a time.
 Done when every recorded unit is understood and no duplicate task, branch, or
 worktree will be created.
 
+## Select and plan
+
+Accept an explicit task list or a repository-scoped ready-issue selector. Reuse
+the repository's issue, milestone, dependency and branch conventions. Ask only
+for missing scope or product decisions; model, effort and identity choices
+already supplied by the user or the staffing policy need no repeated interview.
+
+Start by reconciling recorded units as Prepare specifies. Resume corrections
+and delivery before admitting more work. For ready issues, read the repository's
+actual readiness label and run the read-only intake helper:
+
+```bash
+node "$UNIT" intake --repo "$REPO" --label <ready-label> \
+  [--milestone <milestone>] --max-active 2 --max-held 2
+```
+
+The initial limits are two active units and two PRs awaiting human review; use
+the user's explicit limits instead when supplied. Intake lists candidates, not
+permission to implement every issue. Verify dependencies are satisfied on the
+base, requirements are current, and concurrent write scopes are independent.
+It excludes issue numbers already recorded. A capped list is partial. Unknown
+PR state closes admission. Non-draft open PRs conservatively count as held;
+an executor saying `ready` does not imply human acceptance.
+Active units reserve future review slots, so simultaneous completions cannot
+overfill the configured human-review queue.
+Recovery records also consume a slot, including failed cleanup. Resolve the
+recorded failure before admitting more work; never erase its record to free capacity.
+
+Fable and Astra both participate in initial planning and material replanning.
+Keep the user's chosen lead model. If the lead is one of the two, start or
+resume one planning `pair` with the other; otherwise obtain both perspectives
+through separate planning pairs in separate scratch directories. Resolve the
+latest version of each family as Pair's model reference specifies. If either
+is unavailable, report that the required joint planning is blocked; keep
+previously approved independent execution eligible.
+
+One lead conducts the user interview. Both planners inspect the same issue and
+relevant source, form independent proposals before reading each other's answer,
+then reconcile them. Settle factual differences with source or focused runtime
+evidence. Bring unresolved product tradeoffs to Henrique in one question. Stop
+when both accept the same scope, interfaces, dependencies and acceptance proof;
+two repetitions of the same disagreement require a user decision.
+
+Keep draft proposals in untracked scratch. Put the agreed requirements and
+dependencies in GitHub following the repository's conventions; task manifests
+carry the execution handoff and canonical issue links. An already accepted joint
+plan is reused, not recreated at every resume or minor correction. Executors
+may resolve implementation details inside their scope; a contradicted assumption
+returns to the planners instead of being implemented blindly.
+
+Every invocation has a bounded frontier. Child units report only to their lead;
+they need no communication with sibling units. Continue monitoring while this
+invocation runs. Durable records support manual resume, not automatic wakeups
+after the lead stops. Native T3 thread creation and remote preview access must
+be verified before promising them; current transports are Herdr and headless.
+
+Done when every admitted issue has one agreed plan, explicit acceptance proof,
+satisfied dependencies and a non-overlapping write scope, and the batch fits
+the measured capacity. Report excluded or blocked issues with their reason.
+
 ## Staff and create
 
 Read [staffing](references/staffing.md) before every wave. It owns arena,
@@ -64,11 +127,12 @@ model, effort, capacity, and restaff decisions. Read pair's
 rubric and per-CLI effort controls. Run the capacity helper and any applicable
 live catalogs that staffing names.
 
-Split the user's list into units. Isolation is the default. Group tasks only
+Admit a batch within the available slots, then split it into units. Isolation is the default. Group tasks only
 when they share files, have a direct dependency, and should ship in one PR.
 For each unit, write one task file with:
 
 - the complete task and intended outcome;
+- canonical issue, accepted plan, dependencies and assumptions that require replanning;
 - write scope and read-only context;
 - validation commands and observable evidence;
 - base branch and relevant constraints;
@@ -76,13 +140,15 @@ For each unit, write one task file with:
   commit SHA, diff summary, and exact validation output; the executor waits for
   scope approval before pushing or opening a PR.
 
-Create every unit before waiting on any of them:
+Create every admitted unit before waiting on any of them:
 
 ```bash
 node "$UNIT" create --repo "$REPO" --unit <id> \
   --worktree <absolute-path> --branch <branch> --base <base> \
   [--backend <headless|herdr>] \
+  [--issue <number>] --max-active 2 --max-held 2 \
   --lead <current-cli> --partner <other-cli> --model <name-or-CLI-default> \
+  [--identity <codex-account-name>] \
   [--effort <level>] --reason <one-line-reason> --task-file <file> \
   --scope <scope-summary> --validation <validation-summary> \
   [--setup <project-worktree-setup-command>]
@@ -92,7 +158,12 @@ node "$UNIT" create --repo "$REPO" --unit <id> \
 adds `/PR_BODY.md` once to the repository's Git exclude file, runs the project's
 setup hook, initializes an executor-role pair, and starts the first task. The
 unit record stores the exclude path, pattern, and first ensure result. It
-refuses an unrelated record, branch, worktree, or same-CLI partner. Use the
+refuses an unrelated record, branch, worktree, or duplicate issue. Same-CLI
+execution is supported only for a headless Codex partner with an explicitly
+selected, different account home; the pair helper proves that separation. Herdr keeps its different-CLI
+constraint. Admission limits are checked again under the registry lock when
+the create command carries the two limit flags; include them on every new unit.
+Use the
 repository's own worktree setup pipeline when one exists. Read every returned
 record and report its staffing reason to the user.
 
@@ -204,6 +275,7 @@ capability miss restaffs to a stronger legal arena:
 ```bash
 node "$UNIT" restaff --repo "$REPO" --unit <id> \
   --lead <current-cli> --partner <other-cli> --model <name-or-CLI-default> \
+  [--identity <codex-account-name>] \
   [--effort <level>] --reason <one-line-reason>
 ```
 
