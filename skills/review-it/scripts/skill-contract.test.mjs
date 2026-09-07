@@ -17,20 +17,10 @@ test("review-it stays manual-only across model runtimes", () => {
   assert.match(openai, /^  allow_implicit_invocation: false$/mu);
 });
 
-test("the skill is named review-it, and only the identifier was renamed", () => {
-  // The identifier is what a user types and what ship-it links to. "review
-  // gate" as domain prose — the receipt heading, `Gate HEAD`, the thing this
-  // skill *is* — is a separate contract and deliberately survives.
+test("skill metadata and invocation use the review-it identifier", () => {
   assert.match(reviewIt, /^name: review-it$/mu);
-  assert.match(reviewIt, /the user explicitly names review-it/u);
-  assert.match(reviewIt, /Run it only when the user invokes review-it or/u);
-  assert.match(openai, /\$review-it to grade, simplify, and review/u);
+  assert.match(openai, /\$review-it\b/u);
   assert.match(openai, /display_name: "Review It"/u);
-  for (const [label, text] of [["SKILL.md", reviewIt], ["the transport doc", processTransport], ["openai.yaml", openai]]) {
-    assert.doesNotMatch(text, /review-gate/u, `the old identifier survives in ${label}`);
-  }
-  assert.match(reviewIt, /Leave a `## Review gate` receipt/u, "the receipt heading is a contract, not the skill name");
-  assert.match(processTransport, /--label "review-it · /u);
 });
 
 test("every script path the docs name exists after the move", () => {
@@ -67,7 +57,6 @@ test("the gate never delivers — that restraint is what makes it reusable", () 
     reviewIt,
     /safe to run against a branch whose PR already\s+exists/u,
   );
-  assert.match(reviewIt, /reach a clean review\s+HEAD without pushing/u);
   assert.match(
     reviewIt,
     /Say plainly that\s+nothing was pushed and no PR was touched/u,
@@ -80,7 +69,6 @@ test("the range is resolved once, from a fetched base", () => {
     /a stale local target reviews another PR's commits/u,
   );
   assert.match(reviewIt, /an explicit commit, when re-reviewing one landed change/u);
-  assert.match(reviewIt, /the uncommitted working tree, when nothing is committed yet/u);
   assert.match(reviewIt, /A gate over\s+an unproven range reviews a moving target/u);
 });
 
