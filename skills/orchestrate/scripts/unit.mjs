@@ -10,6 +10,7 @@ import {
   renameSync,
   rmSync,
   rmdirSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -58,11 +59,16 @@ const emit = (value, code = 0) => {
 const fail = (reason, detail = null, code = 1) =>
   emit({ ok: false, reason, ...(detail ? { detail } : {}) }, code);
 
+const booleanOptions = new Set(["all"]);
 const parseOptions = (args) => {
   const options = {};
   for (let index = 0; index < args.length; index += 1) {
     const token = args[index];
     if (!token?.startsWith("--")) fail(`unexpected argument: ${token}`, null, 2);
+    if (booleanOptions.has(token.slice(2))) {
+      options[token.slice(2)] = true;
+      continue;
+    }
     const value = args[index + 1];
     if (!value || value.startsWith("--")) fail(`missing value for ${token}`, null, 2);
     options[token.slice(2)] = value;
@@ -990,6 +996,12 @@ const create = (options) => {
         (candidate) => candidate.branch === options.branch || candidate.worktree === options.worktree || (issue && candidate.issue === issue),
       );
       if (duplicate) fail(`unit ${id} conflicts with recorded unit ${duplicate.unit_id}`);
+      // The branch is immutable after create and the worktree path is the
+      // caller's, so a name outside Git's rules or the repository's convention
+      // must be refused here, not discovered at `git worktree add`.
+      if (git(place.root, "check-ref-format", "--branch", options.branch).status !== 0) {
+        fail(`invalid branch name: ${options.branch} — use the repository's convention (for example feat/<issue>-<slug>) and derive the worktree directory from it`);
+      }
       const existingRef = branchExists(place.root, options.branch);
       if (existingRef) fail(`branch ${options.branch} already exists at ${existingRef}`);
 
@@ -1072,6 +1084,12 @@ const create = (options) => {
         const startPoint = remoteBase ? `origin/${record.base}` : record.base;
         gitChecked(place.root, ["worktree", "add", "-b", record.branch, record.worktree, startPoint], "create worktree");
         record.worktree = gitChecked(record.worktree, ["rev-parse", "--show-toplevel"], "resolve worktree").stdout.trim();
+        // The ref the branch actually started from. Task files and diff stats
+        // compare against this, never against a possibly stale local base:
+        // executors reported 1,100+ unrelated files against local `main` on
+        // 2026-09-10 before being told to use `origin/main`.
+        record.base_ref = startPoint;
+        record.base_sha = gitChecked(place.root, ["rev-parse", "--verify", `${startPoint}^{commit}`], "resolve unit base").stdout.trim();
         record.resources.worktree = true;
         record.resources.local_branch = true;
         record.lifecycle = "setting-up";
@@ -1313,8 +1331,101 @@ const list = (options) => {
   };
 };
 
+// One non-blocking round over every unit, built to be read between user
+// messages: no registry lock, no pull-request lookup, no wait. It answers the
+// questions a lead otherwise blocks a session to ask — is the turn moving, is
+// it queued behind the heavy slot, has the branch advanced, is the tree dirty.
+const baseRefFor = (record) => {
+  if (record.base_ref) return record.base_ref;
+  const remote = `origin/${record.base}`;
+  return git(record.worktree, "rev-parse", "--verify", "--quiet", `${remote}^{commit}`).status === 0 ? remote : record.base;
+};
+const worktreeSummary = (record) => {
+  if (!record.worktree || !existsSync(record.worktree)) return { present: false };
+  const head = git(record.worktree, "rev-parse", "--short", "HEAD");
+  const baseRef = baseRefFor(record);
+  const ahead = git(record.worktree, "rev-list", "--count", `${baseRef}..HEAD`);
+  const behind = git(record.worktree, "rev-list", "--count", `HEAD..${baseRef}`);
+  const porcelain = git(record.worktree, "status", "--porcelain", "--untracked-files=normal");
+  const dirty = porcelain.status === 0 ? porcelain.stdout.split(/\r?\n/u).filter(Boolean) : null;
+  return {
+    present: true,
+    head: head.status === 0 ? head.stdout.trim() : null,
+    base_ref: baseRef,
+    ahead_of_base: ahead.status === 0 ? Number(ahead.stdout.trim()) : null,
+    behind_base: behind.status === 0 ? Number(behind.stdout.trim()) : null,
+    dirty_files: dirty ? dirty.length : null,
+    dirty_sample: dirty ? dirty.slice(0, 5) : null,
+  };
+};
+const transcriptSummary = (observed) => {
+  const seq = observed.in_flight?.seq ?? observed.seq ?? 0;
+  const directory = observed.transcripts;
+  if (!seq || !directory || !existsSync(directory)) return null;
+  const prefix = `${String(seq).padStart(4, "0")}-`;
+  const name = readdirSync(directory).find((entry) => entry.startsWith(prefix) && entry.endsWith(".log"));
+  if (!name) return null;
+  const path = join(directory, name);
+  const stat = statSync(path);
+  return {
+    seq,
+    kind: name.slice(prefix.length, -".log".length),
+    transcript: path,
+    bytes: stat.size,
+    last_output_at: stat.mtime.toISOString(),
+    seconds_since_output: Math.max(0, Math.round((Date.now() - stat.mtimeMs) / 1000)),
+  };
+};
+const summarize = (place, record) => {
+  normalizeBackend(record);
+  const observed = pairStatus(record);
+  const receipt = observed.ok ? observed.latest_receipt ?? null : null;
+  const inFlight = observed.ok ? observed.in_flight ?? null : null;
+  return {
+    unit_id: record.unit_id,
+    issue: record.issue ?? null,
+    lifecycle: record.lifecycle,
+    backend: backendOf(record),
+    branch: record.branch,
+    base: record.base,
+    partner: record.staffing?.current?.partner ?? null,
+    identity: record.staffing?.current?.identity ?? "default",
+    pair: observed.ok
+      ? {
+        seq: observed.seq ?? 0,
+        in_flight: inFlight ? {
+          seq: inFlight.seq,
+          started_at: inFlight.started_at ?? null,
+          partner_pid: inFlight.partner_pid ?? inFlight.child_pid ?? null,
+          heavy_queue: inFlight.heavy_queue ?? null,
+        } : null,
+        latest_receipt: receipt ? {
+          seq: receipt.seq ?? null,
+          kind: receipt.kind ?? null,
+          status: receipt.status ?? null,
+          reason: receipt.reason ?? null,
+          heavy_queue: receipt.heavy_queue ?? null,
+          rate_limits: receipt.rate_limits ?? null,
+          throttle_signals: receipt.throttle_signals ?? null,
+          receipt_file: receipt.receipt_file ?? null,
+        } : null,
+        turn: backendOf(record) === "headless" ? transcriptSummary(observed) : null,
+      }
+      : { error: observed.reason ?? "unknown" },
+    worktree: worktreeSummary(record),
+    error: record.error ?? null,
+  };
+};
+const summary = (place) => ({
+  ok: true,
+  repository: place.root,
+  observed_at: new Date().toISOString(),
+  units: listRecords(place).map((record) => summarize(place, record)),
+});
+
 const status = (options) => {
   const place = repository(options.repo);
+  if (options.all) return summary(place);
   const id = unitId(options.unit);
   return withRegistryLock(place, () => {
     const { path, record } = readRecord(place, id);
@@ -1819,7 +1930,7 @@ try {
   else if (command === "repin") emit(repin(options));
   else if (command === "restaff") emit(restaff(options));
   else if (command === "dismantle") emit(dismantle(options));
-  else fail("usage: unit.mjs <intake|create|list|status|repin|restaff|dismantle> --repo <path> ...", null, 2);
+  else fail("usage: unit.mjs <intake|create|list|status [--all]|repin|restaff|dismantle> --repo <path> ...", null, 2);
 } catch (error) {
   if (error instanceof CliExit) {
     process.exitCode = error.code;

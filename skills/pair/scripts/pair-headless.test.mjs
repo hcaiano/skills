@@ -33,6 +33,7 @@ import {
   defaultIdleMinutes,
   detectSelf,
   extractReply,
+  isHeavyAgentRun,
   locate,
   markerAlive,
   messagePrompt,
@@ -52,11 +53,15 @@ import {
   pickLatestCursor,
   pickLatestGrok,
   processAlive,
+  queuedHeavyJob,
+  readProcessTable,
   releaseMarker,
   resolvePartner,
   resolveWrite,
   selfHome,
   sessionKnown,
+  summarizeRateLimits,
+  throttleSignals,
   turnCommand,
 } from "./pair-headless.mjs";
 import { CODEX_READ_METHODS, codexHomeFor, codexModelCatalog, codexRead, listCodexHomes, verifyCodexBinary } from "./codex-rpc.mjs";
@@ -150,6 +155,11 @@ const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "codex", argv, stdin, cwd: process.cwd(), codex_home: process.env.CODEX_HOME ?? null, bin_path: process.argv[1], lead_markers }) + "\\n");
 if (mode === "hang") { setInterval(() => {}, 1000); return; }
 if (mode !== "nosid") process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "${CODEX_SID}" }) + "\\n");
+// A queued turn: the partner's validation sits in the devbox heavy queue
+// (a fake agent-run with no child) for FAKE_HEAVY_WAIT_MS, then replies.
+if (mode === "queued" || mode === "queued-task") {
+  require("node:child_process").spawnSync(process.execPath, [require("node:path").join(__dirname, "agent-run"), mode === "queued" ? "heavy" : "task", "--", "bun", "test"], { stdio: "ignore" });
+}
 const out = argv[argv.indexOf("-o") + 1];
 if (mode === "fail") { process.stderr.write("rate limit\\n"); process.exit(1); }
 if (mode === "empty") { fs.writeFileSync(out, "   \\n"); process.exit(0); }
@@ -158,6 +168,15 @@ fs.writeFileSync(out, "[agent codex -> claude kind=ready sid=${CODEX_SID}]\\n\\n
 process.exit(0);
 `;
 writeFileSync(join(bin, "codex"), codexFake({ old: false }));
+// The devbox launcher, reduced to what the supervisor observes: a process
+// whose argv names agent-run and a mode, blocking with no child of its own
+// until the slot is granted (here: until the wait elapses).
+writeFileSync(
+  join(bin, "agent-run"),
+  `#!/usr/bin/env node
+setTimeout(() => process.exit(0), Number(process.env.FAKE_HEAVY_WAIT_MS ?? 5000));
+`,
+);
 const oldCodexBin = join(root, "old-install", "codex");
 mkdirSync(dirname(oldCodexBin), { recursive: true });
 writeFileSync(oldCodexBin, codexFake({ old: true }));
@@ -292,7 +311,7 @@ process.stdout.write(JSON.stringify({ type: "step_finish", sessionID: sid, part:
 process.exit(0);
 `,
 );
-for (const name of ["codex", "claude", "cursor-agent", "grok", "opencode"]) chmodSync(join(bin, name), 0o755);
+for (const name of ["codex", "claude", "cursor-agent", "grok", "opencode", "agent-run"]) chmodSync(join(bin, name), 0o755);
 
 const newRepo = (name) => {
   const repo = join(root, name);
@@ -1971,7 +1990,8 @@ test("one turn at a time: a second send refuses against the in-flight marker", (
   const proceeded = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("after the clear"));
   assert.equal(proceeded.receipt.ok, true);
   assert.equal(proceeded.receipt.seq, 1);
-  assert.equal(invocations().length, 1);
+  // The turn itself, then the pool read the receipt carries for a Codex partner.
+  assert.deepEqual(invocations().map((call) => call.argv[0]), ["exec", "app-server"]);
   assert.deepEqual(
     readdirSync(pairDir).filter((name) => name.includes(".tmp") || name.includes(".cleared.")),
     [],
@@ -2080,4 +2100,121 @@ test("status reports the session and end deletes it", () => {
   assert.equal(ended.ok, true);
   assert.equal(existsSync(join(repo, ".git", "pair")), false);
   assert.match(run("ok", "claude", "status", "--repo", repo).receipt.reason, /no pair session/u);
+});
+
+// --- devbox heavy-slot queue and pool signals -------------------------------
+
+const runWith = (extra, mode, self, ...args) => {
+  writeFileSync(log, "");
+  try {
+    return JSON.parse(execFileSync(process.execPath, [helper, ...args], {
+      encoding: "utf8",
+      env: { ...env(mode, self), ...extra },
+      stdio: ["ignore", "pipe", "pipe"],
+    }));
+  } catch (error) {
+    if (!error.stdout) throw error;
+    return JSON.parse(error.stdout);
+  }
+};
+
+test("a queued agent-run heavy job is found under the partner by its childless argv", () => {
+  assert.equal(isHeavyAgentRun(["/usr/bin/python3", "/home/h/.local/bin/agent-run", "heavy", "--", "bun", "run", "ci:local"]), true);
+  assert.equal(isHeavyAgentRun(["/home/h/.local/bin/agent-run", "heavy", "--runtime-seconds", "600", "--", "bun", "test"]), true);
+  assert.equal(isHeavyAgentRun(["/usr/bin/python3", "/home/h/.local/bin/agent-run", "task", "--", "bun", "test"]), false);
+  assert.equal(isHeavyAgentRun(["/usr/bin/python3", "/home/h/.local/bin/agent-run", "--worker", "/run/user/1000/x/owner.sock"]), false);
+  assert.equal(isHeavyAgentRun(["node", "/x/agent-runner", "heavy"]), false);
+
+  // A fake /proc: the partner (100) runs a shell (101) that runs agent-run
+  // heavy (102). With no child under 102 it is queued; once systemd-run (103)
+  // appears under it, the slot is held and the job is running.
+  const proc = join(root, "fake-proc");
+  const entry = (pid, ppid, name, argv) => {
+    mkdirSync(join(proc, String(pid)), { recursive: true });
+    writeFileSync(join(proc, String(pid), "stat"), `${pid} (${name}) S ${ppid} ${pid} ${pid} 0 -1 4194560 0 0 0 0 0 0 0 0 20 0 1 0 0 0 0\n`);
+    writeFileSync(join(proc, String(pid), "cmdline"), `${argv.join("\0")}\0`);
+  };
+  entry(1, 0, "systemd", ["/sbin/init"]);
+  entry(100, 1, "node", ["node", "/opt/codex", "exec", "--json"]);
+  entry(101, 100, "zsh", ["/usr/bin/zsh", "-c", "agent-run heavy -- bun test"]);
+  entry(102, 101, "python3", ["/usr/bin/python3", "/home/h/.local/bin/agent-run", "heavy", "--", "bun", "test"]);
+  entry(200, 1, "python3", ["/usr/bin/python3", "/home/h/.local/bin/agent-run", "heavy", "--", "other", "lead"]);
+  writeFileSync(join(proc, "not-a-pid"), "");
+  assert.deepEqual(queuedHeavyJob(100, readProcessTable(proc)), { pid: 102, command: "bun test" });
+  assert.equal(queuedHeavyJob(300, readProcessTable(proc)), null, "another lead's queued job is not this partner's");
+  entry(103, 102, "systemd-run", ["/usr/bin/systemd-run", "--user", "--wait", "--", "/usr/bin/python3", "/home/h/.local/bin/agent-run", "--worker", "/run/x"]);
+  assert.equal(queuedHeavyJob(100, readProcessTable(proc)), null, "a job that spawned its worker holds the slot");
+  assert.equal(readProcessTable(join(root, "no-such-proc")), null);
+  assert.equal(queuedHeavyJob(100, null), null);
+});
+
+test("time queued behind the devbox heavy slot is excluded from the budgets and shown in flight", (t) => {
+  if (!existsSync("/proc/self/stat")) {
+    t.skip("the queue probe reads /proc");
+    return;
+  }
+  const repo = newRepo("heavy-queue");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
+  // The fake validation waits five seconds in the queue against a three-second
+  // total budget: only the exclusion lets the turn finish.
+  const extra = { FAKE_HEAVY_WAIT_MS: "5000", PAIR_HEADLESS_QUEUE_PROBE_MS: "100" };
+  const running = runWith(extra, "queued", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("validate"), "--background", "--total-min", "0.05", "--idle-min", "0.05");
+  assert.equal(running.status, "running");
+  let seen = null;
+  const until = Date.now() + 6000;
+  while (Date.now() < until && !seen) {
+    const flight = run("ok", "claude", "status", "--repo", repo).receipt.in_flight;
+    if (flight?.heavy_queue?.queued) seen = flight.heavy_queue;
+    else Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200);
+  }
+  assert.ok(seen, "status shows the in-flight turn queued behind the heavy slot");
+  assert.equal(seen.job.command, "bun test");
+  assert.equal(seen.episodes, 1);
+  const receipt = runWith(extra, "queued", "claude", "wait", "--repo", repo, "--seq", String(running.seq), "--timeout-min", "0.5");
+  assert.equal(receipt.status, "replied", receipt.reason);
+  assert.equal(receipt.heavy_queue.episodes, 1);
+  assert.ok(receipt.heavy_queue.seconds >= 2, `queued seconds recorded: ${JSON.stringify(receipt.heavy_queue)}`);
+  assert.ok(receipt.seconds >= 5, "wall-clock seconds still report the whole turn");
+
+  // The same wait under `agent-run task` is not a queue: the budget applies.
+  const control = runWith(extra, "queued-task", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("validate"), "--total-min", "0.05", "--idle-min", "0.05");
+  assert.equal(control.status, "hang-killed");
+  assert.match(control.reason, /total budget 0m exceeded — raise it with send --total-min$/u);
+  assert.equal(control.heavy_queue, undefined);
+});
+
+test("a Codex turn's receipt carries the account pool reading and any throttle lines", () => {
+  const repo = newRepo("pool-signals");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex", "--identity", "lais");
+  const replied = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go")).receipt;
+  assert.equal(replied.status, "replied");
+  assert.deepEqual(replied.rate_limits.primary, { window_minutes: 10080, used_percent: 24, resets_at: "2026-09-14T05:01:49.000Z" });
+  assert.equal(replied.rate_limits.secondary, null);
+  assert.ok(replied.rate_limits.read_at);
+  assert.equal(replied.throttle_signals, undefined);
+  const calls = invocations();
+  assert.deepEqual(calls.map((call) => [call.argv[0], call.codex_home]), [["exec", realpathSync(laisHome)], ["app-server", realpathSync(laisHome)]], "the pool is read from the identity's own home after the turn");
+  assert.deepEqual(JSON.parse(readFileSync(replied.receipt_file, "utf8")).rate_limits, replied.rate_limits);
+
+  const failed = run("fail", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("again")).receipt;
+  assert.equal(failed.status, "failed");
+  assert.deepEqual(failed.throttle_signals, { rate_limit_lines: 1, first: "rate limit" });
+  assert.equal(failed.rate_limits.primary.used_percent, 24);
+
+  // A partner that is not Codex has no pool door; nothing is invented.
+  const claudeRepo = newRepo("pool-signals-claude");
+  run("ok", "codex", "init", "--repo", claudeRepo, "--partner", "claude");
+  assert.equal(run("ok", "codex", "send", "--repo", claudeRepo, "--kind", "question", "--body-file", bodyFile("hi")).receipt.rate_limits, undefined);
+});
+
+test("pool and throttle summaries never promote a missing reading to a number", () => {
+  assert.deepEqual(summarizeRateLimits({ rateLimits: { limitId: "codex", primary: { usedPercent: 24, windowDurationMins: 10080, resetsAt: 1789362109 }, secondary: { usedPercent: 3, windowDurationMins: 300 } } }, 0), {
+    read_at: "1970-01-01T00:00:00.000Z",
+    primary: { window_minutes: 10080, used_percent: 24, resets_at: "2026-09-14T05:01:49.000Z" },
+    secondary: { window_minutes: 300, used_percent: 3, resets_at: null },
+  });
+  assert.equal(summarizeRateLimits({ rateLimitsByLimitId: { codex: { primary: { usedPercent: 50 } } } }, 0).primary.used_percent, 50);
+  assert.deepEqual(summarizeRateLimits({}, 0), { error: "account/rateLimits/read answered without rateLimits" });
+  assert.equal(throttleSignals("progress\nstill running\n"), null);
+  assert.deepEqual(throttleSignals("ok\nError: 429 Too Many Requests\nrate_limit_exceeded, retrying in 30s\n"), { rate_limit_lines: 2, first: "Error: 429 Too Many Requests" });
 });

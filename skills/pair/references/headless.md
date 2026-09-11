@@ -170,6 +170,25 @@ hang-kill receipt names the flag to raise. The session preamble tells the
 partner to keep tool output flowing during long turns, so useful activity
 resets the watchdog.
 
+Time the partner spends queued for the devbox heavy-work slot is not its
+work. On Linux the supervisor walks `/proc` every ten seconds
+(`PAIR_HEADLESS_QUEUE_PROBE_MS` changes the cadence) for an `agent-run heavy`
+process under the partner that has not yet spawned its worker — that is a
+job blocked in the machine-wide queue. While one is found, the total budget
+pauses and the idle clock counts the wait as activity; when the slot is
+granted the idle clock restarts. The in-flight marker carries
+`heavy_queue: {queued, since, job, seconds, episodes}` for `status` to show,
+and the receipt records the excluded `heavy_queue` total. Size `--total-min`
+to the validation's own run time, not to the queue. Without `/proc` nothing
+is detected and the plain budgets apply.
+
+Never wrap `send`, `wait`, or `init` in `agent-run heavy`: the partner's own
+validation commands take the slot when they run, and a send held inside it
+occupies the one machine-wide slot for the whole turn — every other unit's
+validation then queues behind an idle model session (observed 2026-09-11, a
+180-minute send holding the slot with three units waiting). The helper is a
+light launcher; run it directly.
+
 With no `--seq`, `wait` follows `state.seq`, not the in-flight marker, so a
 fast turn that already cleared its marker is still waitable. `--seq` selects an
 older turn. The default wait timeout is 125 minutes — the largest default total
@@ -178,6 +197,13 @@ bound. If the worker is dead and no receipt exists,
 `wait` returns `reason=worker-lost` immediately instead of waiting for the
 timeout. A `running` receipt is not terminal; call `wait` and then read its
 `receipt_file`.
+
+`wait` blocks the lead's session for as long as it runs, and a lead harness
+kills a long foreground command (exit 137) without a receipt. A lead that must
+stay reachable polls with `status` — its `in_flight` marker shows the seq,
+start time, partner pid, and any `heavy_queue` — and the transcript's size
+and mtime, and reserves `wait` for bounds of a few minutes or for a run in the
+harness's own background facility.
 
 Terminal receipts print `{seq, transcript, reply_file, status}` and, when
 applicable, `receipt_file`:
@@ -203,6 +229,19 @@ applicable, `receipt_file`:
 - `status=wait-timeout`: the selected worker has not produced a receipt within
   the wait bound. Inspect `status` and the transcript before choosing a new
   action.
+
+Every terminal receipt from `send` may also carry:
+
+- `heavy_queue: {seconds, episodes}` — time excluded as described above.
+- `throttle_signals: {rate_limit_lines, first}` — transcript lines that look
+  like a rate limit, 429, quota, or retry notice. Counted, not interpreted: a
+  slow or throttled partner is otherwise indistinguishable from a stuck one.
+- `rate_limits` — for a Codex partner, one read-only `account/rateLimits/read`
+  through `codex-rpc.mjs` against the recorded identity home and binary right
+  after the turn: `{read_at, primary, secondary}` with `window_minutes`,
+  `used_percent`, and `resets_at` per window, or `{error}` when the read
+  failed. It is the same reading `usage-state.mjs` measures pace from, taken
+  where the turn just spent it.
 
 The helper writes a reply file only for a nonempty extracted reply. Grok joins
 `text` deltas and leaves `thought` evidence in the transcript; Cursor uses its

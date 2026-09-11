@@ -133,12 +133,28 @@ For each unit, write one task file with:
 
 - the complete task and intended outcome;
 - canonical issue, accepted plan, dependencies and assumptions that require replanning;
-- write scope and read-only context;
-- validation commands and observable evidence;
-- base branch and relevant constraints;
+- write scope and read-only context. Name the scope as the directories or
+  packages the plan touches, including the adapters, providers, and types it
+  will have to reach, not as a closed file list: every `blocked` for a file
+  outside the lease costs a full turn round-trip, and two of three units
+  needed one on 2026-09-10. Allow the executor to edit an unlisted file inside
+  a listed package when its diagnosis proves the need, listing it in `ready`;
+  a file outside every listed package still needs `blocked`;
+- validation commands and observable evidence. Heavy commands run through
+  `agent-run heavy` and share one machine-wide slot, so name the focused
+  command for iteration and the full one for delivery;
+- base branch as `origin/<base>` and relevant constraints. Compare with
+  `git diff --stat origin/<base>...HEAD`, never a local `<base>` that can be
+  stale; the created record carries the exact `base_ref` and `base_sha` the
+  branch started from;
 - an instruction to implement, validate, commit, and return `ready` with the
   commit SHA, diff summary, and exact validation output; the executor waits for
   scope approval before pushing or opening a PR.
+
+Name the branch in the repository's own convention (`feat/5528-index-rails`,
+not a flattened slug) and derive the worktree directory from it by replacing
+`/` with `-`; the branch is immutable after `create`, which refuses a name
+`git check-ref-format` rejects.
 
 Create every admitted unit before waiting on any of them:
 
@@ -154,7 +170,9 @@ node "$UNIT" create --repo "$REPO" --unit <id> \
   [--setup <project-worktree-setup-command>]
 ```
 
-`create` journals the task before mutation, creates the worktree from the base,
+`create` journals the task before mutation, fetches the base from `origin`,
+creates the worktree from `origin/<base>` (the local base only when origin
+lacks it) and records that `base_ref` and `base_sha`,
 adds `/PR_BODY.md` once to the repository's Git exclude file, runs the project's
 setup hook, initializes an executor-role pair, and starts the first task. The
 unit record stores the exclude path, pattern, and first ensure result. It
@@ -228,8 +246,26 @@ The registry is the durable recovery source for both backends. Run nonblocking
 status rounds across all units:
 
 ```bash
+node "$UNIT" status --repo "$REPO" --all
 node "$UNIT" status --repo "$REPO" --unit <id>
 ```
+
+`--all` is the monitoring round: one read-only summary per unit with the
+lifecycle, in-flight seq and its `heavy_queue`, the latest receipt's status,
+`rate_limits`, and `throttle_signals`, the current transcript's size and
+seconds since its last output, and the worktree's commits ahead of and behind
+`base_ref` plus its dirty file count. It takes no registry lock and makes no
+network call. The single-unit form reconciles the pair record and lists the
+unit's pull requests.
+
+Stay reachable. The lead's harness kills a long foreground command without a
+receipt (exit 137, twice on 2026-09-10) and the user cannot reach the lead
+while one runs. Between user messages run the summary round; read a
+transcript when its output has stalled; never sit in a foreground `wait`
+longer than a couple of minutes. A turn is stuck only when its transcript has
+stopped growing and its `heavy_queue` is empty; a turn queued behind the
+devbox heavy slot is waiting on the machine, and the pair helper excludes
+that time from its budgets.
 
 For a headless unit, pair receipts and transcripts are the only transport. The
 partner cannot wake a yielded orchestrator and has no live pane for
@@ -238,6 +274,10 @@ interjection. Use bounded waits and rotate through active units:
 ```bash
 node "$HEADLESS_PAIR" wait --repo <unit-worktree> --seq <seq> --timeout-min 1
 ```
+
+Run the pair helper directly. Wrapping `send` or `wait` in `agent-run heavy`
+holds the one machine-wide heavy slot for the whole turn and starves every
+other unit's validation.
 
 For a Herdr unit, do not use headless `wait` or receipt deadlines. `unit status`
 routes through the recorded Herdr pair and reconciles its sequence ACKs. Read
@@ -268,7 +308,10 @@ The command compares the previous identity, updates the pair session, and
 journals the change. Never resend a turn with unknown delivery state; inspect
 the transport state and worktree first.
 
-A refused or rate-limited partner is restaffed immediately. Normal scope
+A refused or rate-limited partner is restaffed immediately. A Codex receipt's
+`rate_limits` and any `throttle_signals` are the evidence: a `protected` or
+`unavailable` pool after a turn means the next turn goes to another eligible
+identity, as staffing specifies. Normal scope
 feedback and one bounded correction stay on the current pair. A proved
 capability miss restaffs to a stronger legal arena:
 

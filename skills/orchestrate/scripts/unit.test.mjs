@@ -1456,3 +1456,54 @@ test("list exposes every journaled recovery phase", () => {
     unlinkSync(join(units, `recovery-${phase}.json`));
   }
 });
+
+test("create records the ref the branch started from and refuses a name Git rejects", () => {
+  const created = invoke(createArgs("base-ref"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  assert.equal(created.output.unit.base_ref, "origin/main");
+  assert.equal(created.output.unit.base_sha, git(repository, "rev-parse", "origin/main"));
+  const record = JSON.parse(readFileSync(unitRecordPath("base-ref"), "utf8"));
+  assert.equal(record.base_ref, "origin/main");
+
+  const bad = createArgs("bad-branch");
+  bad[bad.indexOf("--branch") + 1] = "feat/bad name";
+  const refused = invoke(bad);
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.output.reason, /invalid branch name: feat\/bad name — use the repository's convention/u);
+  assert.equal(existsSync(unitRecordPath("bad-branch")), false, "nothing is journaled for a refused name");
+});
+
+test("status --all is a non-blocking summary of every unit", () => {
+  const created = invoke(createArgs("summary-one"));
+  assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
+  const worktree = created.output.unit.worktree;
+  writeFileSync(join(worktree, "file-summary-one.txt"), "work\n");
+  git(worktree, "add", "file-summary-one.txt");
+  git(worktree, "-c", "user.name=Orchestrate Test", "-c", "user.email=orchestrate@example.test", "commit", "-q", "-m", "unit work");
+  writeFileSync(join(worktree, "scratch.txt"), "dirty\n");
+
+  const all = invoke(["status", "--repo", repository, "--all"]);
+  assert.equal(all.status, 0, all.stderr || JSON.stringify(all.output));
+  assert.equal(all.output.ok, true);
+  assert.ok(all.output.observed_at);
+  const unit = all.output.units.find((entry) => entry.unit_id === "summary-one");
+  assert.ok(unit, "every recorded unit is summarized");
+  assert.equal(unit.lifecycle, "working");
+  assert.equal(unit.backend, "headless");
+  assert.equal(unit.partner, "codex");
+  assert.equal(unit.pair.seq, 1);
+  assert.equal(unit.pair.in_flight, null);
+  assert.equal(unit.pair.latest_receipt.status, "replied");
+  assert.equal(unit.worktree.present, true);
+  assert.equal(unit.worktree.base_ref, "origin/main");
+  assert.equal(unit.worktree.ahead_of_base, 1);
+  assert.equal(unit.worktree.behind_base, 0);
+  assert.equal(unit.worktree.dirty_files, 1);
+  assert.deepEqual(unit.worktree.dirty_sample, ["?? scratch.txt"]);
+  assert.equal("pull_requests" in unit, false, "the summary makes no network call");
+  assert.equal("observed" in unit, false);
+
+  const flag = invoke(["status", "--repo", repository, "--all", "--unit", "summary-one"]);
+  assert.equal(flag.status, 0, "--all takes no value and coexists with other flags");
+  assert.ok(flag.output.units.length >= 1);
+});
