@@ -23,7 +23,10 @@ tells the executor to use the installed `ship-it` skill. Size that send's
 `--total-min` to the repository's full local-CI entrypoint: the writable-task
 default is 120 minutes, and a repository whose CI alone approaches that needs
 more — the 2026-08-22 wave hang-killed two legitimate ship-it turns at the old
-60-minute default while `ci:local` was mid-run. The executor must run
+60-minute default while `ci:local` was mid-run. Time queued behind the devbox
+heavy slot is excluded by the pair helper, so size the budget to the CI run
+itself; stagger delivery turns so they do not all queue for the slot at once.
+The executor must run
 the proportional proof and graded review gate on the complete diff, push, open
 or update one PR against the recorded base, put the complete `## Delivery gate`
 receipt in the PR body, and return the PR URL, exact head SHA, check state, and

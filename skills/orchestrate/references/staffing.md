@@ -52,6 +52,20 @@ promote an old reading to current availability. A null reading is unknown, not
 zero usage. Ask before spending protected capacity; a refusal or rate limit
 requires a different eligible account or a blocked result.
 
+Every headless Codex turn receipt carries `rate_limits`, the same reading
+taken right after the turn, and `throttle_signals` when the transcript showed
+rate-limit or retry lines. Read them in the `status --all` round; a pool that
+crossed into protected or unavailable during a wave moves the unit's next turn
+to another eligible identity through restaff, not by waiting it out.
+
+The devbox has one heavy-work slot. Every unit's validation serializes behind
+it, and a queued turn is not stuck but is not progressing either. With the
+default two active units expect one validating while the other waits; do not
+admit a third unit whose validation is heavy, and stagger delivery turns so
+at most one runs the full CI entrypoint at a time. The pair helper excludes
+queued time from its budgets and shows it under `heavy_queue`; the wall
+clock still adds up, so size the wave to the slot.
+
 For headless Codex, pass `--identity <name>` to unit create/restaff. Pair pins
 the selected home and reports it on resume/status. Existing sessions keep their
 account; changing identity requires restaff with its checkpoint, not switching

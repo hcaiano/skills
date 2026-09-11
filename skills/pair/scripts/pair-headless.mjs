@@ -52,9 +52,16 @@ import {
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { codexBinary, codexHomeFor, codexModelCatalog, verifyCodexBinary } from "./codex-rpc.mjs";
+import { codexBinary, codexHomeFor, codexModelCatalog, codexRead, verifyCodexBinary } from "./codex-rpc.mjs";
 
 const POLL_MS = 2000;
+// How often the supervisor looks for an `agent-run heavy` job queued under the
+// partner. A /proc walk is cheap but not free, so it runs on its own cadence
+// inside the deadline poll.
+const HEAVY_QUEUE_PROBE_MS = (() => {
+  const raw = Number(process.env.PAIR_HEADLESS_QUEUE_PROBE_MS);
+  return Number.isFinite(raw) && raw > 0 ? raw : 10000;
+})();
 const WAIT_POLL_MS = 100;
 const START_TIMEOUT_MS = 10000;
 const SCHEMA = 1;
@@ -815,9 +822,129 @@ const writeReply = (partner, replyFile, transcript) => {
   return reply;
 };
 
+// --- devbox heavy-slot queue ------------------------------------------------
+//
+// `agent-run heavy` takes the machine-wide heavy-work slot with a blocking
+// flock() before it spawns its systemd-run child, so a queued job is an
+// agent-run process under the partner with no child of its own. Three units
+// sharing one slot spent most of a 120-minute budget in that queue on
+// 2026-09-10 and were hang-killed for it. Queue time is the machine's, not the
+// partner's: the supervisor pauses both budgets while a queued job is the
+// partner's only heavy work, and the receipt reports what it excluded.
+// Linux only: without /proc the probe answers null and nothing changes.
+
+const PROC_ROOT = "/proc";
+
+export const readProcessTable = (procRoot = PROC_ROOT) => {
+  let names;
+  try {
+    names = readdirSync(procRoot);
+  } catch {
+    return null;
+  }
+  const table = new Map();
+  for (const name of names) {
+    if (!/^\d+$/u.test(name)) continue;
+    let stat;
+    try {
+      stat = readFileSync(join(procRoot, name, "stat"), "utf8");
+    } catch {
+      continue; // it exited between the listing and the read
+    }
+    const close = stat.lastIndexOf(")");
+    const fields = stat.slice(close + 2).split(" ");
+    const ppid = Number(fields[1]);
+    if (!Number.isInteger(ppid)) continue;
+    table.set(Number(name), { ppid, procRoot });
+  }
+  return table;
+};
+
+const processCommand = (pid, procRoot) => {
+  try {
+    return readFileSync(join(procRoot, String(pid), "cmdline"), "utf8").split("\0").filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+// argv looks like [python3, .../agent-run, heavy, ...] or [.../agent-run, heavy, ...].
+export const isHeavyAgentRun = (argv) => {
+  const index = argv.findIndex((arg) => basename(arg) === "agent-run");
+  return index !== -1 && argv[index + 1] === "heavy";
+};
+
+export const queuedHeavyJob = (rootPid, table) => {
+  if (!table || !Number.isInteger(rootPid)) return null;
+  const children = new Map();
+  for (const [pid, { ppid }] of table) {
+    if (!children.has(ppid)) children.set(ppid, []);
+    children.get(ppid).push(pid);
+  }
+  const pending = [...(children.get(rootPid) ?? [])];
+  while (pending.length) {
+    const pid = pending.shift();
+    const argv = processCommand(pid, table.get(pid).procRoot);
+    if (isHeavyAgentRun(argv) && !(children.get(pid)?.length)) {
+      const rest = argv.slice(argv.findIndex((arg) => basename(arg) === "agent-run") + 2);
+      if (rest[0] === "--") rest.shift();
+      return { pid, command: rest.join(" ") };
+    }
+    pending.push(...(children.get(pid) ?? []));
+  }
+  return null;
+};
+
+const probeHeavyQueue = (partnerPid) => queuedHeavyJob(partnerPid, readProcessTable());
+
+// A throttled partner looks like a stuck one from the transcript alone: these
+// lines are the difference. Counted, never interpreted; the receipt carries
+// the first one so the reader can judge it.
+export const THROTTLE_PATTERN = /rate.?limit|too many requests|\b429\b|usage limit|quota exceeded|retry(?:ing)? in \d/iu;
+
+export const throttleSignals = (transcript) => {
+  const lines = String(transcript ?? "").split("\n").filter((line) => THROTTLE_PATTERN.test(line));
+  if (!lines.length) return null;
+  return { rate_limit_lines: lines.length, first: lines[0].slice(0, 300) };
+};
+
+// The pool reading after a Codex turn, in the shape usage-state.mjs already
+// reads (window minutes, used percent, reset time). A failed read is reported,
+// never promoted to a number.
+export const summarizeRateLimits = (reading, now = Date.now()) => {
+  const limits = reading?.rateLimitsByLimitId?.codex ?? reading?.rateLimits;
+  if (!limits) return { error: "account/rateLimits/read answered without rateLimits" };
+  const window = (entry) => entry
+    ? {
+      window_minutes: Number.isFinite(entry.windowDurationMins) ? entry.windowDurationMins : null,
+      used_percent: Number.isFinite(entry.usedPercent) ? entry.usedPercent : null,
+      resets_at: Number.isFinite(entry.resetsAt) ? new Date(entry.resetsAt * 1000).toISOString() : null,
+    }
+    : null;
+  return { read_at: new Date(now).toISOString(), primary: window(limits.primary), secondary: window(limits.secondary) };
+};
+
+const codexRateLimits = async (state) => {
+  if (state.partner !== "codex") return null;
+  try {
+    const reading = await codexRead("account/rateLimits/read", {}, {
+      codexHome: state.identity_home ?? undefined,
+      bin: state.partner_bin ?? undefined,
+      env: partnerEnv(state),
+    });
+    return summarizeRateLimits(reading);
+  } catch (error) {
+    return { error: error.message };
+  }
+};
+
 // Detached so a signal aimed at this helper's process group cannot decapitate a
 // partner turn that is mid-edit; killed by PID, never by group.
-const supervise = ({ bin, args, cwd, env = process.env, prompt, transcriptPath, idleMs, totalMs, onSpawn, onExit, onHang }) => {
+const supervise = ({
+  bin, args, cwd, env = process.env, prompt, transcriptPath, idleMs, totalMs,
+  onSpawn, onExit, onHang, onQueue,
+  queueProbe = probeHeavyQueue, queueProbeMs = HEAVY_QUEUE_PROBE_MS,
+}) => {
   const startedAt = Date.now();
   const fd = openSync(transcriptPath, "w");
   const child = spawn(bin, args, { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
@@ -847,13 +974,25 @@ const supervise = ({ bin, args, cwd, env = process.env, prompt, transcriptPath, 
   };
   // The exit is reported by the child, not discovered by the poll: a finished
   // turn returns immediately and the interval only ever measures deadlines.
+  // Time spent queued behind the heavy slot is subtracted from the total
+  // budget and counts as activity for the idle one.
+  let pausedMs = 0;
+  let queuedSince = null;
+  let queueEpisodes = 0;
+  let lastProbe = 0;
+  const heavyQueue = (now) => {
+    if (!queueEpisodes) return null;
+    return { seconds: Math.round((pausedMs + (queuedSince == null ? 0 : now - queuedSince)) / 1000), episodes: queueEpisodes };
+  };
   const settle = (code) => {
     if (killing) return; // a killed turn reports the hang, never the kill's exit
+    const now = Date.now();
     done(() =>
       onExit({
         exit: code ?? -1,
         transcript: text,
-        seconds: Math.round((Date.now() - startedAt) / 1000),
+        seconds: Math.round((now - startedAt) / 1000),
+        heavyQueue: heavyQueue(now),
         spawnError,
       }),
     );
@@ -866,14 +1005,37 @@ const supervise = ({ bin, args, cwd, env = process.env, prompt, transcriptPath, 
 
   timer = setInterval(() => {
     const now = Date.now();
-    if (now - lastGrowth > idleMs || now - startedAt > totalMs) {
+    if (queueProbe && now - lastProbe >= queueProbeMs) {
+      lastProbe = now;
+      let job = null;
+      try {
+        job = queueProbe(child.pid);
+      } catch {
+        job = null; // a probe failure never touches the deadlines
+      }
+      if (job && queuedSince == null) {
+        queuedSince = now;
+        queueEpisodes += 1;
+        onQueue?.({ queued: true, since: new Date(now).toISOString(), job, ...heavyQueue(now) });
+      } else if (!job && queuedSince != null) {
+        pausedMs += now - queuedSince;
+        queuedSince = null;
+        lastGrowth = now; // the idle clock restarts when the slot is granted
+        onQueue?.({ queued: false, since: null, job: null, ...heavyQueue(now) });
+      }
+    }
+    const queuedNow = queuedSince == null ? 0 : now - queuedSince;
+    const idle = queuedSince == null ? now - lastGrowth : 0;
+    const elapsed = now - startedAt - pausedMs - queuedNow;
+    if (idle > idleMs || elapsed > totalMs) {
       killing = true;
       clearInterval(timer);
       // The receipt is read mid-incident, so the reason names the flag that
       // raises the budget it just enforced.
+      const excluded = heavyQueue(now);
       const why =
-        now - startedAt > totalMs
-          ? `total budget ${Math.round(totalMs / 60000)}m exceeded — raise it with send --total-min`
+        elapsed > totalMs
+          ? `total budget ${Math.round(totalMs / 60000)}m exceeded — raise it with send --total-min${excluded ? ` (${Math.round(excluded.seconds / 60)}m queued behind the devbox heavy slot was excluded)` : ""}`
           : `no output for ${Math.round(idleMs / 60000)}m — raise it with send --idle-min`;
       child.kill("SIGTERM"); // the PID itself, never the group
       setTimeout(() => {
@@ -886,7 +1048,7 @@ const supervise = ({ bin, args, cwd, env = process.env, prompt, transcriptPath, 
         setTimeout(
           () =>
             done(() =>
-              onHang({ why, transcript: text, seconds: Math.round((Date.now() - startedAt) / 1000) }),
+              onHang({ why, transcript: text, seconds: Math.round((Date.now() - startedAt) / 1000), heavyQueue: heavyQueue(Date.now()) }),
             ),
           500,
         );
@@ -1616,16 +1778,28 @@ const runWorker = () => {
     command: [bin, ...args],
   };
 
-  const finish = (extra, code, { cancelled = false, forkSessionId = null, replied = false } = {}) => {
+  // The receipt carries what the transcript alone cannot show: time the turn
+  // spent queued behind the devbox heavy slot, throttle lines seen in the
+  // stream, and (for Codex) the account's pool reading right after the turn.
+  const finish = async (
+    extra,
+    code,
+    { cancelled = false, forkSessionId = null, replied = false, transcript = "", heavyQueue = null } = {},
+  ) => {
     const terminalState = updateTerminalState(place, state, { cancelled, forkSessionId, replied });
     const advice = cancelled && terminalState.capability_miss
       ? `${terminalState.capability_miss}: proved capability miss — restaff the unit, do not fork again`
       : cancelled && terminalState.grok_cancelled_consecutive >= 2
         ? "two consecutive Grok cancellations: schedule a fresh session fork with the fork command"
         : null;
+    const throttled = throttleSignals(transcript);
+    const rateLimits = await codexRateLimits(state);
     let record = {
       ...base,
       ...extra,
+      ...(heavyQueue ? { heavy_queue: heavyQueue } : {}),
+      ...(throttled ? { throttle_signals: throttled } : {}),
+      ...(rateLimits ? { rate_limits: rateLimits } : {}),
       ...(advice ? { recovery: advice } : {}),
     };
     atomicJson(paths.receiptFile, record);
@@ -1666,38 +1840,46 @@ const runWorker = () => {
         receipt_file: paths.receiptFile,
       });
     },
-    onExit: ({ exit, transcript, seconds, spawnError }) => {
+    onQueue: ({ queued, since, job, seconds, episodes }) => {
+      // The marker is what `status` shows under in_flight, so a lead reading
+      // it sees the queue instead of an unexplained silence.
+      replaceOwnedMarker(place.lockPath, marker, {
+        heavy_queue: { queued, since, job, seconds, episodes },
+      });
+    },
+    onExit: ({ exit, transcript, seconds, spawnError, heavyQueue }) => {
       const grok = state.partner === "grok" ? parseGrokStream(transcript) : null;
       const forkSessionId = pendingFork ? grok?.sessionId ?? null : null;
       const cancelled = grok?.stopReason === "cancelled";
+      const context = { forkSessionId, transcript, heavyQueue };
       if (spawnError) {
-        finish({ ok: false, status: "failed", reason: `cannot run ${bin}: ${spawnError.message}`, seconds }, 1, { forkSessionId });
+        finish({ ok: false, status: "failed", reason: `cannot run ${bin}: ${spawnError.message}`, seconds }, 1, context);
         return;
       }
       if (exit !== 0) {
-        finish({ ok: false, status: "failed", reason: `${bin} exited ${exit} — read the transcript`, exit_code: exit, seconds }, 1, { forkSessionId });
+        finish({ ok: false, status: "failed", reason: `${bin} exited ${exit} — read the transcript`, exit_code: exit, seconds }, 1, context);
         return;
       }
       if (cancelled) {
-        finish({ ok: false, status: "failed", reason: "grok-cancelled", exit_code: exit, seconds }, 1, { cancelled: true, forkSessionId });
+        finish({ ok: false, status: "failed", reason: "grok-cancelled", exit_code: exit, seconds }, 1, { ...context, cancelled: true });
         return;
       }
       if (state.partner === "claude" && parseClaudeResult(transcript)?.is_error) {
-        finish({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1, { forkSessionId });
+        finish({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1, context);
         return;
       }
       if (state.partner === "cursor" && parseCursorResult(transcript)?.is_error) {
-        finish({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1, { forkSessionId });
+        finish({ ok: false, status: "failed", reason: "the partner run reported is_error", exit_code: exit, seconds }, 1, context);
         return;
       }
       const reply = writeReply(state.partner, paths.replyFile, transcript);
       if (!reply) {
-        finish({ ok: false, status: "empty-reply", reason: "the partner exited 0 with no reply — read the transcript before resending, the prompt may already be consumed", exit_code: exit, seconds }, 1, { forkSessionId });
+        finish({ ok: false, status: "empty-reply", reason: "the partner exited 0 with no reply — read the transcript before resending, the prompt may already be consumed", exit_code: exit, seconds }, 1, context);
         return;
       }
-      finish({ ok: true, status: "replied", exit_code: exit, seconds, reply }, 0, { forkSessionId, replied: true });
+      finish({ ok: true, status: "replied", exit_code: exit, seconds, reply }, 0, { ...context, replied: true });
     },
-    onHang: ({ why, transcript, seconds }) => {
+    onHang: ({ why, transcript, seconds, heavyQueue }) => {
       const partial = writeReply(state.partner, paths.replyFile, transcript);
       finish(
         {
@@ -1708,6 +1890,7 @@ const runWorker = () => {
           ...(partial ? { partial_reply: true } : {}),
         },
         1,
+        { transcript, heavyQueue },
       );
     },
   });
