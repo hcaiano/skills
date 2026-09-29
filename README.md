@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains ten active skills under `skills/` and small maintenance
+The repository contains eleven active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -68,6 +68,9 @@ carries both, and the stale one still answers under the retired workflow.
   production-only bugs through an evidence loop.
 - `cyber-audit` — audit this machine read-only against a named CVE, malicious
   package, or supply-chain advisory and leave a written report.
+- `test-audit` — gate new tests against a value bar, and prune low-value,
+  duplicated, or implementation-coupled tests in focused audits or
+  whole-app campaigns before legacy refactors.
 
 ### Creative work
 
