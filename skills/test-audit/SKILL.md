@@ -1,7 +1,7 @@
 ---
 name: test-audit
 description: "Test value gate and pruning workflow. Use when adding or changing tests, auditing a suite for low-value, duplicated, or implementation-coupled tests, or running a test-pruning campaign."
-argument-hint: "[path, subsystem, or 'campaign <subsystem>']"
+argument-hint: "[path, subsystem, or 'campaign']"
 ---
 
 # Test Audit
@@ -11,8 +11,9 @@ One value bar, three modes:
 - **Authoring**: gate every new or changed test before it lands.
 - **Audit**: a focused, read-only sweep for tests that fail the bar, then one
   coherent deletion batch. Optimize for confidence, not deletion count.
-- **Campaign**: prune one subsystem's whole test surface in one PR. Before
-  starting one, read [references/campaign.md](references/campaign.md).
+- **Campaign**: clean a whole app's test surface before a legacy refactor, one
+  PR per subsystem. Before starting one, read
+  [references/campaign.md](references/campaign.md).
 
 Read the root and scoped `AGENTS.md` / `CLAUDE.md` first. Take test commands
 from the repository (`package.json` scripts, `Makefile`, CI workflows), never

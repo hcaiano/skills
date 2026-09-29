@@ -70,7 +70,7 @@ carries both, and the stale one still answers under the retired workflow.
   package, or supply-chain advisory and leave a written report.
 - `test-audit` — gate new tests against a value bar, and prune low-value,
   duplicated, or implementation-coupled tests in focused audits or
-  subsystem-wide campaigns.
+  whole-app campaigns before legacy refactors.
 
 ### Creative work
 
