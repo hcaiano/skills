@@ -19,7 +19,8 @@ next step early.
   safety net the refactor runs against.
 - **Notes** (app map, baselines, ledgers, plans) live under
   `$(git rev-parse --git-common-dir)/test-audit/`: `app.md` for the app, one
-  folder per subsystem. Every worktree of the repository shares that
+  folder per subsystem. Only steps 1 and 9 write `app.md`; a subsystem writes
+  only its own folder, so parallel subsystems never overwrite each other. Every worktree of the repository shares that
   directory, it is never committed, and it survives context compaction; reread
   it when resuming.
 
@@ -104,8 +105,8 @@ contracts that lost their only proof, and for new assertions that cannot fail,
 such as a rejection row the production code never reaches.
 
 For each restored contract, make one deliberate **mutation** of the production
-owner and confirm the keeper goes red. Then restore the source byte for byte and
-confirm `git diff` on that file is empty.
+owner and confirm the keeper goes red. Copy the owner file before mutating it;
+after restoring, `cmp` it against that copy and delete the copy.
 
 Done when every reported gap is restored or rejected with source evidence, and
 every restored contract has a caught mutation.
@@ -135,12 +136,13 @@ Hand off the subsystem PR with the SKILL.md report, plus:
 - preservation gaps found and their mutations;
 - product defects with control and candidate proof.
 
-Done when the PR is handed off and `app.md` records the subsystem's result.
+Done when the PR is handed off and the report is saved as `result.md` in the
+subsystem's notes folder.
 
 ## 9. Close the app
 
 After the last subsystem lands, rerun the whole app suite on the default
-branch and report:
+branch, merge every subsystem's `result.md` into `app.md`, and report:
 
 - app-wide test, test-support, and production line counts, before and after;
 - product defects found across the campaign;
