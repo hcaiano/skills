@@ -119,7 +119,7 @@ test("headless-codex resolves the range itself and records the exact SHA", () =>
 });
 
 test("headless-codex sends only flags codex exec review actually accepts", () => {
-  runOk("ok", "p", "--base", "HEAD", "--model", "gpt-5");
+  runOk("ok", "p", "--base", "HEAD", "--model", "gpt-5", "--effort", "high");
   const argv = sentArgv();
   assert.deepEqual(argv.slice(0, 3), ["exec", "review", "--json"]);
   // --json plus the final-message file are what make content validation
@@ -132,6 +132,9 @@ test("headless-codex sends only flags codex exec review actually accepts", () =>
   assert.equal(argv[argv.indexOf("--config") + 1], 'sandbox_mode="workspace-write"');
   assert.ok(argv.includes("sandbox_workspace_write.network_access=false"));
   assert.equal(argv[argv.indexOf("--model") + 1], "gpt-5");
+  // `codex exec review` has no effort flag, so effort is a config override.
+  assert.ok(argv.includes('model_reasoning_effort="high"'));
+  assert.ok(!argv.includes("--effort"), "--effort must not reach codex exec review");
   // The range selectors are mutually exclusive with a custom prompt, and the
   // prompt is where the axis lives — so they must never reach the CLI.
   for (const rejected of ["--base", "--commit", "--uncommitted", "--color", "--sandbox", "--cd"]) {

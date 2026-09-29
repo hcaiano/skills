@@ -47,7 +47,7 @@ earlier grade is provisional: regrade the actual diff and record why.
 
 `single` uses one reviewer from a model family that did not implement the
 change. `dual` uses two different families, one per axis. Pick from native
-Claude (Opus), native Codex (its default model), and Cursor (Fable or Sol from
+Claude (Opus), native Codex (Astra, high effort), and Cursor (Fable or Sol from
 `other_models`; Grok from `cursor_models` only as a fallback). Never Google
 models or Composer.
 
@@ -73,7 +73,8 @@ Run external commands through [the process transport](references/visible-herdr-r
   in its own visible pane and did not implement the change, it may review
   directly with the brief instead.
 - Codex: `node <skill dir>/scripts/headless-codex.mjs "<brief prompt>" --base
-  origin/<target-branch> --receipt <review.json>`. Use `--commit <sha>` or
+  origin/<target-branch> --model gpt-6-astra --effort high --receipt
+  <review.json>`. Use `--commit <sha>` or
   `--uncommitted` for those ranges. The wrapper pins the range itself.
 - Cursor: `node <skill dir>/scripts/headless-cursor.mjs "<brief prompt>"
   --model <live-catalog-id> --base origin/<target-branch> --receipt
