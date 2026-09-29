@@ -1,183 +1,89 @@
 ---
 name: ship-it
-description: "Manual-only delivery for finished work: focused proof, the graded review gate, deterministic final-HEAD validation, then push, PR, CI, and authorized merge. Invoke only when the user explicitly names ship-it or another explicitly invoked workflow delegates its delivery."
+description: "Manual-only delivery for finished work: focused proof, the graded review gate, final-HEAD validation, then push, PR, CI, and authorized merge. Invoke only when the user explicitly names ship-it or another explicitly invoked workflow delegates its delivery."
 disable-model-invocation: true
 ---
 
-# Ship It
+# Ship it
 
-Open or update a PR for the current work, then carry an authorized delivery
-through merge and deploy. Quality is enforced locally, before the PR exists —
-by the [review gate](../review-it/SKILL.md), which this skill runs and never
-reimplements.
+Take finished work to a green PR, and through merge and deploy when the user
+authorizes them. Quality is checked locally before the PR exists, by the
+[review gate](../review-it/SKILL.md). This skill runs that gate and never
+reimplements it.
 
-Run it only when the user invokes ship-it or another skill (an orchestrator's
-graded gate) delegates to it — finishing a change is not an invitation to
-ship it.
+Run it only when the user invokes ship-it or another workflow delegates to it.
 
-1. **Prepare the delivery.** Read the repository instructions and inspect
-   the current branch, diff, and working tree. Preserve unrelated user changes.
-   `git fetch origin <target-branch>` first, and take every merge base in this
-   skill against `origin/<target-branch>` — a stale local target reviews
-   another PR's commits. Mark each intended untracked path with
-   `git add --intent-to-add -- <path>` so focused proof sees the complete
-   change; never do this to unrelated files. If the worktree is on the target
-   branch, create an intentional task branch before step 2. This step is
-   complete when the target branch and the task branch are explicit.
-2. **Finish the implementation and proportional focused proof.** Keep the
-   branch local. Map each changed runtime contract to its changed behavior and
-   changed direct consumers, then run the smallest repository-defined tests and
-   checks that exercise that map. A changed direct consumer is a path in the
-   final diff that imports, calls, builds against, or relies on the changed
-   contract; sharing a path or subsystem does not make it part of the proof.
+1. **Prepare.** Read the repo instructions. Inspect the branch, diff, and
+   working tree, and keep unrelated user changes out. Run
+   `git fetch origin <target-branch>` and take every merge base against
+   `origin/<target-branch>`. Mark intended untracked paths with
+   `git add --intent-to-add -- <path>`. If you are on the target branch,
+   create a task branch first.
 
-   Treat path migrations as a focused branch: prove applicable old references
-   are gone, new paths resolve, moved artifacts preserve their invariants, and
-   changed direct consumers pass. The PR's native CI owns broader subsystem and
-   platform coverage.
+2. **Focused proof.** List each behavior the change alters and the direct
+   consumers of each changed contract. Run the smallest repo-defined tests and
+   checks that cover that list. If the local platform blocks a check after one
+   real attempt, record the command and error and hand that check to the PR's
+   CI by name. Done when every listed check passes or is explicitly handed to
+   CI.
 
-   When the local platform blocks a focused command, make one focused attempt
-   through the repository's existing command or configuration. If the same
-   incompatibility remains, record the command and evidence, then assign that
-   check to the PR's native CI. Keep the local validation map closed to changed
-   surfaces: an unrelated passing suite does not compensate for missing
-   platform proof. This step is complete when the requested behavior is
-   present, every mapped local check passes, and each platform-delegated check
-   is explicit.
-3. **Run the graded review gate.** Read and execute
-   [review-it](../review-it/SKILL.md) over the focused-proven diff, with
-   the merge base against `origin/<target-branch>` as its range. It owns the
-   risk grade, the simplify decision, reviewer staffing and capacity
-   degradation, the review round, and the one correction batch — this skill
-   never regrades its result, reruns its reviews, or substitutes its own
-   reading of the diff for them.
+3. **Review.** Read and execute [review-it](../review-it/SKILL.md) over the
+   proven diff, with the merge base against `origin/<target-branch>` as its
+   range. Do not regrade its result, rerun its reviews, or add your own review.
+   If the gate stops for user direction, delivery stops too. Keep its
+   `## Review gate` receipt for step 5.
 
-   The gate returns a clean local HEAD and a `## Review gate` receipt. Carry
-   that block into step 4 verbatim; restating its fields here would fork the
-   record of what was reviewed. A gate that stops for user direction stops the
-   delivery too. This step is complete when the gate's receipt exists, its
-   `Gate HEAD` is the current clean HEAD, and nothing is pushed.
+4. **Validate the final HEAD and push.** On the clean final HEAD, rerun the
+   step 2 checks for the final diff, plus the repo's lint, typecheck, and build
+   for the changed code. Run the full local-CI entrypoint only when the repo
+   names it as the delivery gate. Use the repo's queued entrypoint when it has
+   one; otherwise its documented `global-ci` lease. Push normally. Never
+   force-push; when the base moved, merge `origin/<target-branch>` in.
 
-   **Review convergence.** Count every completed LLM review round for this
-   delivery, including an orchestrator's second-arena fan-out and review-it's
-   initial or conditional rounds. After three rounds, a further review needs a
-   regression that is traceable to the latest commit. Record the failing
-   behavior, the latest commit that introduced it, and the focused proof. All
-   other later findings become recorded residuals; they do not reopen review.
-   The two-round post-gate mutation cap in step 4 still applies.
-4. **Validate the final HEAD, then push it.** On the clean final HEAD, rerun
-   step 2's proportional validation map for the final diff: repository-defined
-   test, lint, typecheck, and build entries covering the changed contracts and
-   their changed direct consumers. One aggregate command may satisfy its
-   included checks; run the complete local-CI entrypoint only when repository
-   instructions or branch policy name it as the delivery authority. Use the
-   repo's queued/coalesced entrypoint without a manual lease when present;
-   otherwise use its documented `global-ci` lease. Fix a code failure in one
-   batch under the gate's conditional-review trigger, then rerun the affected
-   proportional gate on the resulting HEAD. Preserve a platform incompatibility
-   already delegated in step 2 as an explicit pending PR-CI obligation. Missing
-   native coverage for an applicable risk blocks delivery; it does not expand
-   the local validation map.
+5. **Open or update the PR.** Keep one ready-for-review (non-draft) PR. Its
+   body carries this receipt:
 
-   **Post-gate mutation loop.** Use this loop only for a mutation that this
-   delivery intentionally applies after `Gate HEAD`, including a base merge. A
-   remote head containing any other commit is new input: stop for user
-   direction; an enclosing orchestrator re-enters `ready` for a scope scan
-   before a new full gate.
+   ```markdown
+   ## Delivery gate
+   - Focused proof: <commands, and why they cover every altered behavior>
+   - Final validated HEAD: <40-char SHA pasted from `git rev-parse HEAD`>
+   - Final checks: <commands and results on that SHA>
+   - Delegated to CI: <check and reason, or none>
+   - Residual findings: <review findings left open, or none>
 
-   The mutation's source does not make it bounded. It is bounded only when it
-   stays inside the authorized scope, needs no new contract or architecture,
-   and does not roughly double the diff the gate reviewed. Otherwise stop for
-   user direction. Batch all known validation, base, live-review, and CI fixes
-   into one round. Count every pushed post-gate batch, including a base merge;
-   after two rounds, stop and report.
+   <the `## Review gate` block, verbatim>
+   ```
 
-   Apply one bounded batch and rerun its affected proof. When it substantially
-   changes behavior, expands scope, or introduces a new behavior, security, or
-   architectural risk, resume review-it at step 5's conditional-review path
-   with the existing receipt and applicable axes. Do not rerun Grade, Simplify,
-   or the initial review. If the conditional review already ran, another
-   qualifying mutation stops for user direction. Then finish this step on the
-   complete corrected diff: rerun proportional final-HEAD validation, update
-   the delivery receipt, and push. Continue through step 5 to update the live
-   PR, then restart step 6's checks and review fetches on the new head.
+6. **Get CI green.** Wait for the required checks and every check handed to CI
+   on the exact PR head. Poll every 60–120 s. Pending is not green. A check
+   that cannot run at all (billing, runner outage) blocks the delivery; never
+   waive it. Cloud review bots are off by design: do not wait for or summon
+   them.
 
-   After it passes, push normally. Mandatory pre-push checks must also pass,
-   but do not replace the already-recorded final-HEAD validation. Record the
-   exact pushed HEAD and successful results. This step is complete only when
-   the remote head equals the final validated HEAD, its proportional local gate
-   passed on that SHA, and every native-CI delegation is named for step 6.
+   Fix red checks and real review comments in batches, each through step 4
+   and a receipt update. After two fix batches (a base merge counts), stop and
+   report. A batch that changes behavior, expands scope, or adds a security or
+   architecture risk goes through review-it's second review first. A commit on
+   the remote that this delivery did not make is new input: stop for user
+   direction.
 
-   Leave a `## Delivery gate` receipt for the PR body. It embeds the gate's
-   `## Review gate` block verbatim — grade, risk, regrade, simplify, reviewers,
-   findings and their dispositions, `Reviewed HEAD`, `Gate HEAD`, and every
-   transport record — and adds delivery's own fields around it:
-   `Focused proof:` (why its exact commands cover every altered behavior),
-   `Final validated HEAD: <40-character pushed SHA>` (pasted from
-   `git rev-parse HEAD` output, never retyped — a hand-typed one shipped a
-   one-character typo on 2026-08-22), the deterministic commands
-   and results, every check delegated to native PR CI and why, `Review rounds:`
-   with each reviewed SHA, and `Residual findings:` with every item closed by
-   the convergence rule.
-   `Reviewed HEAD`, `Gate HEAD`, and `Final validated HEAD` are the delivery's
-   chain of custody — reviewed at this ancestor, fixed in these SHAs, validated
-   on the head that ships — so a corrected delivery is expected to carry
-   different HEADs. The receipt is complete when it truthfully distinguishes the
-   gate's review evidence, proportional final-HEAD proof, and pending native-CI
-   obligations.
-5. **Open or update the PR and verify its receipt.** Maintain one accurate,
-   ready-for-review PR whose body carries the review and final-CI receipts —
-   no receipt, no PR. Create new PRs as non-draft and verify GitHub preserved
-   that state. Record the live-review baseline timestamp immediately before the
-   first complete paginated fetch of current reviews, comments, and unresolved
-   threads, then handle those surfaces. A branch mutation enters step 4's
-   post-gate mutation loop only after its source and bounds are proved. It must
-   finish with deterministic validation, push, PR update, and fresh checks on
-   the new head; it does not re-run the whole gate by default.
-   This step is complete when the live PR, its body, its base, and its head all
-   match the verified final receipt and the baseline is explicit.
-6. Wait for required checks and every native-CI check delegated in steps 2 or
-   4 on the exact PR head (poll at 60–120 s intervals, never tight loops).
-   Delegated checks are delivery-required even when branch protection does not
-   mark them required. Cloud auto-review bots are disabled by design — never
-   wait for or solicit one. Green means every required and delegated check
-   passed; pending is not green. A check that cannot run at all (billing,
-   runner outage, missing native coverage) is a blocker — report the PR blocked
-   on it, never shipped with a waiver. Batch red-check fixes through step 4's
-   post-gate mutation loop; its two-round cap covers every mutation source.
-   Immediately before reporting shipped, re-fetch complete paginated reviews,
-   issue comments, inline comments, and review threads, and capture the live
-   `headRefOid`. Require it to match both the final-CI receipt SHA and the SHA
-   whose required and delegated checks passed. For any mismatch or branch
-   change, prove that this delivery intentionally produced every intervening
-   commit before entering step 4's post-gate mutation loop. Any other commit is
-   new input and follows that rule's stop and scope-scan path. Handle every item
-   newer than the baseline and every unresolved thread. Require GitHub to report
-   the PR mergeable against its base; a conflict merges the base into the branch
-   as one post-gate round and enters the same loop. Record the clean check
-   timestamp and head.
-7. **Merge and deploy when authorized.** A ship-it invocation authorizes its
-   local gate, push, and PR work; merge and deployment require the user's own
-   explicit authorization for this delivery. A delegating workflow, skill
-   invocation, or recorded merge policy never carries that authority: a
-   delegated delivery stops at merge-ready and returns the held PR to its
-   caller for the user's review. When the user's authorization is present,
-   proceed directly without another LLM
-   review or confirmation. Merge with the repository's documented method,
-   verify the merged commit and base state, then run the repository's
-   documented deployment path when deployment is in scope. Verify the
-   deployment with its required rollout, health, or canary evidence. Without
-   merge or deploy authority, stop at the corresponding ready state and name
-   the missing authorization.
-8. Report the outcome to the user: PR link, exact head, deterministic and
-   required-check status, live-review timestamp, receipt summary, merge and
-   deployment evidence when applicable, and any findings discarded or
-   deferred.
+   Review convergence: after three LLM review rounds for this delivery,
+   including any review an orchestrator ran, do not review again unless the
+   latest commit caused a regression. Record other findings as residuals.
 
-Do not force-push, modify `main`, broaden scope, or change the target branch
-without explicit authorization. When the base moved under the branch, merge
-`origin/<target>` in and apply the gate's conditional-review trigger to the
-merge HEAD — a pushed branch is never rebased, so force-push is never needed.
-Done when the PR has truthful review and passing final-validation receipts,
-required checks and live-review surfaces are clean on the exact head, every
-authorized merge or deployment is verified, and the user has the report.
+   Before you report, re-fetch all reviews, comments, and threads, confirm the
+   live `headRefOid` equals `Final validated HEAD`, and confirm GitHub reports
+   the PR mergeable.
+
+7. **Merge and deploy only when authorized.** Invoking ship-it authorizes the
+   local gate, push, and PR. Merge and deploy need the user's explicit
+   authorization for this delivery. A delegating workflow or merge policy never
+   carries it: a delegated delivery stops at merge-ready and returns the PR to
+   its caller. With authorization, merge with the repo's method, verify the
+   merged commit, and run and verify the documented deploy when it is in scope.
+
+8. **Report** the PR link, exact head, check status, receipt summary, merge and
+   deploy evidence when applicable, and any deferred or discarded findings.
+
+Do not modify `main`, broaden scope, or change the target branch without
+explicit authorization.

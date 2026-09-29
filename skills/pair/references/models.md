@@ -165,7 +165,7 @@ Cursor and OpenCode have no local usage source; a refusal or rate limit is
 their headroom signal.
 
 Account capacity is read after the task bar is set, never before. Classify
-every measured pool before a new pair, unit, simplify pass, or review:
+every measured pool before a new pair, unit, or review:
 
 - **available** — `pace <= 1`, or `pace` is null and `used_percent < 90`;
 - **protected** — `pace > 1`; projected use reaches 100% before reset;

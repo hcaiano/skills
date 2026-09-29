@@ -1,6 +1,6 @@
 # Process transport
 
-Use this contract for every gate simplify or native review command that
+Use this contract for every gate review command that
 does not run as an interactive slash command in the current visible agent
 pane. The transport records whether the command ran in a visible Herdr process
 pane or as a local background process. These backends provide the same launch
@@ -30,7 +30,7 @@ Start each command without moving the user's focus:
 
 ```bash
 RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
-  --label "review-it · <simplify|standards review|spec review|combined review>" \
+  --label "review-it · <standards review|spec review|combined review>" \
   -- <command> <args...> --receipt "<wrapper-result.json>")
 RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
 ```
@@ -74,9 +74,7 @@ validation.
 For a dual review, start both commands before waiting for either. A Herdr dual
 review uses distinct visible panes. Observe both completions concurrently so
 the lead can validate and close each Herdr pane as soon as it finishes; do not
-wait on one while leaving another completed pane open. Close a Herdr simplify
-pane after its artifacts are valid because inspection, focused validation, and
-the local review commit occur before any later Claude review.
+wait on one while leaving another completed pane open.
 
 ## Wait and validate
 
@@ -105,7 +103,7 @@ After each Herdr process finishes, capture its marker, completion receipt,
 transcript, and wrapper receipt. Reuse its pane only for an already-planned,
 immediately sequential command in this gate, with the prior receipt and token
 validated before reuse; otherwise the lead closes it with `herdr pane close
-<pane_id>`. Once simplify and all reviews finish, close every remaining process
+<pane_id>`. Once all reviews finish, close every remaining process
 pane before push. Close only panes created by this gate, never the caller or
 another unit pane. Keep the closed pane IDs and receipt paths in the delivery
 receipt.
