@@ -40,7 +40,16 @@ Is the change built right? Check, in this order:
      one;
    - independent work serialized for no reason, and updates that can leave
      state half-applied.
-4. **Smell baseline.** These apply even when the repo documents nothing, and
+4. **AI code slop.** Flag in the changed hunks:
+   - comments a maintainer would not write: narration, syntax explanation, or
+     prose that restates the code;
+   - defensive checks or `try`/`catch` blocks that guard only imagined states
+     or are unusual for the surrounding module;
+   - one-use variables or helpers that add no domain meaning;
+   - compatibility shims, aliases, retries, and fallbacks without a named
+     shipped contract that needs them;
+   - naming, imports, and control flow that do not match the surrounding file.
+5. **Smell baseline.** These apply even when the repo documents nothing, and
    are always `judgement`. A documented repo standard overrides them.
    - Mysterious Name → rename; no honest name means the design is murky.
    - Duplicated Code → extract the shared shape.
