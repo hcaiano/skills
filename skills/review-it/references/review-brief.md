@@ -22,7 +22,8 @@ Is the change built right? Check, in this order:
 
 1. **Correctness.** Bugs, broken edge cases, regressions, race conditions,
    security and data-integrity problems, missing error handling at real
-   boundaries, and tests that do not prove the behavior they claim.
+   boundaries, and tests that do not prove the behavior they claim. A real
+   credential in the diff is a `blocker`; name its location, never its value.
 2. **Repository standards.** Read the repo's instructions and documented
    conventions (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, coding-standards
    files). A documented breach can be a `blocker`; cite the file and rule.
