@@ -9,7 +9,7 @@
 //   node headless-codex.mjs "<axis prompt>" --base origin/main
 //   node headless-codex.mjs "<axis prompt>" --commit <sha>
 //   node headless-codex.mjs "<axis prompt>" --uncommitted
-//   [--cwd <path>] [--model <m>] [--receipt <path>] [--idle-min 20] [--total-min 60]
+//   [--cwd <path>] [--model <m>] [--effort <level>] [--receipt <path>] [--idle-min 20] [--total-min 60]
 //
 // Exactly one range selector is required, and the wrapper resolves it to a SHA
 // itself. `codex exec review` refuses its own `--base`/`--commit`/`--uncommitted`
@@ -48,7 +48,7 @@ const argv = process.argv.slice(2);
 const prompt = argv[0];
 const { opt, flag } = optionReader(argv);
 
-const usage = 'usage: headless-codex.mjs "<prompt>" (--base <branch> | --commit <sha> | --uncommitted) [--cwd <path>] [--model <m>] [--receipt <path>] [--idle-min N] [--total-min N]';
+const usage = 'usage: headless-codex.mjs "<prompt>" (--base <branch> | --commit <sha> | --uncommitted) [--cwd <path>] [--model <m>] [--effort <level>] [--receipt <path>] [--idle-min N] [--total-min N]';
 if (!prompt || prompt.startsWith('--')) {
   process.stdout.write(JSON.stringify({ ok: false, reason: usage }) + '\n');
   process.exit(2);
@@ -58,6 +58,7 @@ const commit = opt('commit', null);
 const uncommitted = flag('uncommitted');
 const cwd = opt('cwd', process.cwd());
 const model = opt('model', null);
+const effort = opt('effort', null);
 const receiptPath = opt('receipt', null);
 const idleMs = parseFloat(opt('idle-min', '20')) * 60000;
 const totalMs = parseFloat(opt('total-min', '60')) * 60000;
@@ -146,6 +147,7 @@ const args = [
   '--config', 'sandbox_workspace_write.network_access=false',
   '--output-last-message', lastMessagePath,
   ...(model ? ['--model', model] : []),
+  ...(effort ? ['--config', `model_reasoning_effort="${effort}"`] : []),
   composedPrompt,
 ];
 

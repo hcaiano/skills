@@ -78,8 +78,8 @@ carries both, and the stale one still answers under the retired workflow.
 
 ### Delivery
 
-- `review-it` — grade a finished change, simplify it, run one graded LLM
-  review round, and batch material fixes. Ends at a clean local HEAD and a
+- `review-it` — grade a finished change, run one Standards and Spec review
+  round from another model family, and batch material fixes. Ends at a clean local HEAD and a
   receipt; never pushes, opens a PR, or merges.
 - `ship-it` — prove a finished change, run the graded gate above, validate
   the final HEAD deterministically, and carry the authorized PR delivery
