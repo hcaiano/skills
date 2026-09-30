@@ -178,6 +178,7 @@ test("the roster is the single editable model preference source, by family", () 
   assert.match(families, /Cursor had no Astra on 2026-09-07/u);
   assert.match(families, /OpenCode has no family\s+resolution/u);
   assert.match(families, /Prefer a native harness over a Cursor duplicate when role and\s+pool are equal/u);
+  assert.match(families, /GPT families are the exception: they run only through\s+Codex[\s\S]*protected Codex pool never moves a GPT seat there/u);
   assert.match(families, /machine-specific headless[\s\S]*`staffing\.md`/u);
   assert.match(families, /Promo IDs belong\s+only in roster data, never in scripts/u);
   assert.doesNotMatch(families, /API (?:input|output)|\$[0-9.]+\/M/u);
@@ -234,7 +235,7 @@ test("the roster is the single editable model preference source, by family", () 
   assert.match(pace, /\*\*protected\*\* — `pace > 1`/u);
   assert.match(pace, /\*\*unavailable\*\* — `used_percent >= 90`, refusal, or rate limit/u);
   assert.match(pace, /the other Codex identity for a Codex seat, then the seat's listed\s+fallback/u);
-  assert.match(pace, /Cursor is the deliberate universal fallback harness/u);
+  assert.match(pace, /Cursor is the deliberate universal fallback harness[\s\S]*except the GPT families, which stay on Codex/u);
   assert.match(pace, /prefer lower `pace`, then lower\s+`used_percent`, then speed/u);
   assert.match(pace, /Balance equal-bar work across subscriptions and\s+across the two Codex identities/u);
   assert.match(pace, /Grok 4\.6 "unlimited" has a quota\s+in practice/u);

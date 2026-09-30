@@ -87,8 +87,10 @@ A family appears only when its native harness or the live Cursor catalog
 exposes it. Recheck both sources before adding a family; omit it while neither
 source has it. Prefer a native harness over a Cursor duplicate when role and
 pool are equal; Cursor remains eligible when it uniquely exposes the family or
-has the sustainable pool. Before Cursor owns implementation, apply the
-machine-specific headless Cursor caveat in
+has the sustainable pool. GPT families are the exception: they run only through
+Codex. OpenAI no longer serves Cursor, so its GPT entries are stale, and a
+protected Codex pool never moves a GPT seat there. Before Cursor owns
+implementation, apply the machine-specific headless Cursor caveat in
 [`staffing.md`](../../orchestrate/references/staffing.md). Promo IDs belong
 only in roster data, never in scripts.
 
@@ -182,10 +184,10 @@ permitted path left. An explicit user choice may spend a protected pool after
 you state its use, pace, and reset; it never turns a refusal into capacity.
 
 Cursor is the deliberate universal fallback harness for every eligible family
-that its live catalog exposes. Choose the hosted model and its pool together.
-Prefer `cursor.cursor_models` while it is available; use
-`cursor.other_models` only while that separate pool is available. Name Cursor
-and the pool in the staffing reason.
+that its live catalog exposes, except the GPT families, which stay on Codex.
+Choose the hosted model and its pool together. Prefer `cursor.cursor_models`
+while it is available; use `cursor.other_models` only while that separate pool
+is available. Name Cursor and the pool in the staffing reason.
 
 When several available pools meet the same bar, prefer lower `pace`, then lower
 `used_percent`, then speed. Balance equal-bar work across subscriptions and

@@ -40,3 +40,11 @@ test("the receipt carries the fields that orchestrate's delivery verifies", () =
     assert.ok(reviewIt.includes(field), `receipt is missing ${field}`);
   }
 });
+
+test("staffing keeps GPT on Codex and Fable behind the user's ask", () => {
+  const staffing = reviewIt.slice(reviewIt.indexOf("## 3. Staff"), reviewIt.indexOf("## 4. Review"));
+  assert.match(staffing, /GPT runs only through Codex/u);
+  assert.doesNotMatch(staffing, /\bSol\b|`gpt-(?!6-astra)/u, "the Cursor lane must not name a GPT model");
+  assert.match(staffing, /Fable reviews only when the user asks/u);
+  assert.match(staffing, /A skipped Codex pool takes Astra with it[\s\S]*never an older GPT/u);
+});
