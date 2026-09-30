@@ -254,6 +254,9 @@ if (invokedAsMain) {
   } else {
     report({ offline: args.includes("--offline"), identity: args.includes("--identity") ? args[args.indexOf("--identity") + 1] : "default" })
       .then((result) => { process.stdout.write(`${JSON.stringify(result)}\n`); })
-      .catch((error) => { process.stdout.write(`${JSON.stringify({ error: error.message })}\n`); });
+      .catch((error) => {
+        process.stdout.write(`${JSON.stringify({ error: error.message })}\n`);
+        process.exitCode = 1;
+      });
   }
 }

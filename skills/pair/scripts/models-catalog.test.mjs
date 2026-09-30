@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -100,4 +100,14 @@ test("runs when reached through a symlinked skill directory, as installed skills
   const run = spawnSync(process.execPath, [join(link, "scripts", "models-catalog.mjs"), "--offline"], { env, encoding: "utf8", timeout: 30000 });
   assert.equal(run.status, 0, run.stderr);
   assert.ok(JSON.parse(run.stdout).clis, "the symlinked entry point still prints its report");
+});
+
+test("a report that cannot run at all exits nonzero", () => {
+  // A scripts folder with no roster beside it: every source may still answer,
+  // but the report itself cannot be built.
+  const scripts = join(mkdtempSync(join(tmpdir(), "models-catalog-no-roster-")), "scripts");
+  cpSync(dirname(helper), scripts, { recursive: true });
+  const run = spawnSync(process.execPath, [join(scripts, "models-catalog.mjs"), "--offline"], { env, encoding: "utf8", timeout: 30000 });
+  assert.equal(run.status, 1);
+  assert.match(JSON.parse(run.stdout).error, /models\.md/u);
 });
