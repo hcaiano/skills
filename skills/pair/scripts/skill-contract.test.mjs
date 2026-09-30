@@ -77,6 +77,7 @@ test("every helper command and flag the docs run exists in that helper", () => {
     ["references/headless.md", '$PAIR_SCRIPT', "pair-headless.mjs", (source, command) => new RegExp(`^\\s+${command}: run`, "mu").test(source)],
     ["references/caller-pane-resolution.md", '$CALLER_PROOF_SCRIPT', "caller-proof.mjs", null],
     ["references/models.md", "scripts/usage-state.mjs", "usage-state.mjs", null],
+    ["references/models.md", "scripts/models-catalog.mjs", "models-catalog.mjs", null],
   ];
   for (const [doc, variable, script, dispatches] of cases) {
     const source = read(join(here, script));
@@ -95,7 +96,7 @@ test("every public helper command is documented", () => {
   const headless = read(join(pairDir, "references/headless.md"));
   const table = read(join(here, "pair-headless.mjs")).match(/const COMMANDS = \{([\s\S]*?)\};/u)[1];
   for (const [, command] of table.matchAll(/^\s+([a-z]+):/gmu)) {
-    assert.match(headless, new RegExp(`\\$PAIR_SCRIPT" ${command} --repo`, "u"), `headless.md documents ${command}`);
+    assert.match(headless, new RegExp(`\\$PAIR_SCRIPT" ${command} --(?:repo|partner)`, "u"), `headless.md documents ${command}`);
   }
   const herdr = read(join(pairDir, "references/herdr.md"));
   for (const [, command] of read(join(here, "herdr-pair.mjs")).matchAll(/command === "([a-z]+)"/gu)) {

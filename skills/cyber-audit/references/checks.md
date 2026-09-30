@@ -6,6 +6,9 @@ points: adapt them to the advisory.
 
 - Prefer each tool's own "list installed" command over guessing install paths.
   Use a filesystem `find` only for locations no lister or manifest covers.
+- Read the suspected binary's version from package-manager metadata or its
+  installed manifest. Run the binary itself only when the advisory establishes
+  that invoking it is safe.
 - Make path searches path-aware (`-path "*/<pkg>"`) so scoped names such as
   `@vendor/pkg` are found.
 - Search the current working tree and any path the user named as well as `~`:
@@ -62,7 +65,7 @@ find ~/code . -maxdepth 6 -type f -name "Cargo.lock" -print0 2>/dev/null \
 ## System packages and binaries
 
 ```bash
-which <binary>; <binary> --version 2>/dev/null
+command -v <binary>  # locate it; read its version from package metadata
 # Linux
 dpkg -l 2>/dev/null | grep -i "<pkg>"
 flatpak list 2>/dev/null | grep -i "<pkg>"

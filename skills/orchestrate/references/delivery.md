@@ -19,10 +19,10 @@ Published history is merged, never rebased or force-pushed.
 
 Use **executor delivery** by default. Send the executor one pair `task` (the
 headless send is in `SKILL.md`'s Monitor section) that names the
-scope-approved SHA and tells it to use the installed `ship-it` skill. Pair's
-writable-task budget is 120 minutes with time queued for the heavy slot
-excluded; when the repository's full local-CI run approaches that, size the
-send's `--total-min` to it. The executor runs ship-it's proportional proof and
+scope-approved SHA and tells it to read and execute the installed
+`ship-it/SKILL.md` by path. Pair's writable-task budget is 120 minutes with
+time queued for the heavy slot excluded; when the repository's full local-CI
+run approaches that, size the send's `--total-min` to it. The executor runs ship-it's proportional proof and
 graded review gate on the complete diff, pushes, opens or updates one PR
 against the recorded base with the complete `## Delivery gate` receipt in its
 body, and returns the PR URL, exact head SHA, check state, and review-checked

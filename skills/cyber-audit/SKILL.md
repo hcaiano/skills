@@ -33,7 +33,8 @@ written audit trail.
    [references/checks.md](references/checks.md) and pick the checks for this
    advisory's ecosystem and this OS. Run independent checks in parallel.
 3. **Build the table** as you go: one row per check with its concrete result
-   (version, path, "None", "N/A"). Done when every picked check has a row.
+   (version, path, "None", "N/A", or "not checked" with the reason). Done when
+   every picked check has a row and every gap needed for the verdict is named.
 4. **Write the report.** Run `mkdir -p ~/security-audits`, then write
    `~/security-audits/YYYY-MM-DD-<short-kebab-slug>.md` from the template
    below, with today's date from the environment. When the verdict is
@@ -62,7 +63,7 @@ written audit trail.
 
 ## Verdict
 
-**<Not affected. | Affected. | Partially affected.>**
+**<Not affected. | Affected. | Partially affected. | Inconclusive.>**
 
 - <Rationale bullet 1>
 - <Rationale bullet 2>
@@ -97,3 +98,5 @@ Verdicts:
   running but only partly reachable, e.g. bound to loopback or exposed only
   behind auth or a firewall. Spell out the mitigation. A fully stopped service
   is **Not affected**.
+- **Inconclusive.** A check needed to prove absence, version, or reachability
+  could not run. Name that check and the missing evidence in the report.

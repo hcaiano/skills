@@ -753,6 +753,20 @@ test("init resolves latest:<family> from each partner's live catalog and records
   assert.equal(cursorArgs[cursorArgs.indexOf("--model") + 1], "claude-fable-5-1-high", "the catalog ID already carries the effort; no [effort=] suffix");
 });
 
+test("resolve names the exact ID a pair would staff, with no session and the same refusals", () => {
+  const sol = run("ok", "claude", "resolve", "--partner", "codex", "--identity", "lais", "--model", "latest:sol", "--effort", "high").receipt;
+  assert.equal(sol.ok, true, sol.reason);
+  assert.equal(sol.cli_model, "gpt-5.6-sol");
+  assert.equal(sol.identity, "lais");
+  assert.equal(sol.identity_home, realpathSync(laisHome));
+  assert.equal(sol.codex_bin, join(bin, "codex"));
+  // Only the identity's catalog is read; no session turn runs.
+  assert.deepEqual(invocations().map((call) => [call.argv[0], call.codex_home]), [["app-server", realpathSync(laisHome)], ["app-server", realpathSync(laisHome)]]);
+  assert.equal(run("ok", "claude", "resolve", "--partner", "cursor", "--model", "latest:fable", "--effort", "high").receipt.cli_model, "claude-fable-5-1-high");
+  assert.equal(run("ok", "claude", "resolve", "--partner", "claude", "--model", "latest:opus").receipt.cli_model, "opus", "a Claude lead may resolve a Claude reviewer: nothing is paired");
+  assert.match(run("ok", "claude", "resolve", "--partner", "codex", "--model", "latest:luna", "--effort", "ultra").receipt.reason, /does not accept effort ultra/u);
+});
+
 test("a Claude partner records the exact model its init event reports and is re-pinned on resume", () => {
   const repo = newRepo("latest-claude");
   const created = run("ok", "codex", "init", "--repo", repo, "--partner", "claude", "--model", "latest:fable", "--effort", "high").receipt;

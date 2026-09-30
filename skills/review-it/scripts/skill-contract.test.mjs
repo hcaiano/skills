@@ -32,8 +32,8 @@ test("every relative link, anchor, and named script resolves", () => {
       if (anchor) assert.ok(anchors(read(path)).has(anchor), `${name} links to missing #${anchor} in ${target}`);
     }
     for (const [, script] of text.matchAll(/\b([a-z-]+\.mjs)\b/gu)) {
-      // usage-state.mjs belongs to the sibling pair skill.
-      const owner = script === "usage-state.mjs" ? join(skillDir, "../pair/scripts") : here;
+      // The capacity and model helpers belong to the sibling pair skill.
+      const owner = ["usage-state.mjs", "pair-headless.mjs"].includes(script) ? join(skillDir, "../pair/scripts") : here;
       assert.ok(existsSync(join(owner, script)), `${name} names missing ${script}`);
     }
   }

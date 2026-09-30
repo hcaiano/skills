@@ -107,7 +107,8 @@ Before claiming completion, have independent read-only reviewers, one per
 boundary group, compare deleted coverage against the keepers. They look for
 contracts that lost their only proof, and for new assertions that cannot fail,
 such as a rejection row the production code never reaches. Without subagents,
-get this review from another model through `ask-peer`.
+read and execute the installed `ask-peer/SKILL.md` by path to get this review
+from another model.
 
 For each restored contract, make one deliberate **mutation** of the production
 owner and confirm the keeper goes red. Copy the owner file before mutating it;

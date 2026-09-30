@@ -61,6 +61,8 @@ const effort = opt('effort', null);
 const receiptPath = opt('receipt', null);
 const idleMs = parseFloat(opt('idle-min', '20')) * 60000;
 const totalMs = parseFloat(opt('total-min', '60')) * 60000;
+// The binary whose catalog pair's resolver read; installs publish different models.
+const codexBin = process.env.CODEX_BIN?.trim() || 'codex';
 
 const emit = receiptEmitter(receiptPath);
 
@@ -153,7 +155,7 @@ const args = [
 const finish = (outcome) => {
   closeSync(logFd);
   const seconds = Math.round((Date.now() - startedAt) / 1000);
-  const record = { command: ['codex', ...args], review_range: range, seconds, log: logPath, ...outcome };
+  const record = { command: [codexBin, ...args], review_range: range, seconds, log: logPath, ...outcome };
   // With a workspace-write sandbox, this fingerprint is what enforces
   // read-only: a tree that changed under the review cannot prove the reviewer
   // kept its hands off, so the run fails loudly instead of degrading silently.
@@ -171,7 +173,7 @@ const finish = (outcome) => {
 };
 
 const { startedAt } = supervise({
-  bin: 'codex',
+  bin: codexBin,
   args,
   cwd,
   logFd,

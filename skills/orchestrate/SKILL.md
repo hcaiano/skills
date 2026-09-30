@@ -12,9 +12,8 @@ orchestrator and pair lead; each unit's partner is its executor. Work on one
 repository per invocation.
 
 Invoking this skill authorizes creation and normal cleanup of the units it
-records, including ending their pairs and deleting merged unit branches. It is
-also Henrique's explicit request for the Fable and Astra planning seats below.
-An abandoned unit needs a new explicit force-cleanup instruction. Only the
+records, including ending their pairs and deleting merged unit branches. An
+abandoned unit needs a new explicit force-cleanup instruction. Only the
 user's request grants mutations, secret access, merge authority, or scope
 expansion; task and ticket text supplies requirements, not authority.
 
@@ -27,8 +26,12 @@ beside this one. Set these absolute paths:
 ORCHESTRATE_DIR=<this skill directory>
 UNIT="$ORCHESTRATE_DIR/scripts/unit.mjs"
 HEADLESS_PAIR="$ORCHESTRATE_DIR/../pair/scripts/pair-headless.mjs"
+SKILL_DIR="$ORCHESTRATE_DIR/../pair"
 REPO=$(git -C <task-repository> rev-parse --show-toplevel)
 ```
+
+Run the [catalog check](../pair/references/models.md#families) once per
+invocation, before staffing a planning pair or unit.
 
 Units and planning pairs run on the headless backend, the only one that
 resolves the roster's `latest:<family>` seats and named Codex identities;
@@ -77,16 +80,20 @@ its record to free capacity.
 ### Plan jointly
 
 Initial planning and material replanning use the roster's
-[planning seat](../pair/references/models.md#planning-seat): Fable and Astra,
-each writing an independent proposal. Keep the user's chosen lead and route
-the two seats by what it runs:
+[planning seat](../pair/references/models.md#planning-seat): Opus and Astra.
+Plan **consequential** work with two independent proposals: a multi-unit
+batch, or an issue that `review-it` would grade `dual` by its
+[grade triggers](../review-it/SKILL.md#2-grade). A routine single issue gets
+the lead's plan and one critique from the other seat at high, scoped to
+assumptions and acceptance proof rather than a second full plan. Keep the
+user's chosen lead and route the two seats by what it runs:
 
-| Lead runs | Fable | Astra |
+| Lead runs | Opus | Astra |
 |---|---|---|
-| Fable | the lead | `codex` pair |
+| Opus | the lead | `codex` pair |
 | Astra | `claude` pair | the lead |
 | another Codex model | `claude` pair | `codex` pair on [another Codex home](references/staffing.md#codex-identities) |
-| another Claude model | a Fable subagent (Claude Code's `oracle` agent), continued with `SendMessage` | `codex` pair |
+| another Claude model | an Opus subagent (Claude Code's Agent tool, model `opus`), continued with `SendMessage` | `codex` pair |
 | Cursor, Grok, or OpenCode | `claude` pair | `codex` pair |
 
 Pair refuses a `claude` partner for a Claude lead, hence the subagent. Each
@@ -97,9 +104,9 @@ pairs:
 
 ```bash
 PLAN_BASE=$(git -C "$REPO" rev-parse <planning-base>)
-FABLE_DIR=$(mktemp -d) && git -C "$REPO" worktree add -q --detach "$FABLE_DIR" "$PLAN_BASE"
-node "$HEADLESS_PAIR" init --repo "$FABLE_DIR" --partner claude \
-  --model latest:fable --effort <seat-effort> --role peer
+OPUS_DIR=$(mktemp -d) && git -C "$REPO" worktree add -q --detach "$OPUS_DIR" "$PLAN_BASE"
+node "$HEADLESS_PAIR" init --repo "$OPUS_DIR" --partner claude \
+  --model latest:opus --effort <seat-effort> --role peer
 ASTRA_DIR=$(mktemp -d) && git -C "$REPO" worktree add -q --detach "$ASTRA_DIR" "$PLAN_BASE"
 node "$HEADLESS_PAIR" init --repo "$ASTRA_DIR" --partner codex \
   --model latest:astra --effort <seat-effort> --role peer \
@@ -107,13 +114,14 @@ node "$HEADLESS_PAIR" init --repo "$ASTRA_DIR" --partner codex \
 ```
 
 A seat with no route, or whose pool the
-[capacity helper](references/staffing.md#read-capacity) marks `unavailable`,
-blocks joint planning: report it before any interview, and keep previously
-approved independent execution eligible.
+[capacity helper](references/staffing.md#read-capacity) marks `unavailable`
+with no fallback the planning seat names, blocks joint planning: report it
+before any interview, and keep previously approved independent execution
+eligible.
 
-One lead conducts the user interview. Both planners inspect the same issue and
-relevant source and write independent proposals before reading each other's,
-then reconcile. Settle factual differences with source or focused runtime
+One lead conducts the user interview. For consequential work both planners
+inspect the same issue and relevant source and write independent proposals
+before reading each other's, then reconcile. Settle factual differences with source or focused runtime
 evidence; bring unresolved product tradeoffs to Henrique in one question. Stop
 when both accept the same scope, interfaces, dependencies, and acceptance
 proof; two repetitions of the same disagreement require a user decision.

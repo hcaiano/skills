@@ -1107,7 +1107,7 @@ const newestByVersion = (candidates) => {
 
 // Codex catalog entries are `gpt-<version>-<family>`; the version is the
 // numeric run between the vendor prefix and the family token.
-const CODEX_ID = /^gpt-(\d+(?:\.\d+)*)-([a-z0-9]+)$/iu;
+export const CODEX_ID = /^gpt-(\d+(?:\.\d+)*)-([a-z0-9]+)$/iu;
 
 export const pickLatestCodex = (catalog, family, effort = null) => {
   const entries = Array.isArray(catalog?.data) ? catalog.data : Array.isArray(catalog) ? catalog : [];
@@ -1141,6 +1141,7 @@ export const pickLatestCodex = (catalog, family, effort = null) => {
 // `grok models` prints one model per line under "Available models:", the
 // default marked with `*`. Grok has one family, so `latest:grok` is the only
 // request and its version is the trailing number.
+export const GROK_LINE = /^\s*[*-]\s+([a-z0-9]+)-(\d+(?:\.\d+)*)(?:\s+\([^)]*\))?\s*$/iu;
 export const pickLatestGrok = (text, family = "grok") => {
   const wanted = String(family).toLowerCase();
   const candidates = [];
@@ -1149,7 +1150,7 @@ export const pickLatestGrok = (text, family = "grok") => {
     // The whole line is the ID plus, at most, the CLI's own parenthesised
     // annotation such as "(default)". A suffixed ID like grok-4.7-preview is
     // a different model and never truncated into a stable one.
-    const match = line.match(/^\s*[*-]\s+([a-z0-9]+)-(\d+(?:\.\d+)*)(?:\s+\([^)]*\))?\s*$/iu);
+    const match = line.match(GROK_LINE);
     if (!match || match[1].toLowerCase() !== wanted) continue;
     const id = `${match[1]}-${match[2]}`;
     if (seen.has(id)) continue;
@@ -1167,8 +1168,8 @@ export const pickLatestGrok = (text, family = "grok") => {
 // GPT and `<vendor>-<family>-<version>-<effort>` for the others — and both
 // carry optional `thinking` and `-fast` variants. The plain form is the seat;
 // variants are chosen only by exact ID.
-const CURSOR_LINE = /^\s*([a-z0-9.-]+)\s+-\s+(.*)$/iu;
-const CURSOR_VERSION = "([a-z]?\\d+(?:[.-]\\d+)*)";
+export const CURSOR_LINE = /^\s*([a-z0-9.-]+)\s+-\s+(.*)$/iu;
+export const CURSOR_VERSION = "([a-z]?\\d+(?:[.-]\\d+)*)";
 
 export const pickLatestCursor = (text, family, effort) => {
   const wanted = String(family).toLowerCase();
@@ -1216,7 +1217,7 @@ export const pickLatestCursor = (text, family, effort) => {
 export const parseClaudeInit = (transcript) =>
   parseJsonObjects(transcript).find((event) => event.type === "system" && event.subtype === "init") ?? null;
 
-const catalogText = (bin, args, env) => {
+export const catalogText = (bin, args, env) => {
   const run = spawnSync(bin, args, { encoding: "utf8", env, timeout: 30000 });
   if (run.error) return { error: `cannot run ${bin} ${args.join(" ")}: ${run.error.message}` };
   if (run.status !== 0) return { error: `${bin} ${args.join(" ")} exited ${run.status}: ${(run.stderr || "").trim().slice(-300)}` };
@@ -2223,8 +2224,48 @@ const runEnd = () => {
   emit({ ok: true, status: "ended", deleted: place.stateDir }, 0);
 };
 
+// `resolve` answers which exact ID a model request names here, with no
+// session: a one-shot caller (ask-peer, a review-it reviewer) staffs the same
+// newest model a pair would, under the same refusals.
+const runResolve = async () => {
+  const partner = opt("partner");
+  if (!partner) fail(`missing --partner — choose one of ${kindList}`, 2);
+  if (!AGENT_KINDS.includes(partner)) fail(`unknown partner ${partner} — use one of ${kindList}`, 2);
+  const model = opt("model");
+  if (!model) fail("missing --model — name latest:<family> or an exact ID", 2);
+  const effort = opt("effort");
+  const account = partnerIdentity(partner, opt("identity") ?? "default");
+  if (account.error) fail(account.error, 2);
+  let codexBin = null;
+  if (partner === "codex") {
+    const verified = verifyCodexBinary(codexBinary(process.env));
+    if (verified.error) fail(`the Codex binary could not be verified — set CODEX_BIN to an installed codex: ${verified.error}`, 2);
+    codexBin = verified.bin;
+  }
+  const resolved = await resolveModelRequest({ partner, model, effort, identityHome: account.identity_home, codexBin, env: process.env });
+  if (resolved.error) fail(resolved.error, 2);
+  emit({
+    ok: true,
+    partner,
+    identity: account.identity,
+    // The Codex home whose catalog was read: run the model there, so the ID
+    // and the account it runs on cannot come from different logins.
+    ...(account.identity_home ? { identity_home: account.identity_home } : {}),
+    // Codex installs publish different catalogs: run the binary that was read.
+    ...(codexBin ? { codex_bin: codexBin } : {}),
+    model,
+    // What to pass the CLI's own model flag: a Claude alias the CLI resolves,
+    // a Cursor ID that already carries the effort, or an exact catalog ID.
+    cli_model: resolved.command.model,
+    model_resolved: resolved.model_resolved,
+    model_source: resolved.model_source,
+    ...(resolved.model_evidence ? { model_evidence: resolved.model_evidence } : {}),
+  }, 0);
+};
+
 const COMMANDS = {
   init: runInit,
+  resolve: runResolve,
   send: runSend,
   wait: runWait,
   fork: runFork,
@@ -2248,7 +2289,7 @@ if (invokedAsMain) {
   const run = COMMANDS[command];
   if (!run) {
     fail(
-      `usage: pair-headless.mjs <init|send|wait|fork|status|clear|end> --repo <root> [--partner ${kindList}] [--identity <name>] [--model <id|latest:family>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--background] [--seq N] [--timeout-min N] [--idle-min N] [--total-min N]`,
+      `usage: pair-headless.mjs <init|send|wait|fork|status|clear|end> --repo <root> | resolve --partner <cli> --model <id|latest:family> [--effort <level>] [--identity <name>]; [--partner ${kindList}] [--identity <name>] [--model <id|latest:family>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--background] [--seq N] [--timeout-min N] [--idle-min N] [--total-min N]`,
       2,
     );
   }
