@@ -134,9 +134,8 @@ port the new contract into its keeper, and confirm every new regression test
 there still has a home. Rerun the whole subsystem suite on the merged head.
 
 Once the user authorizes delivery, ship the subsystem PR with
-[ship-it](../../ship-it/SKILL.md). Its review-it gate grades the diff at least
-`single`: deleted coverage removes proof that no focused run can replace, so it
-is never a mechanical low-risk `skip`. Pass the step-6 preservation review in
+[ship-it](../../ship-it/SKILL.md). Its review-it gate grades deleted coverage at
+least `single`. Pass the step-6 preservation review in
 as the spec source. The PR carries the [audit.md](audit.md) report, plus:
 
 - baseline and final test and test-support line counts, production counted

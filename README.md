@@ -142,12 +142,10 @@ install `pair` as well.
   are unavailable.
 - `ship-it` requires `review-it` installed alongside it: it delegates its
   graded gate and never reimplements one.
-- `review-it` reads the usage-state helper bundled with `pair`
-  to size its review pools, and reads `pair`'s caller-pane proof to run a
-  gate command in a visible Herdr pane. A missing usage-state helper records an
-  unread pool state and changes nothing else. A missing `pair` runs the
-  gate locally outside Herdr, and stops it inside Herdr rather than hiding a
-  hosted run.
+- `review-it` requires `pair` installed alongside it: it staffs reviewers from
+  `pair`'s roster (the Review seat and pool rules), sizes pools with `pair`'s
+  usage-state helper, and reads `pair`'s caller-pane proof to run a gate
+  command in a visible Herdr pane.
 
 These dependencies are not bundled here and must be installed separately.
 

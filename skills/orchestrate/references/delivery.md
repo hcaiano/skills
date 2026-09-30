@@ -105,7 +105,8 @@ Orchestrate never merges a PR he has not reviewed, including with admin rights
 or after its own verification; a recorded `auto` merge policy waits for the
 same review. Visible UI also needs before and after screenshots. Dependent
 units wait when this rule serializes them. His feedback on the held PR returns
-to the executor as a correction round and re-enters delivery on the new head.
+to the executor as a correction round through ship-it's PR-feedback step on the
+same PR, which refreshes the delivery receipt for the new head.
 Only his explicit approval of that exact verified head authorizes the merge; a
 changed head needs fresh evidence and approval.
 

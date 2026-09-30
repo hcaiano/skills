@@ -1,17 +1,14 @@
 ---
 name: review-it
-description: "Manual-only graded review gate for a finished change: risk grade, one Standards and Spec review round from a different model family, one correction batch, then a receipt. Leaves a clean local HEAD and never pushes, opens, or merges anything. Invoke only when the user explicitly names review-it or an explicitly invoked workflow delegates its graded gate."
+description: "Grade, review, and correct a finished change, ending at a clean local HEAD and a receipt."
 disable-model-invocation: true
 ---
 
 # Review gate
 
-Grade a finished change, have other models review it, and fix what they find.
-The gate ends at a clean local HEAD and a `## Review gate` receipt. It never
-pushes, opens or updates a PR, waits on CI, merges, or deploys, so it is safe
-on a branch whose PR already exists.
-
-Run it only when the user invokes review-it or ship-it delegates to it.
+The gate ends at a clean local HEAD and a `## Review gate` receipt. Pushing,
+PRs, CI, merge, and deploy stay with the caller, so the gate is safe on a
+branch whose PR already exists.
 
 ## 1. Fix the range
 
@@ -40,34 +37,27 @@ Grade the complete diff by what it changes:
   infrastructure, concurrency, public contracts, cross-subsystem changes,
   ambiguous requirements, or a blast radius the focused proof cannot bound.
 
-When unsure, go up one grade. An explicit user grade is a floor. A caller's
-earlier grade is provisional: regrade the actual diff and record why.
+A change that deletes or weakens test coverage is at least `single`. When
+unsure, go up one grade. An explicit user grade is a floor. A caller's earlier
+grade is provisional: regrade the actual diff and record why.
 
 ## 3. Staff the reviewers
 
 `single` uses one reviewer from a model family that did not implement the
-change. `dual` uses two different families, one per axis. Pick from:
+change. `dual` uses two different families, one per axis. Staff them from the
+roster's [Review seat](../pair/references/models.md#review-seat); the roster
+owns the families, their IDs, and their efforts.
 
-- native Claude: Opus.
-- native Codex: Astra, high effort. GPT runs only through Codex: OpenAI no
-  longer serves Cursor, so never pick a GPT model there.
-- Cursor: the newest member of Grok, Kimi, GLM, or Muse Spark in
-  `cursor-agent --list-models`, `-high` by default. On 2026-09-29 these were
-  Grok 4.7 (`grok-4.7-high`, `grok-4.7-xhigh`), Kimi K3 (`kimi-k3-high`,
-  `kimi-k3-max`), GLM 5.2 (`glm-5.2-high`, `glm-5.2-max`), and Muse Spark 1.3
-  (`muse-spark-1.3-high`, `muse-spark-1.3-max`).
-
-Never Google models or Composer. Fable reviews only when the user asks for it.
-
-Check capacity first with `node <pair-dir>/scripts/usage-state.mjs`
-from the sibling `pair` skill; a Cursor model draws on the Cursor pool
-that bills it. Skip a pool at `used_percent` >= 90, with `pace` > 1, or whose
-CLI refuses. A skipped Codex pool takes Astra with it: staff a Cursor family
-from the list in its place and record the swap, never an older GPT. If no
-eligible family remains, state the use, pace, and reset, and ask whether to
-spend a protected pool or wait. When only one family is left for a `dual`, run
-one reviewer on both axes and record the reduction. If the helper is not
-installed, record that and staff anyway.
+Read capacity first with `node <pair-dir>/scripts/usage-state.mjs` from the
+sibling `pair` skill, and skip any pool whose `states` entry is not
+`available`; a Cursor model draws on the Cursor pool that bills it. The
+roster's [Pools](../pair/references/models.md#pools) section defines the
+states. When the Codex pool is skipped, a Cursor family from the Review seat
+takes that reviewer's place; record the swap. When only one family is left for
+a `dual`, run one reviewer on both axes and record the reduction. If no
+eligible family remains, state each pool's use, pace, and reset, and ask
+whether to spend a protected pool or wait. If the helper is not installed,
+record that and staff anyway.
 
 ## 4. Review
 
@@ -77,24 +67,38 @@ the repo's instruction files, and the spec source. `single` covers Standards
 and Spec in one review. `dual` assigns Standards to one reviewer and Spec to the
 other; start both before waiting on either.
 
-Run external commands through [the process transport](references/visible-herdr-runs.md):
+Each reviewer runs read-only through its wrapper in this skill's `scripts/`,
+at the seat's model and effort:
 
-- Claude: `node <skill dir>/scripts/headless-claude.mjs "<brief prompt>"
-  --receipt <review.json>` (read-only plan mode, Opus). When Claude is the lead
-  in its own visible pane and did not implement the change, it may review
-  directly with the brief instead.
-- Codex: `node <skill dir>/scripts/headless-codex.mjs "<brief prompt>" --base
-  origin/<target-branch> --model gpt-6-astra --effort high --receipt
-  <review.json>`. Use `--commit <sha>` or
-  `--uncommitted` for those ranges. The wrapper pins the range itself.
-- Cursor: `node <skill dir>/scripts/headless-cursor.mjs "<brief prompt>"
-  --model <live-catalog-id> --base origin/<target-branch> --receipt
-  <review.json>`, with the same range selectors.
+- Claude: `headless-claude.mjs "<prompt>" --effort <effort>` (Opus by default).
+- Codex: `headless-codex.mjs "<prompt>" --model <id> --effort <effort>
+  --base origin/<target-branch>`.
+- Cursor: `headless-cursor.mjs "<prompt>" --model <id>
+  --base origin/<target-branch>`; the ID carries the effort and must appear in
+  `cursor-agent --list-models`.
 
-A review counts only when the wrapper returns `{ok: true}` with non-empty
-findings output. A refusal, rate-limit notice, or empty payload is a failed
-review even with exit 0: rerun it or restaff under step 3. An improvised
-read-through does not count.
+The Codex and Cursor wrappers pin the range themselves; pass `--commit <sha>`
+or `--uncommitted` for those ranges. Launch each wrapper through the process
+transport:
+
+```bash
+RUN_TRANSPORT=<skill dir>/scripts/run-transport.mjs
+RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
+  --label "review-it · <standards|spec|combined> review" \
+  -- node <skill dir>/scripts/<wrapper> <args...> --receipt <review.json>)
+node "$RUN_TRANSPORT" wait --run-file "$(printf '%s' "$RUN" | jq -r .run_file)"
+```
+
+Outside Herdr and in a headless pair executor, `CALLER_ID` stays empty and the
+run is a local background process: tell the user its label and transcript path.
+Inside an interactive Herdr lead, read
+[visible Herdr runs](references/visible-herdr-runs.md) first; it builds
+`CALLER_ID` and owns the pane rules.
+
+A review counts only when `wait` succeeds and the wrapper receipt holds
+`{ok: true}` with non-empty findings output. A refusal, rate-limit notice, or
+empty payload is a failed review even with exit 0: rerun it or restaff under
+step 3.
 
 If a `single` reviewer finds a material problem on the other axis, a `dual`
 signal, or conflicting sources, promote to `dual` and run the missing reviewer
@@ -131,7 +135,7 @@ Leave this block. Callers embed it verbatim.
 - Second review: <ran or skipped, and why>
 - Reviewed HEAD: <40-char SHA the reviewers read>
 - Gate HEAD: <40-char SHA the gate ends on; `<sha> — uncommitted` for a working-tree range>
-- Transport: <each run's transport, label, and receipt path>
+- Transport: <each run's transport, label, receipt path, and closed Herdr pane>
 ```
 
 Paste SHAs from `git rev-parse HEAD`; never retype them.
