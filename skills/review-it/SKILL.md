@@ -48,8 +48,8 @@ change. `dual` uses two different families, one per axis. Staff them from the
 roster's [Review seat](../pair/references/models.md#review-seat); the roster
 owns the families, their IDs, and their efforts.
 
-Read capacity first with `node <pair-dir>/scripts/usage-state.mjs` from the
-sibling `pair` skill, and skip any pool whose `states` entry is not
+Read capacity first with `node <pair-dir>/scripts/usage-state.mjs --live` from
+the sibling `pair` skill (`--live` refreshes a stale Codex reading), and skip any pool whose `states` entry is not
 `available`; a Cursor model draws on the Cursor pool that bills it. The
 roster's [Pools](../pair/references/models.md#pools) section defines the
 states. When the Codex pool is skipped, a Cursor family from the Review seat

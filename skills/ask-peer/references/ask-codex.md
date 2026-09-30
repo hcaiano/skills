@@ -1,8 +1,8 @@
 # Ask Codex from Claude
 
-Drive the local Codex CLI directly. Leave `-m` unset when Codex's configured
-model is a Sol model (see `SKILL.md`); pass `-m <id>` for a model the user
-named. Set `EFFORT` from the seat in `SKILL.md` (`high` for a review). Check
+Drive the local Codex CLI directly. Set `MODEL` to the Sol ID from the active
+config, or to the model the user named (see `SKILL.md`), and pass it on every
+run and resume. Set `EFFORT` from the seat in `SKILL.md` (`high` for a review). Check
 `codex exec --help` when flags drift.
 
 ## Read-only question or review
@@ -12,7 +12,7 @@ P=$(mktemp -t ask-codex.XXXXXX)
 F=$(mktemp -t ask-codex-result.XXXXXX)
 J=$(mktemp -t ask-codex-events.XXXXXX)
 # Write the complete prompt to "$P", then:
-codex exec --json -s read-only -C "$WORKSPACE_ROOT" \
+codex exec --json -s read-only -C "$WORKSPACE_ROOT" -m "$MODEL" \
   -c model_reasoning_effort="$EFFORT" -o "$F" - <"$P" >"$J"
 SID=$(jq -r 'select(.type == "thread.started") | .thread_id' "$J" | head -n1)
 ```
@@ -22,8 +22,9 @@ the reason. Keep `SID` only for a follow-up in the same exchange, and resume
 by that id, never `--last`:
 
 ```bash
-(cd "$WORKSPACE_ROOT" && codex exec resume "$SID" -c sandbox_mode="read-only" \
-  -c model_reasoning_effort="$EFFORT" -o "$F" - <"$P" >/dev/null)
+(cd "$WORKSPACE_ROOT" && codex exec resume "$SID" -m "$MODEL" \
+  -c sandbox_mode="read-only" -c model_reasoning_effort="$EFFORT" \
+  -o "$F" - <"$P" >/dev/null)
 ```
 
 ## Scoped write pass

@@ -27,9 +27,10 @@ Respect the user's verb: `diagnose` ends before **Fix** and changes no code.
    (auth-walled, user-specific, production-only), say so and rely on
    instrumentation in steps 5-6. Done when the command has run red on this
    bug, or its absence is stated.
-3. **Minimize.** Shrink the repro one cut at a time (inputs, callers, config,
-   data, steps), rerunning the loop after each cut. Done when every remaining
-   part matters: removing any one turns the loop green.
+3. **Minimize.** With a loop, shrink the repro one cut at a time (inputs,
+   callers, config, data, steps), rerunning the loop after each cut. Done when
+   every remaining part matters: removing any one turns the loop green.
+   Without a loop, go straight to step 4.
 4. **Hypothesize.** Done when 2-3 ranked hypotheses each name the observation
    that would confirm or reject it.
 5. **Instrument.** For slow code, profile the minimized repro or bisect

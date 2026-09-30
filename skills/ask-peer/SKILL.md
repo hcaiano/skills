@@ -31,9 +31,9 @@ one. Ask Fable only when the user asks for Fable.
 
 - Staff the roster seat for the ask, never a reserved family by accident: the
   peer's configured default can be Fable or Astra. Claude takes the seat's
-  family as `--model opus`; Codex takes exact IDs, so leave `-m` unset only
-  when the `model` in `~/.codex/config.toml` is a Sol model, and otherwise ask
-  the user which model to use. A model the user names wins. Set effort on
+  family as `--model opus`; Codex takes exact IDs, so read `model` from the
+  active config, `${CODEX_HOME:-$HOME/.codex}/config.toml`, and pass it with
+  `-m` when it is a Sol model; otherwise ask the user which model to use. A model the user names wins. Set effort on
   every request from the same seat: the
   [Analysis seat](../pair/references/models.md#analysis-seat) for hard analysis
   or a second opinion, the
