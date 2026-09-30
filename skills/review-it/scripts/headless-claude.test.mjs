@@ -6,8 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 // A fake `claude` driven by FAKE_CLAUDE_MODE exercises every path: a good
-// run, a hollow success (exit 0, empty result), a refusal, a hang, and a
-// writable run that mutates the tree and dies — which must restore it.
+// run, a hollow success (exit 0, empty result), a refusal, and a hang.
 const root = mkdtempSync(join(tmpdir(), "headless-claude-test-"));
 const bin = join(root, "bin");
 mkdirSync(bin);
@@ -31,11 +30,6 @@ if (mode === "epipe") {
   );
 }
 if (mode === "hang") { setInterval(() => {}, 1000); }
-if (mode === "mutate-and-die") {
-  fs.writeFileSync("tracked.txt", "CLOBBERED BY SIMPLIFY\\n");
-  fs.writeFileSync("leftover.tmp", "debris\\n");
-  process.exit(1);
-}
 `,
 );
 chmodSync(join(bin, "claude"), 0o755);
@@ -43,64 +37,42 @@ chmodSync(join(bin, "claude"), 0o755);
 const script = join(new URL(".", import.meta.url).pathname, "headless-claude.mjs");
 const argvLog = join(root, "argv.json");
 const env = (mode) => ({ ...process.env, PATH: `${bin}:${process.env.PATH}`, FAKE_CLAUDE_MODE: mode, FAKE_CLAUDE_ARGV: argvLog });
+// --cwd keeps every run inside the scratch dir, never the checkout.
 const runOk = (mode, ...args) =>
-  JSON.parse(execFileSync(process.execPath, [script, ...args], { encoding: "utf8", env: env(mode) }));
+  JSON.parse(execFileSync(process.execPath, [script, ...args, "--cwd", root], { encoding: "utf8", env: env(mode) }));
 const runFail = (mode, ...args) => {
   try {
-    execFileSync(process.execPath, [script, ...args], { encoding: "utf8", env: env(mode), stdio: ["ignore", "pipe", "pipe"] });
+    execFileSync(process.execPath, [script, ...args, "--cwd", root], { encoding: "utf8", env: env(mode), stdio: ["ignore", "pipe", "pipe"] });
   } catch (error) {
     return JSON.parse(error.stdout);
   }
   throw new Error("expected nonzero exit");
 };
 
-test("headless-claude validates content, kills hangs, restores writable trees", () => {
+test("headless-claude reviews in plan mode, validates content, and kills hangs", () => {
   const receipt = join(root, "claude-receipt.json");
-  const ok = runOk("ok", "/code-review", "--receipt", receipt);
+  const ok = runOk("ok", "review prompt", "--effort", "high", "--receipt", receipt);
   assert.equal(ok.ok, true);
   assert.equal(ok.result, "3 findings: ...");
   assert.deepEqual(JSON.parse(readFileSync(receipt, "utf8")), ok);
+  const argv = JSON.parse(readFileSync(argvLog, "utf8"));
+  assert.equal(argv[argv.indexOf("--permission-mode") + 1], "plan");
+  assert.equal(argv[argv.indexOf("--effort") + 1], "high");
 
   // Exit 0 around an empty payload or a refusal is a FAILURE.
-  assert.match(runFail("empty", "/code-review").reason, /content validation failed/u);
-  assert.match(runFail("refusal", "/code-review").reason, /is_error/u);
+  assert.match(runFail("empty", "review prompt").reason, /content validation failed/u);
+  assert.match(runFail("refusal", "review prompt").reason, /is_error/u);
 
-  const hang = runFail("hang", "/code-review", "--idle-min", "0.05", "--total-min", "0.2");
+  const hang = runFail("hang", "review prompt", "--idle-min", "0.05", "--total-min", "0.2");
   assert.equal(hang.killed, true);
   assert.match(hang.reason, /hang/u);
-
-  // Writable failure: tracked content restored byte-for-byte (fingerprint),
-  // intent-to-add re-marked, pre-existing untracked preserved, and the
-  // run's own debris reported — never deleted silently.
-  const repo = join(root, "repo");
-  mkdirSync(repo);
-  const gitIn = (...a) => execFileSync("git", ["-C", repo, ...a], { encoding: "utf8" });
-  gitIn("init", "-q");
-  gitIn("config", "user.email", "t@t");
-  gitIn("config", "user.name", "t");
-  writeFileSync(join(repo, "tracked.txt"), "original\n");
-  gitIn("add", "tracked.txt");
-  gitIn("commit", "-qm", "base");
-  writeFileSync(join(repo, "tracked.txt"), "user edit in progress\n");
-  writeFileSync(join(repo, "new-intent.txt"), "intent-to-add contents\n");
-  gitIn("add", "--intent-to-add", "new-intent.txt");
-  writeFileSync(join(repo, "user-notes.txt"), "pre-existing untracked\n");
-
-  const out = runFail("mutate-and-die", "/simplify", "--writable", "true", "--cwd", repo);
-  assert.equal(out.restored, true, out.restore_error);
-  assert.equal(readFileSync(join(repo, "tracked.txt"), "utf8"), "user edit in progress\n");
-  assert.equal(readFileSync(join(repo, "new-intent.txt"), "utf8"), "intent-to-add contents\n");
-  assert.equal(readFileSync(join(repo, "user-notes.txt"), "utf8"), "pre-existing untracked\n");
-  assert.deepEqual(out.leftover_untracked, ["leftover.tmp"]);
-  const status = gitIn("status", "--porcelain");
-  assert.match(status, /new-intent\.txt/u, "intent-to-add must be re-marked");
 });
 
 test("headless-claude survives a closed visible-output pipe", async () => {
   const receipt = join(root, "epipe-receipt.json");
   const child = spawn(
     process.execPath,
-    [script, "/code-review", "--receipt", receipt],
+    [script, "review prompt", "--receipt", receipt, "--cwd", root],
     { env: env("epipe"), stdio: ["ignore", "pipe", "pipe"] },
   );
   child.stderr.destroy();
@@ -113,16 +85,4 @@ test("headless-claude survives a closed visible-output pipe", async () => {
   assert.equal(exit, 0);
   assert.equal(JSON.parse(stdout).ok, true);
   assert.equal(JSON.parse(readFileSync(receipt, "utf8")).result, "No findings");
-});
-
-test("the permission mode follows the lease: plan read-only, bypass writable", () => {
-  // acceptEdits still gates every command behind an approval no headless run
-  // can give; the writable leg runs bypassPermissions (decision 2026-08-22)
-  // and the wrapper's baseline/restore is the restraint.
-  runOk("ok", "/code-review");
-  const readOnly = JSON.parse(readFileSync(argvLog, "utf8"));
-  assert.equal(readOnly[readOnly.indexOf("--permission-mode") + 1], "plan");
-  runOk("ok", "/simplify", "--writable", "true");
-  const writable = JSON.parse(readFileSync(argvLog, "utf8"));
-  assert.equal(writable[writable.indexOf("--permission-mode") + 1], "bypassPermissions");
 });

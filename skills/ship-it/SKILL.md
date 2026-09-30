@@ -1,24 +1,20 @@
 ---
 name: ship-it
-description: "Manual-only delivery for finished work: focused proof, the graded review gate, final-HEAD validation, then push, PR, CI, and authorized merge. Invoke only when the user explicitly names ship-it or another explicitly invoked workflow delegates its delivery."
+description: "Prove, review, and deliver finished work as a PR; also the loop for feedback on an existing PR."
 disable-model-invocation: true
 ---
 
 # Ship it
 
 Take finished work to a green PR, and through merge and deploy when the user
-authorizes them. Quality is checked locally before the PR exists, by the
-[review gate](../review-it/SKILL.md). This skill runs that gate and never
-reimplements it.
-
-Run it only when the user invokes ship-it or another workflow delegates to it.
+authorizes them. The [review gate](../review-it/SKILL.md) checks quality
+before the PR exists; this skill runs that gate and never reimplements it.
+Invoked on an existing PR to handle its feedback, start at step 6; when that PR
+body has no `## Delivery gate` receipt yet, run steps 1–5 on its branch first.
 
 1. **Prepare.** Read the repo instructions. Inspect the branch, diff, and
-   working tree, and keep unrelated user changes out. Run
-   `git fetch origin <target-branch>` and take every merge base against
-   `origin/<target-branch>`. Mark intended untracked paths with
-   `git add --intent-to-add -- <path>`. If you are on the target branch,
-   create a task branch first.
+   working tree, and keep unrelated user changes out. If you are on the target
+   branch, create a task branch first.
 
 2. **Focused proof.** List each behavior the change alters and the direct
    consumers of each changed contract. Run the smallest repo-defined tests and
@@ -28,17 +24,16 @@ Run it only when the user invokes ship-it or another workflow delegates to it.
    CI.
 
 3. **Review.** Read and execute [review-it](../review-it/SKILL.md) over the
-   proven diff, with the merge base against `origin/<target-branch>` as its
-   range. Do not regrade its result, rerun its reviews, or add your own review.
-   If the gate stops for user direction, delivery stops too. Keep its
-   `## Review gate` receipt for step 5.
+   proven branch with its default range. Take its grade and fixes as final
+   and add no review of your own; step 6 owns the only later review. If the
+   gate stops for user direction, delivery stops too. Keep its `## Review gate` receipt for step 5.
 
-4. **Validate the final HEAD and push.** On the clean final HEAD, rerun the
-   step 2 checks for the final diff, plus the repo's lint, typecheck, and build
-   for the changed code. Run the full local-CI entrypoint only when the repo
-   names it as the delivery gate. Use the repo's queued entrypoint when it has
-   one; otherwise its documented `global-ci` lease. Push normally. Never
-   force-push; when the base moved, merge `origin/<target-branch>` in.
+4. **Validate the final HEAD and push.** When the base moved, merge
+   `origin/<target-branch>` in first; never force-push. On the clean final
+   HEAD, rerun the step 2 checks for the final diff, plus the repo's lint,
+   typecheck, and build for the changed code. Run the full local-CI entrypoint
+   only when the repo names it as the delivery gate, through the repo's
+   documented CI queue or lease. Push only the HEAD those checks ran on.
 
 5. **Open or update the PR.** Keep one ready-for-review (non-draft) PR. Its
    body carries this receipt:
@@ -54,26 +49,46 @@ Run it only when the user invokes ship-it or another workflow delegates to it.
    <the `## Review gate` block, verbatim>
    ```
 
-6. **Get CI green.** Wait for the required checks and every check handed to CI
-   on the exact PR head. Poll every 60–120 s. Pending is not green. A check
-   that cannot run at all (billing, runner outage) blocks the delivery; never
-   waive it. Cloud review bots are off by design: do not wait for or summon
-   them.
+6. **Get CI green and close the feedback.** This is the one loop for PR
+   feedback.
 
-   Fix red checks and real review comments in batches, each through step 4
-   and a receipt update. After two fix batches (a base merge counts), stop and
-   report. A batch that changes behavior, expands scope, or adds a security or
-   architecture risk goes through review-it's second review first. A commit on
-   the remote that this delivery did not make is new input: stop for user
-   direction.
+   Wait for the required checks and every check handed to CI on the exact PR
+   head. Poll every 60–120 s. Pending is not green. A check that cannot run at
+   all (billing, runner outage) blocks the delivery; never waive it.
 
-   Review convergence: after three LLM review rounds for this delivery,
-   including any review an orchestrator ran, do not review again unless the
-   latest commit caused a regression. Record other findings as residuals.
+   Collect the open feedback: human reviews, bot and issue comments, unresolved
+   and outdated threads, and failing checks. Cloud review bots are off by
+   design: summon none, and treat a bot's silence as nothing to wait for.
+   Triage each item against the code:
 
-   Before you report, re-fetch all reviews, comments, and threads, confirm the
-   live `headRefOid` equals `Final validated HEAD`, and confirm GitHub reports
-   the PR mergeable.
+   - **Fix**: a red check, a real correctness, security, or data-integrity
+     problem, or a change a human reviewer requested.
+   - **Reply and resolve**: nits, hardening for invariants that already hold,
+     and duplicate or inflated findings. A nit never earns a push.
+   - **Ask the user**: product or architecture decisions, scope expansion, and
+     conflicting reviewer guidance.
+
+   Make each fix batch one commit. While the review cap allows, a batch that
+   changes behavior, expands scope, or adds a security or architecture risk
+   first runs review-it with that commit as its range; add its receipt block
+   to the PR body. Then take the batch through step 4 and refresh the
+   `## Delivery gate` receipt so `Final validated HEAD` equals the new PR head.
+   Stop after two fix batches, a base merge counting as one, and report the
+   remaining items with your triage and a recommendation. Feedback after the
+   final push does not reopen the loop.
+
+   Review cap: three LLM review rounds per delivery. Each review-it review,
+   first or second, counts as one, and so does each `/code-review` the user ran
+   on this branch before invoking ship-it. Step 3's gate runs even past the
+   cap. Past it, only a regression from the latest commit earns another
+   review; record other findings as residuals.
+
+   Answer every thread with its commit or its reason, then resolve it. A
+   commit on the remote that this delivery did not make is new input: stop for
+   user direction. Done when you have re-fetched all reviews, comments, and
+   threads, every thread is resolved or left open only for the user's
+   decision, the live `headRefOid` equals `Final validated HEAD`, the required
+   checks are green on it, and GitHub reports the PR mergeable.
 
 7. **Merge and deploy only when authorized.** Invoking ship-it authorizes the
    local gate, push, and PR. Merge and deploy need the user's explicit
@@ -84,6 +99,3 @@ Run it only when the user invokes ship-it or another workflow delegates to it.
 
 8. **Report** the PR link, exact head, check status, receipt summary, merge and
    deploy evidence when applicable, and any deferred or discarded findings.
-
-Do not modify `main`, broaden scope, or change the target branch without
-explicit authorization.

@@ -8,8 +8,8 @@ HEAD), the commit list, and the source documents named below.
 
 - Review the pinned range only. Read any file you need, but report findings on
   the change and the code it touches.
-- Work read-only. Do not invoke `/code-review`, `review-it`, or any other review
-  skill, and do not spawn sub-agents: perform this review directly.
+- Perform this review yourself, read-only, with no sub-agents. `test-audit` is
+  the one skill you may invoke; another review skill would recurse this gate.
 - Every finding cites its evidence: `file:line` plus the rule, smell, or spec
   line it breaks. A finding without a citation is not a finding.
 - Rank by impact. Prefer a few high-conviction findings to a long list. Skip
@@ -22,8 +22,10 @@ Is the change built right? Check, in this order:
 
 1. **Correctness.** Bugs, broken edge cases, regressions, race conditions,
    security and data-integrity problems, missing error handling at real
-   boundaries, and tests that do not prove the behavior they claim. A real
-   credential in the diff is a `blocker`; name its location, never its value.
+   boundaries, and tests that do not prove the behavior they claim. Check
+   every added or changed test against the junk patterns in the `test-audit`
+   skill. A real credential in the diff is a `blocker`; name its location,
+   never its value.
 2. **Repository standards.** Read the repo's instructions and documented
    conventions (`AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, coding-standards
    files). A documented breach can be a `blocker`; cite the file and rule.
@@ -33,10 +35,11 @@ Is the change built right? Check, in this order:
    - a file that the change pushes from under 1000 lines to over 1000 lines;
    - new ad-hoc conditionals, one-off flags, or special cases bolted onto an
      existing flow instead of a model or dispatcher that owns them;
-   - thin wrappers, pass-through helpers, and abstractions that add indirection
-     without clarity;
+   - thin wrappers, pass-through or one-use helpers and variables, and
+     abstractions that add indirection without domain meaning;
    - casts, `any`, `unknown`, or needless optionality that hide the real
-     contract, and silent fallbacks that paper over an unclear invariant;
+     contract, and silent fallbacks, shims, aliases, or retries that no named
+     shipped contract needs;
    - logic in the wrong layer, and bespoke helpers that duplicate a canonical
      one;
    - independent work serialized for no reason, and updates that can leave
@@ -46,24 +49,10 @@ Is the change built right? Check, in this order:
      prose that restates the code;
    - defensive checks or `try`/`catch` blocks that guard only imagined states
      or are unusual for the surrounding module;
-   - one-use variables or helpers that add no domain meaning;
-   - compatibility shims, aliases, retries, and fallbacks without a named
-     shipped contract that needs them;
    - naming, imports, and control flow that do not match the surrounding file.
-5. **Smell baseline.** These apply even when the repo documents nothing, and
-   are always `judgement`. A documented repo standard overrides them.
-   - Mysterious Name → rename; no honest name means the design is murky.
-   - Duplicated Code → extract the shared shape.
-   - Feature Envy → move the method onto the data it uses.
-   - Data Clumps → bundle fields that travel together into one type.
-   - Primitive Obsession → give the domain concept its own small type.
-   - Repeated Switches → one map or polymorphism shared by both sites.
-   - Shotgun Surgery → gather what changes together into one module.
-   - Divergent Change → split a module edited for unrelated reasons.
-   - Speculative Generality → delete hooks the spec does not need.
-   - Message Chains → hide the walk behind one method.
-   - Middle Man → call the real target directly.
-   - Refused Bequest → prefer composition to ignored inheritance.
+5. **Code smells.** Fowler's smells apply even when the repo documents
+   nothing, and are always `judgement`. A documented repo standard overrides
+   them.
 
 For each structural finding, name the simpler shape, not only the problem.
 

@@ -1,117 +1,50 @@
-# Process transport
+# Visible Herdr runs
 
-Use this contract for every gate review command that
-does not run as an interactive slash command in the current visible agent
-pane. The transport records whether the command ran in a visible Herdr process
-pane or as a local background process. These backends provide the same launch
-and receipt shape, but different operator control: a Herdr run is observable
-and interruptible in its own pane; a local run has no live surface for
-observation or interjection. Its transcript is the only record; the user can
-tail that file when needed.
+Read this when step 4 runs in an interactive Herdr lead. Each review then runs
+in its own labelled pane that the user can watch and interrupt.
 
-## Select and launch
+## Caller pin
 
-Set `RUN_TRANSPORT` to this skill's `scripts/run-transport.mjs`. It selects one
-of three contexts:
+Locate the `pair` skill installed beside this one, then read and execute its
+`references/caller-pane-resolution.md` proof for the task repository. Build the
+`CALLER_ID` argument array exactly as that reference derives it from the proof
+JSON. The proof's pane, workspace, tab, terminal, agent, and repository form
+one immutable pin, and its tab is the work unit.
 
-- Outside `HERDR_ENV=1`, select `local` and omit `CALLER_ID`.
-- In a no-TTY headless pair executor that inherited `HERDR_ENV=1`, select
-  `local` and omit `CALLER_ID`. This branch requires the worktree's pair
-  `session.json` and active `in-flight.json`, and the current process ancestry
-  must include a PID that owns that turn. File presence alone is not proof.
-- In an interactive Herdr lead, select `herdr`. Locate the `pair` skill
-  installed beside this one, then read and execute its
-  `references/caller-pane-resolution.md` proof for the task repository. Build
-  the `CALLER_ID` argument array exactly as that reference derives it from the
-  proof JSON. The proof's pane, workspace, tab, terminal, agent, and repository
-  form one immutable pin, and its tab is the work unit.
+An incomplete or drifted pin stops the launch: rerun the proof. A Herdr lead's
+reviews always run in panes. After each `start`, tell the user the label and
+the pane.
 
-Start each command without moving the user's focus:
+## Pane reuse
 
-```bash
-RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
-  --label "review-it · <standards review|spec review|combined review>" \
-  -- <command> <args...> --receipt "<wrapper-result.json>")
-RUN_FILE=$(printf '%s' "$RUN" | jq -r .run_file)
-```
-
-To reuse a pane this gate already created — and only for the sequential case
-the reuse rule below allows — keep `start` and add the finished run's pane,
+Reuse a finished pane only for an already-planned, immediately sequential
+command in this gate. Keep `start` and add the finished run's pane, completion
 receipt, and token, so the helper proves the pane is the one it launched before
-it sends anything into it. `start` and `wait` are the whole public surface;
-`--target-pane` is what routes the launch to pane reuse:
+it sends anything:
 
 ```bash
 RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
-  --label "review-it · <axis>" \
+  --label "review-it · <axis> review" \
   --target-pane "<pane_id>" \
   --prior-receipt "<prior completion receipt>" \
   --prior-token "<prior token>" \
   -- <command> <args...> --receipt "<wrapper-result.json>")
 ```
 
-Those three flags belong to the Herdr backend alone; the local backend has no
-panes and rejects them.
+## Wait and close
 
-An incomplete or drifted interactive Herdr pin stops the gate instead of
-silently running invisibly. A headless executor records selection
-`headless-pair-executor`; an ordinary local run records `outside-herdr`.
-Retain the run file and its `transport`, `pane_id`, `pid`, `token`, `marker`,
-`receipt`, and `transcript` fields. Immediately tell the user the transport
-and label; for Herdr, also name the pane.
+A `dual` review uses two panes. Wait on both concurrently, and validate and
+close each one as soon as its run finishes.
 
-The Herdr backend delegates to `herdr-visible-run.mjs`. It rechecks the full
-pin and caller foreground process before every launch. Pin drift stops that
-launch and requires a fresh proof; an already-selected Herdr run never changes
-backend. The local backend starts a detached child, tees its output to the
-transcript, and writes the completion receipt on exit. The local child writes
-only to its transcript;
-the transport owns observation: pane, marker, and receipt for Herdr; PID and
-receipt polling for local. The headless Claude, Codex, and Cursor wrappers own
-both backends' idle and total deadlines, PID-scoped termination, and content
-validation.
+When `wait` reports no completion marker, run the three inspection commands it
+prints. A visible prompt, approval, rate limit, stalled output, or crash is the
+gate's current state, not silence.
 
-For a dual review, start both commands before waiting for either. A Herdr dual
-review uses distinct visible panes. Observe both completions concurrently so
-the lead can validate and close each Herdr pane as soon as it finishes; do not
-wait on one while leaving another completed pane open.
+After each run, keep its marker, completion receipt, transcript, and wrapper
+receipt, then close its pane with `herdr pane close <pane_id>` unless the
+reuse rule assigns it the next command. Close only panes this gate created,
+never the caller's or another unit's.
 
-## Wait and validate
-
-Wait through the transport helper for each exact run:
-
-```bash
-node "$RUN_TRANSPORT" wait --run-file "$RUN_FILE"
-```
-
-Require the completion receipt's token and `transport` to match the run file,
-require exit zero, and validate the transcript under the gate's step 4 content
-rules.
-For `headless-claude.mjs`, `headless-codex.mjs`, or `headless-cursor.mjs`, also
-require the separate wrapper receipt to contain `{ok: true}` and non-empty validated content. A
-refusal, rate-limit notice, or empty payload is failure even when the command
-exits zero.
-
-The Herdr backend retains every visible-run invariant: `pane_id` and `marker`
-must be non-null; the helper waits for the exact marker; the completion
-receipt's pane and token must match the launch. A marker timeout triggers an
-immediate `herdr pane get`, `herdr pane process-info`, and `herdr pane read
---source recent-unwrapped`; a visible prompt, approval, rate limit, stalled
-output, or crash is the gate's current state, not silence.
-
-After each Herdr process finishes, capture its marker, completion receipt,
-transcript, and wrapper receipt. Reuse its pane only for an already-planned,
-immediately sequential command in this gate, with the prior receipt and token
-validated before reuse; otherwise the lead closes it with `herdr pane close
-<pane_id>`. Once all reviews finish, close every remaining process
-pane before push. Close only panes created by this gate, never the caller or
-another unit pane. Keep the closed pane IDs and receipt paths in the delivery
-receipt.
-
-A process is complete only when the transport wait validates its token,
-transport, exit, receipt, and transcript content. A Herdr process additionally
-requires its exact marker, matching pane, gate-receipt entry, and a pane that is
-assigned to its immediate next command or closed. Herdr cleanup is complete
-only when every process pane is closed. If the helper cannot establish or
-preserve these facts, stop and report the run's transport plus the observed
-state.
+Done when every pane this gate created is closed before step 5 and its ID is on
+the receipt's `Transport` line. If the helper cannot establish or preserve
+these facts, stop and report the run's transport and the observed state.

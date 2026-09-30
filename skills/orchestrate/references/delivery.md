@@ -15,30 +15,35 @@ Record the exact scope-approved SHA. If the base advanced, fetch it and tell the
 executor to merge `origin/<base>`, resolve, validate, and return through `ready`.
 Published history is merged, never rebased or force-pushed.
 
-## Select the delivery mode
+## Ship
 
-Use **executor delivery** by default. After the review fan-out and its correction
-round below, send a pair `task` that names the scope-approved SHA and explicitly
-tells the executor to use the installed `ship-it` skill. Size that send's
-`--total-min` to the repository's full local-CI entrypoint: the writable-task
-default is 120 minutes, and a repository whose CI alone approaches that needs
-more — the 2026-08-22 wave hang-killed two legitimate ship-it turns at the old
-60-minute default while `ci:local` was mid-run. Time queued behind the devbox
-heavy slot is excluded by the pair helper, so size the budget to the CI run
-itself; stagger delivery turns so they do not all queue for the slot at once.
-The executor must run
-the proportional proof and graded review gate on the complete diff, push, open
-or update one PR against the recorded base, put the complete `## Delivery gate`
-receipt in the PR body, and return the PR URL, exact head SHA, check state, and
-review-checked timestamp. Ship-it delegation carries no merge authority: the
-executor stops at merge-ready, and the PR stays held for the Hold or merge
-section below.
+Use **executor delivery** by default. Send the executor one pair `task` (the
+headless send is in `SKILL.md`'s Monitor section) that names the
+scope-approved SHA and tells it to use the installed `ship-it` skill. Pair's
+writable-task budget is 120 minutes with time queued for the heavy slot
+excluded; when the repository's full local-CI run approaches that, size the
+send's `--total-min` to it. The executor runs ship-it's proportional proof and
+graded review gate on the complete diff, pushes, opens or updates one PR
+against the recorded base with the complete `## Delivery gate` receipt in its
+body, and returns the PR URL, exact head SHA, check state, and review-checked
+timestamp. Ship-it delegation carries no merge authority: the executor stops at
+merge-ready, and the PR stays held under Hold or merge.
 
-Use **orchestrator-owned Git mechanics** only after the executor proves that
-its arena cannot reach Git metadata or the network. A failed command and its
-error are proof; an arena label or expected sandbox behavior is not. The
-executor still owns implementation, correction, and validation. The
-orchestrator owns only these mechanics:
+The review-it gate inside ship-it is the delivery's code review: it grades the
+complete diff and staffs reviewers from families that did not implement it.
+The orchestrator's part is the scope scan above and the live evidence below.
+
+A branch change after scope approval returns to `ready`, unless the delivery
+receipt proves it is a bounded ship-it correction. Any new surface or
+unexplained growth returns to the scope scan.
+
+### Orchestrator-owned Git mechanics
+
+Use this mode only after the executor proves that its arena cannot reach Git
+metadata or the network. A failed command and its error are proof; an arena
+label or expected sandbox behavior is not. The executor still owns
+implementation, correction, and validation. The orchestrator owns only these
+mechanics:
 
 1. Verify that the ready diff has only the scope-approved paths. Stage exactly
    those bytes and create a checkpoint commit without editing them.
@@ -46,10 +51,10 @@ orchestrator owns only these mechanics:
    executor reruns its validation on that unchanged worktree and returns the
    commands and results bound to that SHA. Prove that HEAD and the tree stayed
    unchanged while validation ran.
-3. Run the delivery gates with reviews delegated to their required arenas.
-   Return every valid correction to the executor as one batch. After the
-   executor validates the corrected bytes, commit exactly those bytes as the
-   next checkpoint.
+3. Run ship-it's gates; review-it staffs and runs its own reviewers. Return
+   every valid correction to the executor as one batch. After the executor
+   validates the corrected bytes, commit exactly those bytes as the next
+   checkpoint.
 4. Push the verified checkpoint, open or update the PR, and write the delivery
    receipt. Record the implementation-ready SHA, every corrected checkpoint,
    the final validated SHA, the executor's validation evidence, and the actor
@@ -60,25 +65,7 @@ code. It keeps chain of custody when the executor cannot perform Git or network
 operations. Write the proposed PR body to `PR_BODY.md` in the worktree; unit
 creation has already excluded that root file from Git.
 
-## Review fan-out and ship
-
-Before the ship-it gate, send the complete scope-approved diff to one
-read-only second-arena reviewer. Its CLI and model family must differ from the
-executor's. Start this review for every delivery; if no legal second arena can
-run, report the delivery blocked instead of omitting it. Record the reviewed
-SHA, arena, model, and findings. Two independent reviews converged on the same
-defects twice in the 2026-08-21 Mediavine run and once in this rework, so this
-fan-out is the default evidence step.
-
-Deduplicate the second-arena findings and send every material in-scope item to
-the executor in the same single correction round. The executor validates and
-returns `ready` on the corrected head. Repeat the scope scan, then start the
-ship-it gate. Do not repeat the fan-out for that correction; ship-it owns the
-later graded review and convergence rules.
-
-A branch change after scope approval returns to `ready`, unless the delivery
-receipt proves it is a bounded ship-it correction. Any new surface or
-unexplained growth returns to the scope scan.
+### Push credentials
 
 For every push, inspect the configured fetch and push URLs. Prefer an existing
 SSH push URL or SSH remote. Use HTTPS only when no SSH route exists. If the
@@ -111,17 +98,17 @@ scope and delivery on the new head.
 
 ## Hold or merge
 
-Every unit PR is held for Henrique's own review before merge — including a PR
-whose base is an epic branch (decision 2026-08-22). The full delivery still
-runs first: second-arena fan-out, the ship-it gate, live evidence. The hold
-comes after all of it, never instead of it. Orchestrate never merges a
-PR he has not reviewed, including with admin rights or after its own
-verification; a recorded `auto` merge policy waits for the same review.
-Visible UI also needs before and after screenshots. Dependent units wait when
-this rule serializes them. His feedback on the held PR returns to the executor
-as a correction round and re-enters delivery on the new head. Only his
-explicit approval of that exact verified head authorizes the merge; a changed
-head needs fresh evidence and approval.
+Every unit PR is held for Henrique's own review before merge, including a PR
+whose base is an epic branch. The full delivery still runs first: the ship-it
+gate and live evidence. The hold comes after all of it, never instead of it.
+Orchestrate never merges a PR he has not reviewed, including with admin rights
+or after its own verification; a recorded `auto` merge policy waits for the
+same review. Visible UI also needs before and after screenshots. Dependent
+units wait when this rule serializes them. His feedback on the held PR returns
+to the executor as a correction round through ship-it's PR-feedback step on the
+same PR, which refreshes the delivery receipt for the new head.
+Only his explicit approval of that exact verified head authorizes the merge; a
+changed head needs fresh evidence and approval.
 
 For a browser flow, the executor first exercises the acceptance path itself.
 Hand off the exact preview URL and route, the tested commit, test-data or login

@@ -19,10 +19,9 @@
 // SHA lands on the receipt for the delivery's chain of custody.
 //
 // Three differences from the Claude wrapper, all forced by the CLI surface:
-//   * No baseline/restore, and the sandbox is `workspace-write` with network
-//     off, not `read-only`: on Linux, read-only Landlock denies every write
-//     including TMPDIR, and the review harness dies before the review with
-//     EROFS (wp-918's dual gate, 2026-08-22, silently degraded to one arena).
+//   * The sandbox is `workspace-write` with network off, not `read-only`: on
+//     Linux, read-only Landlock denies every write including TMPDIR, and the
+//     review harness dies before the review with EROFS (wp-918's dual gate, 2026-08-22, silently degraded to one arena).
 //     Codex 0.149 has no granular tmp-write grant for the read-only profile
 //     (probed; the `sandbox_permissions` help example is ignored), so
 //     workspace-write is the narrowest profile whose init survives. The tree

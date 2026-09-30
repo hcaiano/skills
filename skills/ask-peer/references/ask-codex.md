@@ -1,39 +1,37 @@
 # Ask Codex from Claude
 
-Drive the local Codex CLI directly. Leave `--model` unset: Codex's config owns
-model selection. Check `codex exec --help` when flags drift.
+Drive the local Codex CLI directly. Set `MODEL` to the Sol ID from the active
+config, or to the model the user named (see `SKILL.md`), and pass it on every
+run and resume. Set `EFFORT` from the seat in `SKILL.md` (`high` for a review). Check
+`codex exec --help` when flags drift.
 
 ## Read-only question or review
 
 ```bash
 P=$(mktemp -t ask-codex.XXXXXX)
 F=$(mktemp -t ask-codex-result.XXXXXX)
-E=$(mktemp -t ask-codex-error.XXXXXX)
+J=$(mktemp -t ask-codex-events.XXXXXX)
 # Write the complete prompt to "$P", then:
-codex exec -s read-only -C "$WORKSPACE_ROOT" -o "$F" - \
-  <"$P" >/dev/null 2>"$E"
-SID=$(grep -m1 "session id:" "$E" | awk '{print $NF}')
+codex exec --json -s read-only -C "$WORKSPACE_ROOT" -m "$MODEL" \
+  -c model_reasoning_effort="$EFFORT" -o "$F" - <"$P" >"$J"
+SID=$(jq -r 'select(.type == "thread.started") | .thread_id' "$J" | head -n1)
 ```
 
-Read `"$F"` for the reply. Keep `SID` only for a follow-up on the same focused
-exchange; never use `--last` when another Codex lane may have run in the repo.
+Read `"$F"` for the reply; when it is empty, read the events in `"$J"` for
+the reason. Keep `SID` only for a follow-up in the same exchange, and resume
+by that id, never `--last`:
 
 ```bash
-(cd "$WORKSPACE_ROOT" && codex exec resume "$SID" \
-  -c sandbox_mode="read-only" -o "$F" - <"$P" 2>"$E")
+(cd "$WORKSPACE_ROOT" && codex exec resume "$SID" -m "$MODEL" \
+  -c sandbox_mode="read-only" -c model_reasoning_effort="$EFFORT" \
+  -o "$F" - <"$P" >/dev/null)
 ```
 
 ## Scoped write pass
 
-Only when the user asked for implementation, use
-`-s danger-full-access -c 'approval_policy="never"'` initially and
-`-c sandbox_mode="danger-full-access" -c 'approval_policy="never"'` on resume —
-the standing 2026-08-22 decision: writable headless runs bypass the sandbox
-and the approval prompts (they are separate controls, and a machine whose
-config keeps approvals on-request would still stall), and the write lease plus
-your own inspection are the restraint. The prompt must name the write lease
-and validation. Afterwards, inspect `git diff`, touched files, and actual
-validation output yourself.
+Only when the user asked for implementation, replace the read-only sandbox
+with `-s danger-full-access -c 'approval_policy="never"'` on the first run and
+`-c sandbox_mode="danger-full-access" -c 'approval_policy="never"'` on resume.
+The prompt names the write lease and validation.
 
-Outside a Git repository add `--skip-git-repo-check`. Never pin a model in the
-skill or command.
+Outside a Git repository, add `--skip-git-repo-check`.

@@ -3,6 +3,12 @@
 // range before model startup, records that range, requires non-empty output,
 // and fingerprints the tree before and after the run.
 //
+// Plan mode sometimes files the findings through its CreatePlan tool instead of
+// a final reply. Text output then holds only stderr noise, such as reconnect
+// notices; every empty Cursor review on 2026-09-29/30 had done this. stream-json
+// carries both the plan and the reply, and its steady events keep the idle
+// deadline honest on long runs.
+//
 //   node headless-cursor.mjs "<axis prompt>" --model <id> --base origin/main
 //   node headless-cursor.mjs "<axis prompt>" --model <id> --commit <sha>
 //   node headless-cursor.mjs "<axis prompt>" --model <id> --uncommitted
@@ -88,7 +94,33 @@ const composedPrompt = [
   '',
   prompt,
 ].join('\n');
-const args = ['-p', '--mode', 'plan', '--output-format', 'text', '--model', model, composedPrompt];
+// A fresh worktree is untrusted, and -p then exits 1 on the trust prompt.
+const args = ['-p', '--trust', '--mode', 'plan', '--output-format', 'stream-json', '--model', model, composedPrompt];
+
+const reviewText = (transcript) => {
+  const events = transcript.split('\n').flatMap((line) => {
+    try {
+      return [JSON.parse(line)];
+    } catch {
+      return [];
+    }
+  });
+  const result = events.findLast((event) => event.type === 'result');
+  if (!result) return { reason: 'no result event — not a completed review' };
+  if (result.is_error) return { reason: 'result event carries is_error' };
+  const plan = events.findLast((event) => typeof event.tool_call?.createPlanToolCall?.args?.plan === 'string')
+    ?.tool_call.createPlanToolCall.args.plan;
+  // Earlier assistant segments narrate tool calls; the reply follows the last one.
+  const lastTool = events.findLastIndex((event) => event.type === 'tool_call');
+  const reply = events.slice(lastTool + 1)
+    .filter((event) => event.type === 'assistant')
+    .flatMap((event) => event.message?.content ?? [])
+    .filter((block) => block?.type === 'text')
+    .map((block) => block.text)
+    .join('');
+  const text = [plan, reply].map((part) => part?.trim()).filter(Boolean).join('\n\n');
+  return text ? { text } : { reason: 'review output is empty — content validation failed' };
+};
 
 const finish = (outcome) => {
   closeSync(logFd);
@@ -122,9 +154,9 @@ const { startedAt } = supervise({
   totalMs,
   onExit: (exit) => {
     if (exit !== 0) return finish({ ok: false, reason: `cursor-agent exited ${exit}`, exit_code: exit });
-    const result = readFileSync(logPath, 'utf8').trim();
-    if (!result) return finish({ ok: false, reason: 'review output is empty — content validation failed', exit_code: exit });
-    return finish({ ok: true, exit_code: exit, result });
+    const { text, reason } = reviewText(readFileSync(logPath, 'utf8'));
+    if (!text) return finish({ ok: false, reason, exit_code: exit });
+    return finish({ ok: true, exit_code: exit, result: text });
   },
   onHang: (why) => finish({ ok: false, reason: `hang: ${why}`, killed: true }),
 });
