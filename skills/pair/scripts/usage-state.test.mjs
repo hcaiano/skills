@@ -10,6 +10,13 @@ import test from "node:test";
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "usage-state.mjs");
 
+// The macOS login keychain ignores HOME: every helper spawned here finds this
+// stub `security` first, so a real Claude login never reaches a test.
+const stubBin = mkdtempSync(join(tmpdir(), "pair-usage-stub-"));
+writeFileSync(join(stubBin, "security"), "#!/bin/sh\nexit 44\n");
+chmodSync(join(stubBin, "security"), 0o755);
+process.env.PATH = `${stubBin}:${process.env.PATH}`;
+
 test("rejects conflicting live and offline flags", () => {
   const result = spawnSync(process.execPath, [script, "--live", "--offline"], {
     encoding: "utf8", env: { ...process.env, USAGE_STATE_SKIP_CURSOR: "1" },
