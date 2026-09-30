@@ -291,3 +291,26 @@ test("a home reached under two identity names is one account, not a shared folde
   assert.equal(output.codex_identities.default.pool.used_percent, 20);
   assert.equal(output.codex_identities.default.state, "available");
 });
+
+test("an expired stored Claude login is refused before any request", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pair-claude-expired-"));
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({
+    claudeAiOauth: { accessToken: "stale-token", expiresAt: Date.now() - 3600 * 1000 },
+  }));
+  let requests = 0;
+  const server = createServer((request, response) => { requests++; response.writeHead(401); response.end(); });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const run = spawnSync(process.execPath, [script], { encoding: "utf8", timeout: 10000, env: {
+      ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1", CODEX_BIN: join(home, "no-codex"),
+      CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/`,
+    } });
+    const output = JSON.parse(run.stdout);
+    assert.match(output.claude_error, /expired/u);
+    assert.equal(output.states.claude, "unknown");
+  } finally {
+    server.close();
+  }
+  assert.equal(requests, 0);
+});

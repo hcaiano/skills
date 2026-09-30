@@ -259,19 +259,32 @@ const live = !args.includes('--offline');
 // with the token the CLI stored: the credentials file on Linux, the login
 // keychain on macOS. The helper never refreshes or writes the token; an
 // expired one fails the read like a failed Codex read.
-const claudeToken = () => {
+// A credentials file left by an older install can outlive the keychain login
+// Claude Code now uses on macOS, so take the credential that expires last,
+// and refuse an expired one before it costs a request.
+const claudeCredential = () => {
+  const found = [];
   try {
     const stored = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8'));
-    if (stored.claudeAiOauth?.accessToken) return stored.claudeAiOauth.accessToken;
+    if (stored.claudeAiOauth?.accessToken) found.push(stored.claudeAiOauth);
   } catch {}
-  if (process.platform !== 'darwin') return null;
-  const keychain = spawnSync('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
-    { encoding: 'utf8', timeout: 3000 });
-  try { return JSON.parse(keychain.stdout).claudeAiOauth?.accessToken ?? null; } catch { return null; }
+  if (process.platform === 'darwin') {
+    const keychain = spawnSync('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+      { encoding: 'utf8', timeout: 3000 });
+    try {
+      const stored = JSON.parse(keychain.stdout).claudeAiOauth;
+      if (stored?.accessToken) found.push(stored);
+    } catch {}
+  }
+  return found.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0] ?? null;
 };
 const readClaudeLive = async () => {
-  const token = claudeToken();
-  if (!token) throw new Error('no Claude Code login token');
+  const credential = claudeCredential();
+  if (!credential) throw new Error('no Claude Code login token');
+  if (credential.expiresAt && credential.expiresAt < Date.now()) {
+    throw new Error('the stored Claude Code login expired; any Claude Code session refreshes it');
+  }
+  const token = credential.accessToken;
   const response = await fetch(process.env.CLAUDE_USAGE_URL || 'https://api.anthropic.com/api/oauth/usage', {
     headers: { authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
     signal: AbortSignal.timeout(10000),
