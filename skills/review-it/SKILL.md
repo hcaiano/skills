@@ -81,11 +81,15 @@ The Codex and Cursor wrappers pin the range themselves; pass `--commit <sha>`
 or `--uncommitted` for those ranges. Launch each wrapper through the process
 transport:
 
+Receipts go outside the repository, one path per reviewer: a receipt written
+inside the tree changes the fingerprint another reviewer is still checking.
+
 ```bash
+RECEIPT_DIR=$(mktemp -d -t review-it.XXXXXX)
 RUN_TRANSPORT=<skill dir>/scripts/run-transport.mjs
 RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
   --label "review-it · <standards|spec|combined> review" \
-  -- node <skill dir>/scripts/<wrapper> <args...> --receipt <review.json>)
+  -- node <skill dir>/scripts/<wrapper> <args...> --receipt "$RECEIPT_DIR/<axis>.json")
 node "$RUN_TRANSPORT" wait --run-file "$(printf '%s' "$RUN" | jq -r .run_file)"
 ```
 

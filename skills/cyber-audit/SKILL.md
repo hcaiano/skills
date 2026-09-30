@@ -81,8 +81,9 @@ None — diagnostic only, no files modified outside the report directory.
 The attack vector decides which check proves exposure:
 
 - **Supply-chain / malicious package**: a present vulnerable version is
-  exposure, because its install-time and import-time payloads already ran.
-  Presence is **Affected** whether or not anything is running.
+  exposure, because its install-time and import-time payloads may already have
+  run. Presence is **Affected** whether or not anything is running; the report
+  states the observed package state, not that a payload ran.
 - **Network / service (RCE)**: exposure needs the vulnerable code running and
   reachable, so the process and listener checks decide.
 

@@ -9,7 +9,8 @@ argument-hint: "[description of the bug]"
 Fix only a proven cause; a plausible fix that passes once proves nothing.
 Already inside a debug-mode run → continue the loop.
 
-Respect the user's verb: `diagnose` ends before **Fix** and changes no code.
+Respect the user's verb: `diagnose` ends before **Fix** and applies no fix;
+remove every temporary log before its report.
 `debug`, or a bug report with no verb, runs through **Fix**.
 
 ## Workflow

@@ -28,12 +28,12 @@ body has no `## Delivery gate` receipt yet, run steps 1–5 on its branch first.
    and add no review of your own; step 6 owns the only later review. If the
    gate stops for user direction, delivery stops too. Keep its `## Review gate` receipt for step 5.
 
-4. **Validate the final HEAD and push.** On the clean final HEAD, rerun the
-   step 2 checks for the final diff, plus the repo's lint, typecheck, and build
-   for the changed code. Run the full local-CI entrypoint only when the repo
-   names it as the delivery gate, through the repo's documented CI queue or
-   lease. Push normally. Never force-push; when the base moved, merge
-   `origin/<target-branch>` in.
+4. **Validate the final HEAD and push.** When the base moved, merge
+   `origin/<target-branch>` in first; never force-push. On the clean final
+   HEAD, rerun the step 2 checks for the final diff, plus the repo's lint,
+   typecheck, and build for the changed code. Run the full local-CI entrypoint
+   only when the repo names it as the delivery gate, through the repo's
+   documented CI queue or lease. Push only the HEAD those checks ran on.
 
 5. **Open or update the PR.** Keep one ready-for-review (non-draft) PR. Its
    body carries this receipt:

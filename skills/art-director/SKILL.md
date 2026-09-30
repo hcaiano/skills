@@ -14,8 +14,8 @@ starts after this skill ends.
 
 In Codex, use the built-in `imagegen` skill: its generation, editing,
 validation, and save-path rules own the image work. Anywhere else, open a
-[`pair`](../pair/SKILL.md) with a `codex` partner and hand it each generation
-brief; it generates with `imagegen`, saves the images in the workspace, and
+[`pair`](../pair/SKILL.md) with a `codex` partner rooted at this workspace and
+hand it each generation brief; it generates with `imagegen`, saves the images in the workspace, and
 returns their paths and exact prompts.
 
 Run intake as a grilling conversation: investigate facts yourself, ask
