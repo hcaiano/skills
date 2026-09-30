@@ -24,7 +24,7 @@ if (args[0] === "--version") {
 } else if (bin === "grok" && args[0] === "models") {
   process.stdout.write("Available models:\\n* grok-4.8 (default)\\n- grok-4.7\\n");
 } else if (bin === "cursor-agent" && args[0] === "--list-models") {
-  process.stdout.write("claude-opus-5-6-high - usable\\nclaude-opus-5-5-high - old\\ngemini-4-flash-high - usable\\ngpt-9-sol-high - stale duplicate\\n");
+  process.stdout.write("claude-opus-5-6-high - usable\\nclaude-opus-5-5-high - old\\ngemini-4-flash-high - usable\\ngpt-9-sol-high - stale duplicate\\ngrok-4.9-high - ahead of native\\n");
 } else if (bin === "codex" && args[0] === "app-server") {
   process.stdin.setEncoding("utf8");
   let text = "";
@@ -59,6 +59,7 @@ test("compares releases without build metadata", () => {
 test("reports outdated, current, unknown family and stale example from live catalogs", async () => {
   const result = await report({ env, rosterText });
   assert.equal(result.clis.codex.outdated, true);
+  assert.equal(result.clis.codex.update, `${join(directory, "codex")} update`, "the inspected install is the one updated");
   assert.equal(result.clis.opencode.outdated, false);
   assert.equal(result.clis.grok.outdated, true);
   assert.equal(result.clis["cursor-agent"].latest, null);
@@ -68,6 +69,8 @@ test("reports outdated, current, unknown family and stale example from live cata
   assert.ok(result.unknown_families.some((entry) => entry.family === "nova"));
   assert.ok(result.stale_examples.some((entry) => entry.family === "sol" && entry.newest === "gpt-6.2-sol"));
   assert.ok(result.stale_examples.some((entry) => entry.family === "opus" && entry.newest === "claude-opus-5-6-high"));
+  // Every listed harness is checked, not only the row's first one.
+  assert.ok(result.stale_examples.some((entry) => entry.harness === "cursor" && entry.family === "grok" && entry.newest === "grok-4.9-high"));
   assert.ok(!result.unknown_families.some((entry) => entry.family === "gemini"));
   const calls = readFileSync(env.FAKE_LOG, "utf8").trim().split("\n").map(JSON.parse);
   assert.ok(calls.filter((call) => call.bin === "npm").every((call) => call.cwd === process.env.HOME));

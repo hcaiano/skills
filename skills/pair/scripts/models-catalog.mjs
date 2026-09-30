@@ -7,7 +7,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { codexBinary, codexHomeFor, codexModelCatalog } from "./codex-rpc.mjs";
-import { CODEX_ID, CURSOR_LINE, CURSOR_VERSION, GROK_LINE, catalogText, compareVersions, pickLatestGrok } from "./pair-headless.mjs";
+import { CODEX_ID, CURSOR_LINE, CURSOR_VERSION, GROK_LINE, compareVersions, pickLatestGrok } from "./pair-headless.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const rosterPath = join(here, "../references/models.md");
@@ -21,7 +21,7 @@ const update = {
   "cursor-agent": "cursor-agent update",
 };
 
-const run = (bin, args, { cwd = homedir(), env = process.env } = {}) => new Promise((resolve) => {
+const run = (bin, args, { cwd = homedir(), env = process.env, timeout = timeoutMs } = {}) => new Promise((resolve) => {
   let child;
   try { child = spawn(bin, args, { cwd, env, stdio: ["ignore", "pipe", "pipe"] }); }
   catch (error) { resolve({ error: error.message, missing: error.code === "ENOENT" }); return; }
@@ -37,7 +37,7 @@ const run = (bin, args, { cwd = homedir(), env = process.env } = {}) => new Prom
   const timer = setTimeout(() => {
     child.kill("SIGKILL");
     finish({ error: `${bin} ${args.join(" ")} timed out` });
-  }, timeoutMs);
+  }, timeout);
   child.on("error", (error) => finish({ error: error.message, missing: error.code === "ENOENT" }));
   child.stdout.on("data", (chunk) => {
     stdout += chunk.toString();
@@ -113,7 +113,9 @@ const inspectCli = async (name, offline, env) => {
   ]);
   const installed = versionFrom(installedResult.stdout);
   const latest = release.latest;
-  const result = { installed, latest, outdated: installed && latest ? compareSemver(installed, latest) < 0 : null, update: update[name] };
+  // CODEX_BIN may select an install other than PATH's: update the one inspected.
+  const command = name === "codex" && bin !== "codex" ? `${bin} update` : update[name];
+  const result = { installed, latest, outdated: installed && latest ? compareSemver(installed, latest) < 0 : null, update: command };
   if (release.note) result.note = release.note;
   if (installedResult.error && !installedResult.missing) result.error = installedResult.error;
   else if (!installedResult.missing && !installed) result.error = `${bin} --version returned no version`;
@@ -170,27 +172,30 @@ const cursorFamilies = (listing) => {
   return result;
 };
 
-const familyCatalog = async (identity, env) => {
-  const families = { codex: { models: {} }, grok: { models: {} }, cursor: { models: {} }, claude: { models: {}, note: "Claude has no model catalog; its alias is verified by session init" } };
-  const raw = {};
+const codexCatalog = async (identity, env) => {
   const home = codexHomeFor(identity, { home: homedir() });
-  if (home.error) families.codex.error = home.error;
-  else {
-    try {
-      raw.codex = codexFamilies(await codexModelCatalog({ codexHome: home.codexHome, bin: codexBinary(env), env }));
-      families.codex.models = display(raw.codex);
-    } catch (error) { families.codex.error = error.message; }
-  }
-  for (const [name, bin, args, parser] of [
-    ["grok", "grok", ["models"], grokFamilies],
-    ["cursor", "cursor-agent", ["--list-models"], cursorFamilies],
-  ]) {
-    const listing = catalogText(bin, args, env);
-    if (listing.error) families[name].error = listing.error;
-    else {
-      raw[name] = parser(listing.text);
-      families[name].models = display(raw[name]);
-    }
+  if (home.error) return { error: home.error };
+  try {
+    return { models: codexFamilies(await codexModelCatalog({ codexHome: home.codexHome, bin: codexBinary(env), env })) };
+  } catch (error) { return { error: error.message }; }
+};
+const listedCatalog = async (bin, args, parser, env) => {
+  const listing = await run(bin, args, { env, timeout: 30000 });
+  return listing.error ? { error: listing.error } : { models: parser(listing.stdout) };
+};
+
+// The three catalogs are independent: read them together.
+const familyCatalog = async (identity, env) => {
+  const families = { claude: { models: {}, note: "Claude has no model catalog; its alias is verified by session init" } };
+  const raw = {};
+  const reads = await Promise.all([
+    ["codex", codexCatalog(identity, env)],
+    ["grok", listedCatalog("grok", ["models"], grokFamilies, env)],
+    ["cursor", listedCatalog("cursor-agent", ["--list-models"], cursorFamilies, env)],
+  ].map(async ([name, read]) => [name, await read]));
+  for (const [name, read] of reads) {
+    families[name] = { models: read.models ? display(read.models) : {}, ...(read.error ? { error: read.error } : {}) };
+    if (read.models) raw[name] = read.models;
   }
   return { families, raw };
 };
@@ -224,11 +229,13 @@ export const report = async ({ offline = false, identity = "default", env = proc
   }
   const stale_examples = [];
   for (const row of rows) {
-    const harness = row.harnesses.find((name) => name === "codex" || name === "grok" || name === "cursor");
-    const current = raw[harness]?.get(row.family);
-    const version = exampleVersion(row, harness);
-    if (current && version && compareVersions(current.version, version) > 0)
-      stale_examples.push({ harness, family: row.family, example: row.example, newest: current.id });
+    // The example names one harness's ID; any listed catalog may be ahead of it.
+    const version = row.harnesses.map((harness) => exampleVersion(row, harness)).find(Boolean);
+    for (const harness of row.harnesses.filter((name) => raw[name])) {
+      const current = raw[harness].get(row.family);
+      if (current && version && compareVersions(current.version, version) > 0)
+        stale_examples.push({ harness, family: row.family, example: row.example, newest: current.id });
+    }
   }
   return { clis, families, unknown_families, stale_examples };
 };
