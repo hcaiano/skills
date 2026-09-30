@@ -64,13 +64,12 @@ carries both, and the stale one still answers under the retired workflow.
 
 ### Engineering
 
-- `debug-mode` — diagnose unresolved, flaky, environment-specific, or
-  production-only bugs through an evidence loop.
-- `cyber-audit` — audit this machine read-only against a named CVE, malicious
+- `debug-mode` — diagnose or debug broken, failing, flaky, slow, or
+  production-only bugs with a red feedback loop and runtime evidence.
+- `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious
   package, or supply-chain advisory and leave a written report.
-- `test-audit` — gate new tests against a value bar, and prune low-value,
-  duplicated, or implementation-coupled tests in focused audits or
-  whole-app campaigns before legacy refactors.
+- `test-audit` — gate new tests against a value bar, and prune low-value
+  tests in focused audits or whole-app campaigns before legacy refactors.
 
 ### Creative work
 
@@ -128,9 +127,11 @@ install `pair` as well.
   partner CLI (`claude`, `codex`, `cursor-agent`, `grok`, or `opencode`).
 - `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
   through Claude; Claude Code consults Codex.
-- `art-director` composes the external `imagegen` skill. It uses `brandkit`
-  only when a selected identity direction needs system proof, and `pair`
-  only when the current runtime cannot generate images directly.
+- `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
+  and through a `pair` with a `codex` partner anywhere else.
+- `test-audit` campaigns ship each subsystem PR through `ship-it` (and so
+  `review-it`), and use `ask-peer` for the preservation review when subagents
+  are unavailable.
 - `ship-it` requires `review-it` installed alongside it: it delegates its
   graded gate and never reimplements one.
 - `review-it` reads the usage-state helper bundled with `pair`

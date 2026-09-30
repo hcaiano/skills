@@ -2,27 +2,30 @@
 
 A campaign cleans a whole app's test surface, usually to prepare a legacy app
 for refactoring. The scope is the app; delivery is one PR per **subsystem**.
-The authoring gate, junk patterns, retention bar, candidate evidence, and
-validation in [SKILL.md](../SKILL.md) apply to every lane. This file adds the
-order of work. Each step ends on its completion criterion; do not start the
-next step early.
+The authoring gate, junk patterns, and retention bar in
+[SKILL.md](../SKILL.md), and the deletion rules, candidate evidence,
+validation, and report in [audit.md](audit.md), apply to every lane; read
+audit.md before step 1. This file adds the order of work. Each step ends on its
+completion criterion; do not start the next step early.
 
 ## Ground rules
 
 - **The campaign lands before the refactor.** Test pruning and production
   refactors go in separate PRs, so lost coverage never hides inside a refactor
   diff. Removing test-only production seams belongs to the campaign;
-  restructuring and behavior changes belong to the refactor.
+  restructuring and behavior changes belong to the refactor. The one
+  exception is a product defect a keeper exposes (step 7): it lands in its own
+  commit with its own control run.
 - **Keepers sit at boundaries the refactor keeps**: public API, HTTP routes,
   UI behavior, CLI, persisted data. A test pinning internals the refactor will
-  change is `C` into such a keeper, not `R`. The campaign's product is the
-  safety net the refactor runs against.
+  change is consolidated (`C`) into such a keeper, not retained (`R`). The
+  campaign's product is the safety net the refactor runs against.
 - **Notes** (app map, baselines, ledgers, plans) live under
   `$(git rev-parse --git-common-dir)/test-audit/`: `app.md` for the app, one
   folder per subsystem. Only steps 1 and 9 write `app.md`; a subsystem writes
-  only its own folder, so parallel subsystems never overwrite each other. Every worktree of the repository shares that
-  directory, it is never committed, and it survives context compaction; reread
-  it when resuming.
+  only its own folder, so parallel subsystems never overwrite each other.
+  Every worktree of the repository shares that directory, it is never
+  committed, and it survives context compaction; reread it when resuming.
 
 ## 1. App map
 
@@ -56,7 +59,8 @@ Done when every test file the subsystem owns belongs to exactly one lane.
 
 ## 3. Ledger per lane
 
-Give each lane to its own read-only subagent. The subagent reads every assigned
+Give each lane to its own read-only subagent; without subagents, ledger the
+lanes one at a time as separate read-only passes. Each pass reads every assigned
 test in full, including parameter tables, and the production owners with their
 entry points, callers, history, and CI routing. Each test declaration goes into
 the lane's **ledger** with one mark and one evidence line. A parameterized
@@ -102,7 +106,8 @@ Done when every lane plan is applied and each lane's keepers pass.
 Before claiming completion, have independent read-only reviewers, one per
 boundary group, compare deleted coverage against the keepers. They look for
 contracts that lost their only proof, and for new assertions that cannot fail,
-such as a rejection row the production code never reaches.
+such as a rejection row the production code never reaches. Without subagents,
+get this review from another model through `ask-peer`.
 
 For each restored contract, make one deliberate **mutation** of the production
 owner and confirm the keeper goes red. Copy the owner file before mutating it;
@@ -128,7 +133,11 @@ When the default branch changed a file the campaign deleted, keep the deletion,
 port the new contract into its keeper, and confirm every new regression test
 there still has a home. Rerun the whole subsystem suite on the merged head.
 
-Hand off the subsystem PR with the SKILL.md report, plus:
+Once the user authorizes delivery, ship the subsystem PR with
+[ship-it](../../ship-it/SKILL.md). Its review-it gate grades the diff at least
+`single`: deleted coverage removes proof that no focused run can replace, so it
+is never a mechanical low-risk `skip`. Pass the step-6 preservation review in
+as the spec source. The PR carries the [audit.md](audit.md) report, plus:
 
 - baseline and final test and test-support line counts, production counted
   separately;
@@ -136,8 +145,8 @@ Hand off the subsystem PR with the SKILL.md report, plus:
 - preservation gaps found and their mutations;
 - product defects with control and candidate proof.
 
-Done when the PR is handed off and the report is saved as `result.md` in the
-subsystem's notes folder.
+Done when ship-it has delivered the PR and the report is saved as `result.md`
+in the subsystem's notes folder.
 
 ## 9. Close the app
 

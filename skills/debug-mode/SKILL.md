@@ -1,98 +1,60 @@
 ---
 name: debug-mode
-description: "Evidence-driven debugging for unresolved, flaky, environment-specific, or production-only bugs. Use when asked to diagnose or when normal inspection cannot prove the cause; skip obvious errors and already-proven causes."
-user-invocable: true
+description: "Diagnose or debug a broken, failing, flaky, slow, or production-only bug with a red feedback loop and runtime evidence. Use when the user says diagnose/debug or reports something broken."
 argument-hint: "[description of the bug]"
 ---
 
 # Debug Mode
 
-Use the **evidence loop** when the root cause is not proven. Avoid plausible fixes
-that only pass once.
+Fix only a proven cause; a plausible fix that passes once proves nothing.
+Already inside a debug-mode run → continue the loop.
 
-## Activation boundary
-
-Reach for this skill — including autonomously, without waiting for the user to
-name it — when the user explicitly says `diagnose`/`debug`, **or** when a normal
-reproduction or inspection has *not* revealed the cause, especially for flaky,
-environment-specific, or production-only bugs.
-
-Do **not** enter debug-mode for a compiler/type/lint/test error whose cause is
-directly in the output, a review finding that already specifies both cause and
-fix, an already-proven root cause, or when debug-mode is already active. Never
-re-invoke debug-mode from inside an active debug-mode run — continue the
-existing evidence loop.
-
-Respect the user's verb: a `diagnose`-only request ends before the **Fix** step
-and applies no code change. A `debug` request, or an ordinary bug report with no
-explicit verb, continues through the **Fix** step as usual — do not withhold
-the fix just because the task didn't separately say "fix" or "correct".
+Respect the user's verb: `diagnose` ends before **Fix** and changes no code.
+`debug`, or a bug report with no verb, runs through **Fix**.
 
 ## Workflow
 
 1. **Understand.** Done when symptoms, affected surface, expected behavior,
-   actual behavior, and smallest reproduction path are known.
-2. **Feedback command.** Done when, where practical, one command — a failing
-   test, a curl script, a CLI run on a fixture, a headless-browser script, a
-   replayed trace — has been run once and shown red on this bug's exact
-   symptom: red-capable (asserts the symptom, not "didn't crash"),
-   deterministic, fast, runnable unattended. Tighten it before moving on —
-   sharper assert, narrower scope, pinned time/seed; for flaky bugs raise the
-   reproduction rate (loop the trigger, add stress) until it's debuggable.
-   When no such command is practical (auth-walled, user-specific,
-   production-only), say so explicitly and rely on the instrumentation branch
-   below — don't skip silently to code-reading.
-3. **Hypothesize.** Done when 2-3 ranked hypotheses each name the observation
+   actual behavior, and a reproduction path are known.
+2. **Red loop.** Build one command that drives the bug's code path and asserts
+   its exact symptom: a failing test, a curl script, a CLI run on a fixture, a
+   headless-browser script, a replayed trace. Make it tight: deterministic,
+   fast, runnable unattended, asserting the symptom rather than "didn't
+   crash". For a flaky bug, raise the reproduction rate (loop the trigger, add
+   stress) until it is debuggable. For slow code, the loop is a baseline
+   measurement (timing harness, profiler, query plan, production traces) that
+   goes red above a stated threshold. When no command is practical
+   (auth-walled, user-specific, production-only), say so and rely on
+   instrumentation in steps 5-6. Done when the command has run red on this
+   bug, or its absence is stated.
+3. **Minimize.** Shrink the repro one cut at a time (inputs, callers, config,
+   data, steps), rerunning the loop after each cut. Done when every remaining
+   part matters: removing any one turns the loop green.
+4. **Hypothesize.** Done when 2-3 ranked hypotheses each name the observation
    that would confirm or reject it.
-4. **Instrument.** Done when temporary structured logs distinguish the
-   hypotheses without leaking secrets.
-5. **Reproduce.** Done when the bug has been triggered and logs collected — via
-   the feedback command when one exists. If the flow is auth-walled or
+5. **Instrument.** For slow code, profile the minimized repro or bisect
+   between known-good and known-bad states (`git bisect run` with the loop).
+   Otherwise add temporary [logs](#logs). Done when the observations
+   distinguish the hypotheses without leaking secrets or changing the
+   behavior; if they change it, observe from a less invasive point.
+6. **Reproduce.** Done when the bug has been triggered and the evidence
+   collected, through the loop when one exists. If the flow is auth-walled or
    user-specific, ask the user to reproduce and wait.
-6. **Analyze.** Done when evidence confirms one hypothesis or rejects all current
-   hypotheses explicitly.
-7. **Fix.** Done when the smallest evidence-backed fix is applied, the feedback
-   command (when one exists) has gone red → green — turned into a regression
-   test first when a seam that exercises the real bug pattern exists — and all
-   temporary instrumentation is removed.
+7. **Analyze.** Done when evidence confirms one hypothesis or rejects every
+   current one explicitly. When it rejects them all, write new hypotheses from
+   the evidence and return to step 5.
+8. **Fix.** When a seam exercises the real bug pattern, turn the minimized
+   repro into a regression test first. Done when the smallest evidence-backed
+   fix is applied, the loop (when one exists) has gone green on the original
+   scenario, and every temporary log is removed.
 
-## Instrumentation Contract
+## Logs
 
-Prefer structured events over prose logs. Each event should include enough context to tie one request or user action together without leaking secrets:
-
-```json
-{
-  "hypothesis_id": "H1",
-  "event": "branch_selected",
-  "request_id": "req_123",
-  "session_id": "optional-session",
-  "observed": { "key": "value" },
-  "timestamp": "2026-05-11T15:00:00Z"
-}
-```
-
-Use `scripts/debug-server.mjs` when a local HTTP collector is useful:
-
-```bash
-node <skill-dir>/scripts/debug-server.mjs --port 8765 --output <debug-events.jsonl>
-```
-
-The server accepts `POST /log` with a JSON body and writes JSONL. Confirm it is
-listening before adding app-side logging. Stop it after analysis, remove all
-instrumentation, and keep only the evidence summary in the final report.
-
-If localhost is unreachable, log to the app's normal logger or a local file with the same fields.
-
-Tag any plain-text fallback logs with one unique prefix (e.g. `[DEBUG-a4f2]`) so
-removal is a single grep — untagged logs survive cleanup.
-
-## Failure Modes
-
-- **Cannot reproduce locally:** identify the missing condition, add targeted instrumentation, and ask the user to reproduce once.
-- **Auth-walled reproduction:** prepare logging first, then wait for the user instead of guessing.
-- **User cannot reproduce:** report the best-tested hypotheses and what evidence is still missing; do not invent a fix.
-- **Logs disprove every hypothesis:** write new hypotheses from the evidence and instrument again.
-- **Instrumentation changes behavior:** remove or reduce the instrumentation, then use a less invasive observation point.
+- Write structured events through the app's own logger or a local file:
+  `hypothesis_id`, `event`, a request or session id that ties one user action
+  together, the observed values, and a timestamp.
+- Tag every temporary log with one unique prefix (e.g. `[DEBUG-a4f2]`), so
+  removal is a single grep.
 
 ## Report Format
 

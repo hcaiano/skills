@@ -1,28 +1,26 @@
 ---
 name: art-director
-description: "Manual-only visual exploration before implementation. Invoke explicitly to explore and choose interface, product, campaign, or brand directions using imagegen, optional brandkit proof, and one-question-at-a-time intake."
+description: "Explore and choose a visual direction before implementation."
 disable-model-invocation: true
 ---
 
 # Art Director
 
 Explore visual directions, curate them with the user, and converge on one
-defensible choice. Do not implement the product while this skill is active.
+defensible choice. The deliverable is the chosen direction; implementation
+starts after this skill ends.
 
-## Compose, do not copy
+## Image generation
 
-- Read and use `imagegen` for every generated concept. Its generation, editing,
-  validation, and save-path rules own the image work.
-- For a brand or identity exploration, read `brandkit` only after a direction
-  has earned a system proof. Do not generate a brand board for every early idea.
-- Run intake as a grilling conversation: investigate facts yourself, ask
-  decisions one at a time, include your recommended answer, and wait for the
-  user's reply. No separate intake skill is required.
-- If the current runtime cannot generate images, use `pair` to give a
-  Codex peer the generation brief. When image generation is available directly,
-  Herdr is unnecessary.
-- Obey the current project's agent, product, brand, and design-system
-  instructions.
+In Codex, use the built-in `imagegen` skill: its generation, editing,
+validation, and save-path rules own the image work. Anywhere else, open a
+[`pair`](../pair/SKILL.md) with a `codex` partner and hand it each generation
+brief; it generates with `imagegen`, saves the images in the workspace, and
+returns their paths and exact prompts.
+
+Run intake as a grilling conversation: investigate facts yourself, ask
+decisions one at a time with your recommended answer, and wait for the user's
+reply.
 
 ## Workflow
 
@@ -35,7 +33,7 @@ defensible choice. Do not implement the product while this skill is active.
 3. **Frame directions.** Name three to five concrete visual premises. Each
    direction needs a different underlying rule for composition, hierarchy,
    imagery, and mood. "More options" is not a direction.
-4. **Generate breadth.** Use one `imagegen` call per direction. Keep the
+4. **Generate breadth.** Generate one image per direction. Keep the
    functional content and format constant so the visual ideas are comparable.
    Preserve an established identity; for blank-slate work, explore a genuine
    range. Keep the exact prompt for every output.
@@ -46,8 +44,8 @@ defensible choice. Do not implement the product while this skill is active.
 6. **Refine.** Generate two or three variants of the strongest direction.
    Change one named trait at a time instead of remixing everything.
 7. **Prove the system.** Stress-test the winner on an adjacent page, state, or
-   asset. For identity work, use `brandkit` to create one coherent system board
-   from the selected direction.
+   asset. For identity work, generate one coherent system board from the
+   selected direction: mark, palette, type, and one applied surface.
 8. **Hand off.** Return the selected asset paths, exact prompts, visual rules,
    rejected patterns, and remaining trade-offs. Save project-bound outputs in
    the workspace according to `imagegen`; preview-only outputs may remain
