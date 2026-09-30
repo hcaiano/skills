@@ -65,6 +65,23 @@ write leases as `SKILL.md` describes.
 Done when `init` reports a `sid` and the first `task` has a terminal
 `status=replied` receipt.
 
+## Resolve a model
+
+`resolve` prints the model argument to pass to a CLI, with no session. For
+Codex, Grok, and Cursor it uses the same live catalog, newest-version rule,
+and refusals as `init`. For Claude, `cli_model` is an alias; the exact ID is
+verified only when a session's init report names it.
+One-shot callers such as `ask-peer` and `review-it` reviewers staff through
+it:
+
+```bash
+node "$PAIR_SCRIPT" resolve --partner codex --model latest:astra --effort high \
+  [--identity <name>]
+```
+
+Pass its `cli_model` to the CLI's own model flag: an exact Codex or Grok ID, a
+Cursor ID that already carries the effort, or a Claude alias.
+
 ## Send
 
 Write only the body to a temp file, then invoke:

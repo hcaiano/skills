@@ -95,7 +95,7 @@ test("every public helper command is documented", () => {
   const headless = read(join(pairDir, "references/headless.md"));
   const table = read(join(here, "pair-headless.mjs")).match(/const COMMANDS = \{([\s\S]*?)\};/u)[1];
   for (const [, command] of table.matchAll(/^\s+([a-z]+):/gmu)) {
-    assert.match(headless, new RegExp(`\\$PAIR_SCRIPT" ${command} --repo`, "u"), `headless.md documents ${command}`);
+    assert.match(headless, new RegExp(`\\$PAIR_SCRIPT" ${command} --(?:repo|partner)`, "u"), `headless.md documents ${command}`);
   }
   const herdr = read(join(pairDir, "references/herdr.md"));
   for (const [, command] of read(join(here, "herdr-pair.mjs")).matchAll(/command === "([a-z]+)"/gu)) {

@@ -19,11 +19,13 @@
 // window is unavailable; pace > 1 is protected; a snapshot older than 15
 // minutes is unknown. The first two outrank staleness, so a stale reading can
 // only be as good as its worst proven state.
-// Claude source: ~/.claude/usage-state.json (written by the user's statusline).
-// Codex source: per-home session snapshots; --live adds read-only account RPC.
+// Every read is live by default; --offline reads only local snapshots.
+// Claude source: the subscription's usage endpoint with Claude Code's own
+// token; offline, ~/.claude/usage-state.json (written by the user's statusline).
+// Codex source: read-only account RPC per home; offline, session snapshots.
 // Cursor source: the logged-in CLI's native /usage command. In its current UI,
 // "Auto" is the Cursor Models pool and "API" is the Other Models pool.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -73,7 +75,7 @@ const cursorReset = (label) => {
 };
 
 const readCursorUsage = () => new Promise((resolve) => {
-  if (process.env.USAGE_STATE_SKIP_CURSOR === '1') return resolve(null);
+  if (process.env.USAGE_STATE_SKIP_CURSOR === '1' || !live) return resolve(null);
   const cursorBin = process.env.CURSOR_AGENT_BIN || 'cursor-agent';
   // `script` supplies the TTY required by Cursor's native /usage command. The
   // command reads account state and never starts a model turn.
@@ -243,9 +245,58 @@ try {
 return codex;
 };
 
-const live = process.argv.slice(2).includes('--live');
-const unknownArgs = process.argv.slice(2).filter((arg) => arg !== '--live');
-if (unknownArgs.length) throw new Error('usage: usage-state.mjs [--live]');
+// Live is the default because staffing on hours-old snapshots misled
+// September's gates. --live stays accepted for callers written before.
+const args = process.argv.slice(2);
+const unknownArgs = args.filter((arg) => arg !== '--live' && arg !== '--offline');
+if (unknownArgs.length || (args.includes('--live') && args.includes('--offline')))
+  throw new Error('usage: usage-state.mjs [--offline]');
+const live = !args.includes('--offline');
+
+// The statusline writes its snapshot only while an interactive Claude Code
+// session renders it, so a lead in an SDK host (T3 Code, the desktop app)
+// leaves it hours stale. --live asks the endpoint Claude Code's /usage reads,
+// with the token the CLI stored: the credentials file on Linux, the login
+// keychain on macOS. The helper never refreshes or writes the token; an
+// expired one fails the read like a failed Codex read.
+const claudeToken = () => {
+  try {
+    const stored = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8'));
+    if (stored.claudeAiOauth?.accessToken) return stored.claudeAiOauth.accessToken;
+  } catch {}
+  if (process.platform !== 'darwin') return null;
+  const keychain = spawnSync('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
+    { encoding: 'utf8', timeout: 3000 });
+  try { return JSON.parse(keychain.stdout).claudeAiOauth?.accessToken ?? null; } catch { return null; }
+};
+const readClaudeLive = async () => {
+  const token = claudeToken();
+  if (!token) throw new Error('no Claude Code login token');
+  const response = await fetch(process.env.CLAUDE_USAGE_URL || 'https://api.anthropic.com/api/oauth/usage', {
+    headers: { authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new Error(`usage endpoint answered ${response.status}`);
+  const body = await response.json();
+  const epoch = (iso) => (iso ? Date.parse(iso) / 1000 : null);
+  const week = body.seven_day;
+  if (!Number.isFinite(week?.utilization)) throw new Error('usage endpoint sent no weekly window');
+  const weekly = pace(week.utilization, hoursUntil(epoch(week.resets_at)));
+  if (!weekly) throw new Error('usage endpoint sent an expired weekly window');
+  const burst = body.five_hour;
+  return { ...weekly, stale_minutes: 0,
+    short_window: Number.isFinite(burst?.utilization) ? burstWindow(burst.utilization, epoch(burst.resets_at)) : null };
+};
+let claudeSource = claude ? 'statusline' : null;
+let claudeError = null;
+if (live) {
+  try {
+    claude = await readClaudeLive();
+    claudeSource = 'oauth/usage';
+  } catch (error) {
+    claudeError = `live quota unavailable (${error.message}); snapshot is not current account proof`;
+  }
+}
 const homes = listCodexHomes();
 
 const measuredPool = (reading) => {
@@ -269,19 +320,30 @@ const poolState = (pool) => {
 };
 const codexIdentities = {};
 const seenHomes = new Set();
+// A profile may symlink its sessions folder to another home's to share
+// history. Snapshots in a shared folder come from whichever account ran each
+// session, so they prove no single account's quota: only --live does.
+const realSessions = (home) => { try { return fs.realpathSync(path.join(home, 'sessions')); } catch { return null; } };
+const sessionOwners = new Map();
+for (const home of Object.values(homes)) {
+  const sessions = realSessions(home);
+  if (sessions) sessionOwners.set(sessions, (sessionOwners.get(sessions) ?? 0) + 1);
+}
 for (const [identity, home] of Object.entries(homes)) {
   let canonical = home;
   try { canonical = fs.realpathSync(home); } catch {}
   if (seenHomes.has(canonical)) continue;
   seenHomes.add(canonical);
-  let pool = readCodexSnapshot(canonical);
-  let source = 'session-snapshot';
-  let liveError = null;
+  const shared = sessionOwners.get(realSessions(canonical)) > 1;
+  let pool = shared ? null : readCodexSnapshot(canonical);
+  let source = shared ? 'shared-session-snapshot' : 'session-snapshot';
+  let liveError = shared && !live ? 'sessions folder shared with another home; only --live proves this account' : null;
   if (live) {
     try {
       if (!fs.statSync(canonical).isDirectory()) throw new Error('home missing');
       pool = measuredPool(await codexRead('account/rateLimits/read', {}, { codexHome: canonical }));
       source = 'account/rateLimits/read';
+      liveError = null;
     } catch {
       liveError = 'live quota unavailable; snapshot is not current account proof';
     }
@@ -300,11 +362,30 @@ const cursor = await readCursorUsage();
 // failed live read from reporting a snapshot as current headroom. Cursor's
 // monthly pools share the snapshot age of the one /usage read.
 const cursorPool = (pool) => (pool ? { ...pool, stale_minutes: cursor.stale_minutes } : null);
+const claudeState = claudeError && !['protected', 'unavailable'].includes(poolState(claude))
+  ? 'unknown' : poolState(claude);
 const states = {
-  claude: poolState(claude),
+  claude: claudeState,
   codex: codexIdentities.default?.state ?? poolState(null),
   cursor_models: poolState(cursorPool(cursor?.cursor_models)),
   other_models: poolState(cursorPool(cursor?.other_models)),
 };
-console.log(JSON.stringify({ claude, codex, cursor, codex_identities: codexIdentities,
+// A pool that empties more than a day before its reset strands the rest of
+// its window; the roster tells the lead what to do about it. Only a current
+// reading with half a day of history can raise one: a failed live read keeps
+// a stale snapshot's protected state, but never turns it into a new alert.
+const alerts = [];
+const earlyEmpty = (name, pool, failedRead) => {
+  if (failedRead || pool?.stale_minutes == null || pool.stale_minutes > 15) return;
+  if (pool.days_to_empty == null || pool.elapsed_hours < 12) return;
+  if (pool.days_to_empty < pool.days_left - 1) {
+    alerts.push({ pool: name, days_to_empty: pool.days_to_empty, days_left: pool.days_left });
+  }
+};
+earlyEmpty('claude', claude, Boolean(claudeError));
+for (const [name, entry] of Object.entries(codexIdentities)) earlyEmpty(`codex:${name}`, entry.pool, Boolean(entry.error));
+earlyEmpty('cursor_models', cursorPool(cursor?.cursor_models), false);
+earlyEmpty('other_models', cursorPool(cursor?.other_models), false);
+console.log(JSON.stringify({ alerts, claude, claude_source: claudeSource,
+  ...(claudeError ? { claude_error: claudeError } : {}), codex, cursor, codex_identities: codexIdentities,
   recommended_codex_identity: eligible[0]?.[0] ?? null, states }));

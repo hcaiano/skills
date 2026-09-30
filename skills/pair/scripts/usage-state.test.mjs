@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer } from "node:http";
+import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,14 @@ import test from "node:test";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "usage-state.mjs");
+
+test("rejects conflicting live and offline flags", () => {
+  const result = spawnSync(process.execPath, [script, "--live", "--offline"], {
+    encoding: "utf8", env: { ...process.env, USAGE_STATE_SKIP_CURSOR: "1" },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /usage: usage-state\.mjs \[--offline\]/u);
+});
 
 test("a one-record Codex session keeps its first JSONL record", () => {
   const home = mkdtempSync(join(tmpdir(), "pair-usage-state-"));
@@ -27,7 +36,7 @@ test("a one-record Codex session keeps its first JSONL record", () => {
       },
     },
   })}\n`);
-  const result = spawnSync(process.execPath, [script], {
+  const result = spawnSync(process.execPath, [script, "--offline"], {
     encoding: "utf8",
     env: { ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1" },
   });
@@ -50,7 +59,7 @@ printf 'Usage • Ultra  Resets ${reset}\\nIncluded 19%% used\\n  Auto 5%% used\
   chmodSync(bin, 0o755);
   const result = spawnSync(process.execPath, [script], {
     encoding: "utf8",
-    env: { ...process.env, HOME: home, CURSOR_AGENT_BIN: bin },
+    env: { ...process.env, HOME: home, CURSOR_AGENT_BIN: bin, CODEX_BIN: join(home, "no-codex"), CLAUDE_USAGE_URL: "http://127.0.0.1:9/" },
     timeout: 10000,
   });
   assert.equal(result.status, 0, result.stderr);
@@ -78,12 +87,13 @@ test("states classifies every pool with one rule set", () => {
 printf 'Usage • Ultra  Resets ${reset}\\n  Auto 5%% used\\n  API 95%% used\\n'
 `);
   chmodSync(bin, 0o755);
-  const result = spawnSync(process.execPath, [script], {
-    encoding: "utf8",
-    env: { ...process.env, HOME: home, CURSOR_AGENT_BIN: bin },
-    timeout: 10000,
-  });
+  const env = { ...process.env, HOME: home, CURSOR_AGENT_BIN: bin, CODEX_BIN: join(home, "no-codex"), CLAUDE_USAGE_URL: "http://127.0.0.1:9/" };
+  const result = spawnSync(process.execPath, [script], { encoding: "utf8", env, timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);
+  // Offline never runs Cursor's /usage: its pools read unknown.
+  const offline = JSON.parse(spawnSync(process.execPath, [script, "--offline"], { encoding: "utf8", env, timeout: 10000 }).stdout);
+  assert.equal(offline.cursor, null);
+  assert.equal(offline.states.cursor_models, "unknown");
   assert.deepEqual(JSON.parse(result.stdout).states, {
     claude: "protected",
     codex: "unknown",
@@ -108,7 +118,7 @@ test("Codex homes have separate usage and stale headroom is not recommended", ()
   snapshot(join(taskHome, ".codex"), 95, 0);
   snapshot(join(taskHome, ".codex-profiles", "second"), 10, 0);
   snapshot(join(taskHome, ".codex-profiles", "old"), 0, 360);
-  const result = spawnSync(process.execPath, [script], {
+  const result = spawnSync(process.execPath, [script, "--offline"], {
     encoding: "utf8", env: { ...process.env, HOME: taskHome, USAGE_STATE_SKIP_CURSOR: "1" },
   });
   assert.equal(result.status, 0, result.stderr);
@@ -147,7 +157,8 @@ rl.on('line', line=>{
 });
 `);
   chmodSync(binary, 0o755);
-  const env = {...process.env, HOME:taskHome, CODEX_BIN:binary, USAGE_STATE_SKIP_CURSOR:"1"};
+  const env = {...process.env, HOME:taskHome, CODEX_BIN:binary, USAGE_STATE_SKIP_CURSOR:"1",
+    CLAUDE_USAGE_URL:"http://127.0.0.1:9/"};
   const result = spawnSync(process.execPath, [script,"--live"], {encoding:"utf8",env,timeout:10000});
   assert.equal(result.status, 0, result.stderr);
   const output=JSON.parse(result.stdout);
@@ -162,4 +173,101 @@ rl.on('line', line=>{
   const unknown=JSON.parse(failed.stdout);
   assert.equal(unknown.codex_identities.second.state,"unknown");
   assert.equal(unknown.recommended_codex_identity,null);
+});
+
+test("live Claude usage outranks the statusline snapshot, and a failed read is unknown", async () => {
+  const home = mkdtempSync(join(tmpdir(), "pair-claude-live-"));
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  const now = Date.now() / 1000;
+  // A fresh snapshot of a cool pool: alone it would read available.
+  writeFileSync(join(home, ".claude", "usage-state.json"), JSON.stringify({
+    written_at: now,
+    rate_limits: { seven_day: { used_percentage: 10, resets_at: now + 100 * 3600 } },
+  }));
+  writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({
+    claudeAiOauth: { accessToken: "fixture-token" },
+  }));
+  let status = 200;
+  const seen = [];
+  const server = createServer((request, response) => {
+    seen.push(request.headers.authorization);
+    response.writeHead(status, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      five_hour: { utilization: 31, resets_at: new Date((now + 2 * 3600) * 1000).toISOString() },
+      seven_day: { utilization: 64, resets_at: new Date((now + 134 * 3600) * 1000).toISOString() },
+    }));
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const run = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script, "--live"], { env: {
+      ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1",
+      CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/`,
+    } });
+    let out = "";
+    child.stdout.on("data", (chunk) => { out += chunk; });
+    child.on("error", reject);
+    child.on("close", (code) => (code === 0 ? resolve(JSON.parse(out)) : reject(new Error(`exit ${code}`))));
+  });
+  try {
+    const fresh = await run();
+    assert.equal(seen[0], "Bearer fixture-token");
+    assert.equal(fresh.claude_source, "oauth/usage");
+    assert.equal(fresh.claude.used_percent, 64);
+    assert.equal(fresh.claude.short_window.used_percent, 31);
+    // 64% after 34 of 168 hours burns far faster than the rest can fund.
+    assert.equal(fresh.states.claude, "protected");
+    status = 401;
+    const failed = await run();
+    assert.equal(failed.claude_source, "statusline");
+    assert.match(failed.claude_error, /401/u);
+    assert.equal(failed.states.claude, "unknown");
+  } finally {
+    server.close();
+  }
+});
+
+test("Codex homes sharing one sessions folder prove no account without --live", () => {
+  const taskHome = mkdtempSync(join(tmpdir(), "pair-shared-sessions-"));
+  const sessions = join(taskHome, ".codex", "sessions");
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(join(sessions, "quota.jsonl"), JSON.stringify({
+    timestamp: new Date().toISOString(),
+    payload: { rate_limits: { limit_id: "codex", primary: {
+      used_percent: 20, window_minutes: 10080, resets_at: Date.now() / 1000 + 72 * 3600,
+    } } },
+  }) + "\n");
+  mkdirSync(join(taskHome, ".codex-profiles", "second"), { recursive: true });
+  symlinkSync(sessions, join(taskHome, ".codex-profiles", "second", "sessions"));
+  const result = spawnSync(process.execPath, [script, "--offline"], {
+    encoding: "utf8", env: { ...process.env, HOME: taskHome, USAGE_STATE_SKIP_CURSOR: "1" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  for (const name of ["default", "second"]) {
+    assert.equal(output.codex_identities[name].pool, null);
+    assert.equal(output.codex_identities[name].state, "unknown");
+  }
+  assert.equal(output.recommended_codex_identity, null);
+});
+
+test("reads are live by default, and a pool that empties early raises an alert", () => {
+  const home = mkdtempSync(join(tmpdir(), "pair-usage-default-live-"));
+  const now = Date.now() / 1000;
+  // 64% after 34 of 168 hours: empty in under a day, with five and a half left.
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  writeFileSync(join(home, ".claude", "usage-state.json"), JSON.stringify({
+    written_at: now, rate_limits: { seven_day: { used_percentage: 64, resets_at: now + 134 * 3600 } },
+  }));
+  const env = { ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1", CODEX_BIN: join(home, "no-codex"),
+    CLAUDE_USAGE_URL: "http://127.0.0.1:9/" };
+  const byDefault = JSON.parse(spawnSync(process.execPath, [script], { encoding: "utf8", env, timeout: 10000 }).stdout);
+  // The default run tried the live read (and failed here), so the snapshot is
+  // not account proof: it keeps its protected state but raises no alert.
+  assert.match(byDefault.claude_error, /live quota unavailable/u);
+  assert.equal(byDefault.states.claude, "protected");
+  assert.deepEqual(byDefault.alerts, []);
+  const offline = JSON.parse(spawnSync(process.execPath, [script, "--offline"], { encoding: "utf8", env, timeout: 10000 }).stdout);
+  assert.equal(offline.claude_error, undefined);
+  assert.deepEqual(offline.alerts.map((alert) => alert.pool), ["claude"]);
+  assert.equal(offline.states.claude, "protected");
 });
