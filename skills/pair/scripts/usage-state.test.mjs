@@ -61,6 +61,37 @@ printf 'Usage • Ultra  Resets ${reset}\\nIncluded 19%% used\\n  Auto 5%% used\
   assert.equal(output.cursor.stale_minutes, 0);
 });
 
+test("states classifies every pool with one rule set", () => {
+  const home = mkdtempSync(join(tmpdir(), "pair-usage-states-"));
+  const now = Date.now() / 1000;
+  // 60% spent with 72 of 168 hours left burns faster than the rest can fund.
+  mkdirSync(join(home, ".claude"), { recursive: true });
+  writeFileSync(join(home, ".claude", "usage-state.json"), JSON.stringify({
+    written_at: now,
+    rate_limits: { seven_day: { used_percentage: 60, resets_at: now + 72 * 3600 } },
+  }));
+  const bin = join(home, "cursor-agent");
+  const next = new Date();
+  next.setUTCDate(next.getUTCDate() + 20);
+  const reset = next.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+  writeFileSync(bin, `#!/bin/sh
+printf 'Usage • Ultra  Resets ${reset}\\n  Auto 5%% used\\n  API 95%% used\\n'
+`);
+  chmodSync(bin, 0o755);
+  const result = spawnSync(process.execPath, [script], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: home, CURSOR_AGENT_BIN: bin },
+    timeout: 10000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout).states, {
+    claude: "protected",
+    codex: "unknown",
+    cursor_models: "available",
+    other_models: "unavailable",
+  });
+});
+
 test("Codex homes have separate usage and stale headroom is not recommended", () => {
   const taskHome = mkdtempSync(join(tmpdir(), "orchestrate-identities-"));
   const snapshot = (home, used, ageMinutes) => {

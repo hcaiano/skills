@@ -1035,7 +1035,6 @@ async function initSession(args) {
       completed_cycles: 0,
       no_progress_count: 0,
       delivery: emptyDelivery(),
-      workbench: { tab_id: null, server_pane: null, logs_pane: null },
       created_at: new Date().toISOString(),
     };
 

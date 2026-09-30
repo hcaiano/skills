@@ -23,29 +23,26 @@ headless session of the partner CLI.
 
 Look for an existing pair before proposing one: a session recorded for this
 Herdr tab, or a headless one in this repository (the backend reference names
-the exact command). Before a new work cycle, read the measured pool state as
-defined in [`references/models.md`](references/models.md). Resume an existing
-pair when its pool is available. When its pool is protected, state its use,
-pace, and reset, then ask whether to spend it or end the session and choose
-another partner. When its partner, model, or effort differs from what the user
-just asked for, say so and keep going — respawning discards the pair's whole
-history, and a model is changed by ending the pair, not by restarting its pane.
+the exact command). Before a new pair or work cycle, run the
+[pool check](references/models.md#pools) and follow its rule for each state.
+Resume an existing pair the check allows; for a live pair the check's
+fallback is ending it, which only the user can choose. When its partner,
+model, or effort differs from what the user just asked for, say so and keep
+going — respawning discards the pair's whole history, and a model is changed
+by ending the pair, not by restarting its pane.
 
 With no pair to resume, take every choice the user or an orchestrate unit has
 already made — partner, model, effort, identity, role — as final and do not
-ask for it again. Ask the user in plain chat text — no structured-question
-tool needed — only for a material choice that is still missing, and start
-nothing until they answer. Read pool
-state first and do not recommend a protected or unavailable pool. The user may
-explicitly choose a protected pool after you state its use, pace, and reset:
+ask for it again. Ask the user in plain chat text only for a material choice
+that is still missing, and start nothing until they answer:
 
 - **Partner**: a CLI allowed by the transport rule above. A Codex partner may
   also name an **identity**, the account it runs as; `default` is `~/.codex`
   and a named one is `~/.codex-profiles/<name>`.
 - **Model and effort**: `CLI default`, an exact model, or `latest:<family>`,
-  with effort supported by that model and backend. Read
-  [`references/models.md`](references/models.md) for family selection, live
-  catalog lookup, effort controls, and account capacity.
+  with effort supported by that model and backend. The
+  [roster](references/models.md) names the seat, family, and effort for each
+  role.
 
 The **role** is the last choice, asked only when nothing has set it; it
 decides who holds the write leases by default:
@@ -56,9 +53,7 @@ decides who holds the write leases by default:
   review. Any individual `task` still redistributes leases.
 
 The backend records partner, model, effort, identity, and role in the session,
-so a resumed pair keeps them without asking again. The headless backend also
-records the exact model the request resolved to; a session keeps that model,
-and a different one means a new pair.
+so a resumed pair keeps them without asking again.
 
 ## Choose the backend
 

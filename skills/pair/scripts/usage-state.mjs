@@ -14,6 +14,11 @@
 //   days_to_empty    (100 - used) / burn_per_day; compare against days_left
 //   short_window     the pool's burst limit, when it publishes one
 //   stale_minutes    age of the snapshot; a stale pool reads cooler than it is
+// `states` classifies claude, codex, cursor_models, and other_models with
+// poolState below: no reading is unknown; >=90% of the window or the burst
+// window is unavailable; pace > 1 is protected; a snapshot older than 15
+// minutes is unknown. The first two outrank staleness, so a stale reading can
+// only be as good as its worst proven state.
 // Claude source: ~/.claude/usage-state.json (written by the user's statusline).
 // Codex source: per-home session snapshots; --live adds read-only account RPC.
 // Cursor source: the logged-in CLI's native /usage command. In its current UI,
@@ -290,5 +295,16 @@ eligible.sort(([, a], [, b]) => (a.pool.pace ?? 1) - (b.pool.pace ?? 1) || a.poo
 const codex = codexIdentities.default?.pool ?? null;
 
 const cursor = await readCursorUsage();
+// One state per pool, so a caller acts on `states` instead of re-deriving the
+// thresholds. Codex takes the default identity's state, which already keeps a
+// failed live read from reporting a snapshot as current headroom. Cursor's
+// monthly pools share the snapshot age of the one /usage read.
+const cursorPool = (pool) => (pool ? { ...pool, stale_minutes: cursor.stale_minutes } : null);
+const states = {
+  claude: poolState(claude),
+  codex: codexIdentities.default?.state ?? poolState(null),
+  cursor_models: poolState(cursorPool(cursor?.cursor_models)),
+  other_models: poolState(cursorPool(cursor?.other_models)),
+};
 console.log(JSON.stringify({ claude, codex, cursor, codex_identities: codexIdentities,
-  recommended_codex_identity: eligible[0]?.[0] ?? null }));
+  recommended_codex_identity: eligible[0]?.[0] ?? null, states }));

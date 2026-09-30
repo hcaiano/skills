@@ -66,8 +66,7 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    an OpenCode Herdr spawn therefore refuses `--effort`. `--autonomy full`
    launches the partner past its permission prompts (each CLI through its own
    flag) — required for an unattended run, since a pane has no per-turn
-   permission switch. The spawn retries a still-starting shell and closes its
-   own split pane on failure. Stop on spawn failure.
+   permission switch. Stop on spawn failure.
 
    `--partner-repo-root` keeps the caller pinned to `CALLER_ID` while it starts
    the executor in a different unit worktree. Omit it for an ordinary pair in
@@ -85,7 +84,6 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    the CLI reaches its agent session. Startup control is separate from partner
    traffic.
 
-   One lead pane may hold several pairs at once — one session per partner pane.
    Spawn once per partner and record the pane id it prints; every later command
    names the pair it means.
 2. Run `node "$PAIR_SCRIPT" init "${CALLER_ID[@]}"
@@ -102,13 +100,10 @@ pane — and returns `CALLER_PROOF` plus the pinned `CALLER_ID`, including
    `executor` partner holds the write leases because the protocol says so
    (spawn with `--autonomy full` when the partner must also clear its own
    CLI's permission prompts unattended).
-   A session written before the universal pair schema is refused with the exact
-   `end … --stale true` command that clears it; there is no migration.
    Record its exact `sid` as `PAIR_SID`. Every command binds to it, which is
    both what keeps a lead's concurrent pairs apart and what stops a wrong
-   same-kind pane borrowing another session. `verify`, `reconcile`, `reset`,
-   `nudge`, and `watch` take `--sid` too, and require it once the tab holds
-   more than one pair.
+   same-kind pane borrowing another session. Pass `--sid "$PAIR_SID"` on
+   every command; it is required once the tab holds more than one pair.
 3. Send the first `task` through the helper, splitting scopes and write leases
    as `SKILL.md` describes.
 
@@ -132,8 +127,8 @@ the rule to reply through the sender. This line is the recovery anchor when
 model context has been compacted.
 
 The sender gives a busy partner a short grace period, then delivers anyway.
-Measured on Herdr 0.8.0, Claude accepts a mid-turn prompt atomically, while a
-multi-line prompt to Codex still needs Enter. Cursor, Grok, and OpenCode are
+Claude accepts a mid-turn prompt atomically, while a multi-line prompt to
+Codex still needs Enter. Cursor, Grok, and OpenCode are
 unmeasured here and take the conservative Codex-shaped path: one prompt, the
 Enter protection, and proof only from the `receive` ACK. When the partner is still working,
 the helper sends exactly one `agent prompt` with the header,
@@ -195,8 +190,21 @@ For inbound `[agent ...]` traffic:
 
 Done when `receive` records the sequence and the reply has a recorded receipt.
 On failure, give the user a header-free transport report. After compaction,
-reconstruct pane IDs, `sid`, task status, and close state from the control line
-and verified session.
+run `node "$PAIR_SCRIPT" verify "${CALLER_ID[@]}" --sid "$PAIR_SID"`: it
+prints the verified participants and session after applying recorded ACKs.
+Reconstruct pane IDs, `sid`, task status, and close state from that output and
+the control line.
+
+## Nudge a stalled partner
+
+When an idle partner still owes a `receive` or its half of an open work
+cycle, `node "$PAIR_SCRIPT" nudge "${CALLER_ID[@]}" --sid "$PAIR_SID"` sends
+it one out-of-band reminder; it does nothing while the partner works or owes
+nothing. For an unattended stretch, run
+`node "$PAIR_SCRIPT" watch "${CALLER_ID[@]}" --sid "$PAIR_SID"` in a
+background terminal, never in this pane (guardrail 4): every minute it
+nudges an obligation that has survived two checks, at most three times each
+(`--interval-ms`, `--max-nudges`), and stops when the session ends.
 
 ## Reset and end
 
@@ -234,8 +242,3 @@ recorded binding is stale, or its
 foreground agent process/repository no longer matches. Closing the Herdr tab
 ends the panes naturally; stale state is never borrowed by another pair or
 tab. Ending one pair leaves the tab's other pairs running.
-
-## Workbench tab
-
-Read [`workbench-tab.md`](workbench-tab.md) only when a separate tab is needed
-for a long-running shared process.

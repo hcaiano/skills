@@ -57,8 +57,10 @@ carries both, and the stale one still answers under the retired workflow.
 - `orchestrate` — run an explicit task list through isolated worktrees,
   headless pairs, pull requests, verified merges, and cleanup in any harness.
 - `pair` — keep two agents collaborating persistently, any pair of `claude`,
-  `codex`, `cursor`, and `grok`: a visible Herdr tab inside Herdr, persistent
-  headless CLI sessions anywhere else.
+  `codex`, `cursor`, `grok`, and `opencode`: persistent headless CLI sessions,
+  or a visible Herdr tab on request. Its model roster
+  (`references/models.md`) is the one place that names seats, efforts, and
+  pool rules for every skill here.
 - `ask-peer` — request one focused opinion, review, or bounded work pass from
   the opposite model without starting a persistent pair.
 
@@ -130,8 +132,9 @@ install `pair` as well.
   it the Claude pool reads `unknown`), `~/.codex-profiles/<name>` (a second
   Codex home for `--identity`), and Claude Code's `oracle` agent (the Fable
   planning seat for a Claude lead).
-- `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
-  through Claude; Claude Code consults Codex.
+- `ask-peer` requires authenticated Claude and Codex CLIs, plus `jq` for the
+  Codex path. Codex consults Claude (Fable only on request); Claude Code
+  consults Codex. Efforts come from `pair`'s roster.
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `pair` with a `codex` partner anywhere else.
 - `test-audit` campaigns ship each subsystem PR through `ship-it` (and so
