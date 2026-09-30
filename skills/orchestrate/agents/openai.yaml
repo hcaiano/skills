@@ -1,0 +1,7 @@
+interface:
+  display_name: "Orchestrate"
+  short_description: "Deliver a batch of tasks through worktrees, pairs, and PRs"
+  default_prompt: "Use $orchestrate to plan these tasks jointly and deliver each through its own worktree, executor pair, and reviewed PR."
+
+policy:
+  allow_implicit_invocation: false

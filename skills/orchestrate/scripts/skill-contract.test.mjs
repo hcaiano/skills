@@ -1,145 +1,157 @@
+// Structural checks on the skill's documents: links resolve, every command the
+// documents give exists in the script that runs it, and the text the scripts
+// parse keeps its shape. Wording is the documents' own business.
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, relative, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
-const skill = readFileSync(join(here, "../SKILL.md"), "utf8");
-const staffing = readFileSync(join(here, "../references/staffing.md"), "utf8");
-const delivery = readFileSync(join(here, "../references/delivery.md"), "utf8");
-const unit = readFileSync(join(here, "unit.mjs"), "utf8");
+const skillDir = resolve(here, "..");
+const skillsDir = resolve(skillDir, "..");
+const read = (path) => readFileSync(path, "utf8");
+const docPaths = [
+  join(skillDir, "SKILL.md"),
+  ...readdirSync(join(skillDir, "references"))
+    .filter((name) => name.endsWith(".md"))
+    .map((name) => join(skillDir, "references", name)),
+];
+const docs = new Map(docPaths.map((path) => [path, read(path)]));
+const skill = docs.get(join(skillDir, "SKILL.md"));
+const delivery = docs.get(join(skillDir, "references", "delivery.md"));
+const unit = read(join(here, "unit.mjs"));
+const headlessPair = read(join(skillsDir, "pair", "scripts", "pair-headless.mjs"));
+const name = (path) => relative(skillDir, path);
 
-test("orchestrate is manual-only and supports recorded pair backends", () => {
-  assert.match(skill, /^name: orchestrate$/mu);
-  assert.match(skill, /^disable-model-invocation: true$/mu);
-  assert.match(skill, /--backend headless\|herdr/u);
-  assert.match(unit, /HERDR_ENV/u);
-  assert.match(unit, /backend: "herdr"/u);
-});
+const withoutCode = (markdown) => markdown.replace(/```[\s\S]*?```/gu, "");
+// GitHub's heading anchor: lowercase, punctuation dropped, spaces to hyphens.
+const slug = (heading) =>
+  heading.trim().toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, "").replace(/ /gu, "-");
+const anchors = (markdown) =>
+  new Set([...withoutCode(markdown).matchAll(/^#{1,6}\s+(.+)$/gmu)].map(([, heading]) => slug(heading)));
+const links = (path) =>
+  [...withoutCode(docs.get(path)).matchAll(/\]\(([^)\s]+)\)/gu)]
+    .map(([, target]) => target)
+    .filter((target) => !/^[a-z]+:/u.test(target));
 
-test("one durable record owns the complete unit atom", () => {
-  assert.match(skill, /one\s+worktree, branch, pair backend, and pull request/u);
-  assert.match(skill, /<git-common-dir>\/orchestrate\/units\/<unit-id>\.json/u);
-  assert.match(unit, /git-common-dir/u);
-  assert.match(unit, /lifecycle: "creating"/u);
-  assert.match(unit, /partner arena must differ from the orchestrator harness/u);
-  assert.match(skill, /orchestrator session must run rooted in `REPO`/u);
-  assert.match(skill, /caller\s+pane proof binds the live lead process to that repository/u);
-  assert.match(skill, /manifest-owned task file is authoritative/u);
-  assert.match(skill, /resumes `creating`, `setting-up`,\s+`initializing-pair`, or `starting`/u);
-  assert.match(skill, /recoverable Cursor record that stores a separate effort/u);
-  assert.match(skill, /## Addendum — <UTC timestamp>/u);
-  assert.match(skill, /executor rereads the complete file[^]*again after every restaff/u);
-  assert.match(unit, /resumed_from/u);
-});
-
-test("unit creation protects the PR body handoff", () => {
-  assert.match(skill, /adds `\/PR_BODY\.md` once to the repository's Git\s+exclude file/u);
-  assert.match(unit, /"rev-parse", "--git-path", "info\/exclude"/u);
-  assert.match(unit, /const pattern = "\/PR_BODY\.md"/u);
-  assert.match(unit, /delivery_setup\.pr_body_exclude/u);
-});
-
-test("the unit helper exposes one tested lifecycle surface", () => {
-  for (const command of ["create", "list", "status", "restaff", "dismantle"]) {
-    assert.match(skill, new RegExp(`node "\\$UNIT" ${command}`, "u"));
-    assert.match(unit, new RegExp(`command === "${command}"`, "u"));
+// A documented command, with its `\` continuation lines joined and any
+// trailing inline-code backtick cut off.
+const commands = (prefix) => {
+  const found = [];
+  for (const [path, markdown] of docs) {
+    const lines = markdown.split("\n");
+    for (let index = 0; index < lines.length; index += 1) {
+      const start = lines[index].indexOf(prefix);
+      if (start === -1) continue;
+      let command = lines[index].slice(start);
+      while (command.endsWith("\\") && index + 1 < lines.length) {
+        index += 1;
+        command = `${command.slice(0, -1)} ${lines[index].trim()}`;
+      }
+      found.push({ path, command: command.split("`")[0] });
+    }
   }
-  assert.ok(existsSync(join(here, "unit.mjs")));
-  assert.ok(existsSync(join(here, "../../pair/scripts/usage-state.mjs")));
-  assert.equal(existsSync(join(here, "send.mjs")), false);
+  return found;
+};
+const flagsOf = (command) => [...command.matchAll(/(?:^|[\s[|])--([a-z][a-z-]*)/gu)].map(([, flag]) => flag);
+
+test("orchestrate is manual-only in every harness", () => {
+  const front = skill.match(/^---\n([\s\S]*?)\n---\n/u)?.[1];
+  assert.ok(front, "SKILL.md has no frontmatter");
+  assert.match(front, /^name: orchestrate$/mu);
+  assert.match(front, /^description: ".+"$/mu);
+  assert.match(front, /^disable-model-invocation: true$/mu);
+  const openai = read(join(skillDir, "agents", "openai.yaml"));
+  assert.match(openai, /^policy:\n {2}allow_implicit_invocation: false$/mu);
 });
 
-test("pair is the only unit transport", () => {
-  assert.match(skill, /pair receipts and transcripts are the only transport/iu);
-  assert.match(skill, /pair-headless\.mjs/u);
-  assert.match(skill, /reconciles its sequence ACKs/u);
-  assert.match(skill, /--background/u);
-  assert.match(skill, /--timeout-min 1/u);
-  assert.doesNotMatch(skill, /report_pane|pane tokens|orphan adoption/u);
-});
-
-test("staffing keeps family, account and evidence separate", () => {
-  assert.match(staffing, /models\.md/u);
-  assert.match(staffing, /Match model intelligence to task difficulty/u);
-  assert.match(staffing, /Joint planning uses Fable and Astra/u);
-  assert.match(staffing, /Grok is eligible for\s+bounded simple tasks/u);
-  assert.match(staffing, /both monthly Cursor pools/u);
-  assert.match(staffing, /codex_identities/u);
-  assert.match(staffing, /recommended_codex_identity/u);
-  assert.match(staffing, /null reading is unknown/u);
-  assert.match(staffing, /Herdr does not yet support named account routing/u);
-  assert.match(staffing, /existing one/u);
-  assert.doesNotMatch(staffing, /claude-fable-5|gpt-5\.6-sol/u);
-});
-
-test("intake and joint planning preserve a bounded human acceptance gate", () => {
-  assert.match(skill, /node "\$UNIT" intake/u);
-  assert.match(skill, /--max-active 2 --max-held 2/u);
-  assert.match(skill, /Fable and Astra both participate/u);
-  assert.match(skill, /independent proposals before reading/u);
-  assert.match(skill, /requirements are current/u);
-  assert.match(skill, /--issue <number>/u);
-  assert.match(skill, /--identity <codex-account-name>/u);
-  assert.match(skill, /not automatic wakeups/u);
-  assert.match(delivery, /Linux localhost URL alone is not that proof/u);
-});
-
-test("restaff preserves evidence and normal feedback stays bounded", () => {
-  assert.match(skill, /checkpoints the HEAD, worktree status and\s+diff, and newest receipt or Herdr ACK state/u);
-  assert.match(skill, /Normal scope\s+feedback and one bounded correction stay on the current pair/u);
-  assert.match(skill, /matching retry resumes\s+`restaffing` or `restaff-failed`/u);
-  assert.match(unit, /staffing\.history\.push/u);
-  assert.match(unit, /pending_staffing/u);
-});
-
-test("delivery keeps the exact-head chain of custody", () => {
-  assert.match(delivery, /scope-approved SHA/u);
-  assert.match(delivery, /`Final validated HEAD` equals the exact PR head/u);
-  for (const field of ["Gate:", "Risk:", "Regrade:", "Focused proof:"]) {
-    assert.match(delivery, new RegExp(field, "u"));
+test("every relative link resolves, and every reference is linked", (t) => {
+  const linked = new Set();
+  for (const path of docPaths) {
+    for (const target of links(path)) {
+      const [file, anchor] = target.split("#");
+      const resolved = file ? resolve(dirname(path), file) : path;
+      assert.ok(existsSync(resolved), `${name(path)} links to missing ${target}`);
+      linked.add(resolved);
+      if (!anchor) continue;
+      const found = anchors(read(resolved)).has(anchor);
+      if (resolved.startsWith(`${skillDir}/`)) {
+        assert.ok(found, `${name(path)} links to missing heading ${target}`);
+      } else if (!found) {
+        // A sibling skill owns its headings and may be mid-edit; report the
+        // stale anchor without failing this skill's suite.
+        t.diagnostic(`${name(path)} links to ${target}, whose heading is not there yet`);
+      }
+    }
   }
-  assert.match(delivery, /reviews, issue comments, inline comments, and review\s+threads/u);
-  assert.match(delivery, /--match-head-commit <verified-head>/u);
-  assert.match(delivery, /before and\s+after screenshots/u);
-  assert.match(delivery, /merged, never rebased or force-pushed/u);
+  for (const path of docPaths.slice(1)) {
+    assert.ok(linked.has(path), `${name(path)} is not linked from any document`);
+  }
 });
 
-test("delivery owns review fan-out, Git mechanics, push auth, and literal holds", () => {
-  assert.match(delivery, /Use \*\*executor delivery\*\* by default/u);
-  assert.match(delivery, /Use \*\*orchestrator-owned Git mechanics\*\* only after the executor proves/u);
-  assert.match(delivery, /create a checkpoint commit without editing them/u);
-  assert.match(delivery, /CLI and model family must differ from the\s+executor's/u);
-  assert.match(delivery, /same single correction round/u);
-  assert.match(delivery, /Prefer an existing\s+SSH push URL or SSH remote/u);
-  assert.match(delivery, /gh auth refresh -s workflow/u);
-  // Every unit PR waits for Henrique's own review before merge (decision
-  // 2026-08-22) — a recorded `auto` policy no longer bypasses him.
-  assert.match(delivery, /Every unit PR is held for Henrique's own review before merge/u);
-  assert.match(delivery, /base is an epic branch/u);
-  assert.match(delivery, /a recorded `auto` merge policy waits for the same review/u);
-  assert.match(delivery, /never merges a\s+PR he has not reviewed, including with admin rights/u);
-  // The other half of the guarantee: delegation downward is not authority.
-  // The executor's ship-it run stops at merge-ready, and the ladder still
-  // runs the full delivery before the hold.
-  assert.match(delivery, /Ship-it delegation carries no merge authority[\s\S]*stops at merge-ready/u);
-  assert.match(delivery, /The hold\s+comes after all of it, never instead of it/u);
-  assert.match(delivery, /His feedback on the held PR returns to the executor\s+as a correction round/u);
-  assert.match(skill, /held for Henrique's review — or, only after his approval of that exact\s+head, merged/u);
-  // --merge-policy is removed: nothing on the create surface may reintroduce a
-  // pre-authorized merge.
-  assert.doesNotMatch(skill, /--merge-policy/u);
-  assert.match(unit, /--merge-policy is removed/u);
-  assert.match(delivery, /Dependent units wait when\s+this rule serializes them/u);
-  // The delivery task budget: local CI alone can eat the old 60-minute default.
-  assert.match(delivery, /Size that send's\s+`--total-min` to the repository's full local-CI entrypoint/u);
+test("documented paths exist beside the skill", () => {
+  for (const [, path] of skill.matchAll(/"\$ORCHESTRATE_DIR\/([^"]+)"/gu)) {
+    assert.ok(existsSync(resolve(skillDir, path)), `SKILL.md names missing $ORCHESTRATE_DIR/${path}`);
+  }
+  for (const [path, markdown] of docs) {
+    for (const [, script] of markdown.matchAll(/<pair-dir>\/([\w./-]+)/gu)) {
+      assert.ok(existsSync(join(skillsDir, "pair", script)), `${name(path)} names missing pair ${script}`);
+    }
+  }
 });
 
-test("cleanup proves merge and binds force to one exact unit", () => {
-  assert.match(skill, /Normal cleanup proves the unit PR is merged/u);
-  assert.match(skill, /--force <id>/u);
-  assert.match(unit, /--force must equal the exact unit id/u);
-  assert.match(unit, /has no proved merged PR/u);
-  assert.match(skill, /removes the manifest last/u);
+test("every documented unit command and flag exists in unit.mjs, and every command is documented", () => {
+  const dispatched = new Set([...unit.matchAll(/command === "([a-z-]+)"\) emit/gu)].map(([, command]) => command));
+  assert.ok(dispatched.size > 0, "unit.mjs dispatch not found");
+  const documented = new Set();
+  for (const { path, command } of commands('node "$UNIT" ')) {
+    const subcommand = command.match(/^node "\$UNIT" ([a-z-]+)/u)?.[1];
+    assert.ok(dispatched.has(subcommand), `${name(path)} documents unknown unit command: ${command}`);
+    documented.add(subcommand);
+    for (const flag of flagsOf(command)) {
+      assert.match(
+        unit,
+        new RegExp(`options(?:\\.${flag}\\b|\\["${flag}"\\])|"${flag}"`, "u"),
+        `${name(path)} passes --${flag}, which unit.mjs never reads`,
+      );
+    }
+  }
+  for (const command of dispatched) {
+    assert.ok(documented.has(command), `unit.mjs ${command} is documented nowhere`);
+  }
+});
+
+test("every documented pair-headless command and flag exists in its usage", () => {
+  const usage = headlessPair.match(/usage: pair-headless\.mjs <([a-z|]+)>([^`]*)`/u);
+  assert.ok(usage, "pair-headless.mjs usage line not found");
+  const subcommands = new Set(usage[1].split("|"));
+  const found = commands('node "$HEADLESS_PAIR" ');
+  assert.ok(found.length > 0, "no pair-headless command is documented");
+  for (const { path, command } of found) {
+    const subcommand = command.match(/^node "\$HEADLESS_PAIR" ([a-z-]+)/u)?.[1];
+    assert.ok(subcommands.has(subcommand), `${name(path)} documents unknown pair command: ${command}`);
+    for (const flag of flagsOf(command)) {
+      assert.match(usage[2], new RegExp(`--${flag}\\b`, "u"), `${name(path)} passes --${flag}, absent from pair's usage`);
+    }
+  }
+});
+
+test("the receipt fields delivery verifies exist in the receipts that ship-it and review-it write", () => {
+  const start = delivery.indexOf("## Verify live evidence");
+  assert.notEqual(start, -1, "delivery.md has no live-evidence section");
+  const section = delivery.slice(start, delivery.indexOf("\n## ", start + 1)).replace(/\s+/gu, " ");
+  const fields = [...section.matchAll(/`([A-Z][A-Za-z ]*?(?: HEAD|:))`/gu)].map(([, field]) => field.replace(/:$/u, ""));
+  assert.ok(fields.length >= 4, "delivery.md names too few receipt fields");
+  const receipts = ["ship-it", "review-it"].map((skillName) => read(join(skillsDir, skillName, "SKILL.md"))).join("\n");
+  for (const field of fields) {
+    assert.ok(receipts.includes(`- ${field}:`), `delivery checks ${field}, which no receipt writes`);
+  }
+  assert.ok(receipts.includes("## Delivery gate") && delivery.includes("## Delivery gate"));
+});
+
+test("the documented addendum shape is the one create parses", () => {
+  const marker = unit.match(/\$\{body\}\\n(## Addendum — )/u)?.[1];
+  assert.ok(marker, "unit.mjs no longer parses a marked addendum");
+  assert.ok(skill.includes(`\n${marker}<UTC timestamp>\n`), "SKILL.md documents another addendum shape");
 });

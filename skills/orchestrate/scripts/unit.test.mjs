@@ -267,7 +267,6 @@ execFileSync("chmod", ["+x", join(bin, "gh")]);
 
 const baseEnv = {
   ...process.env,
-  HERDR_ENV: "0",
   PATH: `${bin}:${process.env.PATH}`,
   ORCHESTRATE_PAIR_SCRIPT: pairScript,
   ORCHESTRATE_HERDR_PAIR_SCRIPT: herdrPairScript,
@@ -329,6 +328,7 @@ const createArgs = (id, partner = "codex", setup = "true") => [
 ];
 const herdrCreateArgs = (id, partner = "grok") => [
   ...createArgs(id, partner),
+  "--backend", "herdr",
   "--pane", "wH:p1",
   "--workspace", "wH",
   "--tab-id", "wH:t1",
@@ -455,7 +455,7 @@ test("named Codex identity crosses create, status and restaff without losing the
   const duplicate = invoke([...createArgs("same-issue"), "--issue", "123"]);
   assert.notEqual(duplicate.status, 0);
   assert.match(duplicate.output.reason, /conflicts with recorded unit/u);
-  const herdr = invoke([...herdrCreateArgs("identity-herdr"), "--identity", "second", "--backend", "herdr"]);
+  const herdr = invoke([...herdrCreateArgs("identity-herdr"), "--identity", "second"]);
   assert.equal(herdr.status, 2);
   assert.match(herdr.output.reason, /named identities currently require/u);
 });
@@ -506,7 +506,7 @@ test("Herdr backend is recorded and routes the unit through pinned pair commands
   writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
   writeFileSync(herdrLogPath, "");
   const id = "herdr-route";
-  const created = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+  const created = invoke(herdrCreateArgs(id));
   assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
   assert.equal(created.output.unit.backend, "herdr");
   assert.equal(created.output.unit.caller.pane, "wH:p1");
@@ -518,14 +518,11 @@ test("Herdr backend is recorded and routes the unit through pinned pair commands
   assert.equal(created.output.unit.pair.delivery_receipt, "acknowledged");
   assert.match(created.output.unit.pair.partner_pane, /^wH:p/u);
 
-  const observed = invoke(
-    ["status", "--repo", repository, "--unit", id],
-    { HERDR_ENV: "1" },
-  );
+  const observed = invoke(["status", "--repo", repository, "--unit", id]);
   assert.equal(observed.status, 0, observed.stderr || JSON.stringify(observed.output));
   assert.equal(observed.output.unit.observed.pair.in_flight, null);
 
-  const restaffed = invoke(restaffArgs(id, "codex"), { HERDR_ENV: "1" });
+  const restaffed = invoke(restaffArgs(id, "codex"));
   assert.equal(restaffed.status, 0, restaffed.stderr || JSON.stringify(restaffed.output));
   assert.equal(restaffed.output.unit.backend, "herdr");
   assert.equal(restaffed.output.unit.staffing.current.partner, "codex");
@@ -534,10 +531,7 @@ test("Herdr backend is recorded and routes the unit through pinned pair commands
     "herdr",
   );
 
-  const dismantled = invoke(
-    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
-    { HERDR_ENV: "1" },
-  );
+  const dismantled = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
   assert.equal(dismantled.status, 0, dismantled.stderr || JSON.stringify(dismantled.output));
   const pairCleanup = dismantled.output.done.find((entry) => entry.step === "pair");
   assert.equal(pairCleanup.detail.backend, "herdr");
@@ -623,23 +617,18 @@ test("forced dismantle skips the remote branch when origin is absent", () => {
   assert.equal(remoteBranch.detail.skipped, "origin remote is not configured");
 });
 
-test("an explicit backend overrides Herdr auto-detection", () => {
-  const id = "headless-override";
-  const args = [...createArgs(id, "grok"), "--backend", "headless"];
-  const created = invoke(args, { HERDR_ENV: "1" });
+test("a new unit defaults to headless even inside Herdr", () => {
+  const id = "headless-default";
+  const created = invoke(createArgs(id, "grok"), { HERDR_ENV: "1" });
   assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
   assert.equal(created.output.unit.backend, "headless");
-  const cleaned = invoke(
-    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
-    { HERDR_ENV: "1" },
-  );
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
 });
 
 test("a Herdr spawn failure rolls back the unit journal", () => {
   const id = "herdr-spawn-fail";
   const failed = invoke(herdrCreateArgs(id), {
-    HERDR_ENV: "1",
     FAKE_HERDR_PAIR_FAIL_SPAWN: "1",
   });
   assert.notEqual(failed.status, 0);
@@ -658,7 +647,6 @@ test("a non-acknowledged Herdr send stays starting with its reservation journale
   writeFileSync(herdrLogPath, "");
   const id = "herdr-lost-send";
   const failed = invoke(herdrCreateArgs(id), {
-    HERDR_ENV: "1",
     FAKE_HERDR_PAIR_RECEIPT: "lost-partner-idle-inspect-that-pane-then-reconcile",
   });
   assert.notEqual(failed.status, 0);
@@ -675,14 +663,11 @@ test("a non-acknowledged Herdr send stays starting with its reservation journale
   const session = Object.values(state.sessions)[0];
   session.delivery.pending.claude = null;
   writeFileSync(herdrStatePath, JSON.stringify(state));
-  const resumed = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+  const resumed = invoke(herdrCreateArgs(id));
   assert.equal(resumed.status, 0, resumed.stderr || JSON.stringify(resumed.output));
   assert.equal(resumed.output.unit.lifecycle, "working");
   assert.equal(resumed.output.unit.pair.latest_seq, 2);
-  const cleaned = invoke(
-    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
-    { HERDR_ENV: "1" },
-  );
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
 });
 
@@ -691,7 +676,6 @@ test("a Herdr spawn followed by init failure keeps the pane for forced dismantle
   writeFileSync(herdrLogPath, "");
   const id = "herdr-init-fail";
   const failed = invoke(herdrCreateArgs(id), {
-    HERDR_ENV: "1",
     FAKE_HERDR_PAIR_FAIL_INIT: "1",
   });
   assert.notEqual(failed.status, 0);
@@ -700,10 +684,7 @@ test("a Herdr spawn followed by init failure keeps the pane for forced dismantle
   assert.equal(record.resources.pair, false);
   assert.match(record.pair.partner_pane, /^wH:p/u);
 
-  const cleaned = invoke(
-    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
-    { HERDR_ENV: "1" },
-  );
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
   const pairCleanup = cleaned.output.done.find((entry) => entry.step === "pair");
   assert.equal(pairCleanup.detail.session, "not-initialized");
@@ -715,26 +696,22 @@ test("restaff and forced dismantle recover stale Herdr sessions", () => {
     writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
     writeFileSync(herdrLogPath, "");
     const id = `herdr-stale-${action}`;
-    const created = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+    const created = invoke(herdrCreateArgs(id));
     assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
     const deadPane = created.output.unit.pair.partner_pane;
     if (action === "restaff") {
       const restaffed = invoke(restaffArgs(id, "codex"), {
-        HERDR_ENV: "1",
         FAKE_HERDR_PAIR_DEAD_PANE: deadPane,
       });
       assert.equal(restaffed.status, 0, restaffed.stderr || JSON.stringify(restaffed.output));
       assert.equal(restaffed.output.unit.staffing.current.partner, "codex");
       assert.equal(restaffed.output.unit.transport_recovery.at(-1).status, "ended-stale");
-      const cleaned = invoke(
-        ["dismantle", "--repo", repository, "--unit", id, "--force", id],
-        { HERDR_ENV: "1" },
-      );
+      const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
       assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
     } else {
       const cleaned = invoke(
         ["dismantle", "--repo", repository, "--unit", id, "--force", id],
-        { HERDR_ENV: "1", FAKE_HERDR_PAIR_DEAD_PANE: deadPane },
+        { FAKE_HERDR_PAIR_DEAD_PANE: deadPane },
       );
       assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
       const pairCleanup = cleaned.output.done.find((entry) => entry.step === "pair");
@@ -752,22 +729,19 @@ test("repin journals a fresh Herdr caller identity", () => {
   writeFileSync(herdrStatePath, JSON.stringify({ counter: 0, panes: {}, sessions: {} }));
   writeFileSync(herdrLogPath, "");
   const id = "herdr-repin";
-  const created = invoke(herdrCreateArgs(id), { HERDR_ENV: "1" });
+  const created = invoke(herdrCreateArgs(id));
   assert.equal(created.status, 0, created.stderr || JSON.stringify(created.output));
   const repinned = invoke([
     "repin", "--repo", repository, "--unit", id,
     "--pane", "wH:p1", "--workspace", "wH", "--tab-id", "wH:t1",
     "--as", "claude", "--terminal-id", "term-herdr-lead-2",
     "--repo-root", repository,
-  ], { HERDR_ENV: "1" });
+  ]);
   assert.equal(repinned.status, 0, repinned.stderr || JSON.stringify(repinned.output));
   assert.equal(repinned.output.unit.caller.terminal_id, "term-herdr-lead-2");
   assert.equal(repinned.output.unit.caller_history.at(-1).status, "repinned");
   assert.equal(repinned.output.transport.changed, true);
-  const cleaned = invoke(
-    ["dismantle", "--repo", repository, "--unit", id, "--force", id],
-    { HERDR_ENV: "1" },
-  );
+  const cleaned = invoke(["dismantle", "--repo", repository, "--unit", id, "--force", id]);
   assert.equal(cleaned.status, 0, cleaned.stderr || JSON.stringify(cleaned.output));
 });
 

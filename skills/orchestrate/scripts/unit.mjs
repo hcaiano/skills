@@ -147,8 +147,11 @@ const unitId = (value) => {
   }
   return value;
 };
+// Headless is the default everywhere, inside Herdr too: it is the only backend
+// that resolves `latest:<family>` seats and named Codex identities. Herdr is
+// an explicit opt-in for visible executor panes.
 const selectedBackend = (options) => {
-  const backend = options.backend ?? (process.env.HERDR_ENV === "1" ? "herdr" : "headless");
+  const backend = options.backend ?? "headless";
   if (!pairBackends.has(backend)) fail("--backend must be headless or herdr", null, 2);
   return backend;
 };

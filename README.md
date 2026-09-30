@@ -120,11 +120,16 @@ install `pair` as well.
 
 ## Dependencies
 
-- `orchestrate` requires `pair`, `git`, and `gh`. It records a Herdr
-  backend inside Herdr and a headless backend outside Herdr; creation can
-  override this choice. The Herdr backend requires the `herdr` CLI and the
-  separate upstream `herdr` skill. The headless backend needs only the chosen
-  partner CLI (`claude`, `codex`, `cursor-agent`, `grok`, or `opencode`).
+- `orchestrate` requires `pair`, `git`, and `gh`. Units default to the
+  headless backend, which needs only the chosen partner CLI (`claude`,
+  `codex`, `cursor-agent`, `grok`, or `opencode`); `--backend herdr` also
+  requires the `herdr` CLI and the separate upstream `herdr` skill. Optional
+  machine-local pieces, each degrading gracefully when missing:
+  `~/.local/bin/agent-run` (the heavy-work slot; without it validation runs
+  unqueued), `~/.claude/usage-state.json` written by the statusline (without
+  it the Claude pool reads `unknown`), `~/.codex-profiles/<name>` (a second
+  Codex home for `--identity`), and Claude Code's `oracle` agent (the Fable
+  planning seat for a Claude lead).
 - `ask-peer` requires authenticated Claude and Codex CLIs. Codex consults Fable
   through Claude; Claude Code consults Codex.
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
