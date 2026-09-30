@@ -29,8 +29,12 @@ one. Ask Fable only when the user asks for Fable.
 
 ## Shared contract
 
-- Leave the model unset so the peer's own config picks it. Set effort on every
-  request from the roster seat for the ask: the
+- Staff the roster seat for the ask, never a reserved family by accident: the
+  peer's configured default can be Fable or Astra. Claude takes the seat's
+  family as `--model opus`; Codex takes exact IDs, so leave `-m` unset only
+  when the `model` in `~/.codex/config.toml` is a Sol model, and otherwise ask
+  the user which model to use. A model the user names wins. Set effort on
+  every request from the same seat: the
   [Analysis seat](../pair/references/models.md#analysis-seat) for hard analysis
   or a second opinion, the
   [Review seat](../pair/references/models.md#review-seat) for a review.

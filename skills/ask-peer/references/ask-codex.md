@@ -1,7 +1,8 @@
 # Ask Codex from Claude
 
-Drive the local Codex CLI directly. Leave `-m` unset: Codex's config owns the
-model. Set `EFFORT` from the seat in `SKILL.md` (`high` for a review). Check
+Drive the local Codex CLI directly. Leave `-m` unset when Codex's configured
+model is a Sol model (see `SKILL.md`); pass `-m <id>` for a model the user
+named. Set `EFFORT` from the seat in `SKILL.md` (`high` for a review). Check
 `codex exec --help` when flags drift.
 
 ## Read-only question or review

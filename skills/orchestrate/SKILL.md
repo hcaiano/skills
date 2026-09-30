@@ -89,15 +89,19 @@ the two seats by what it runs:
 | another Claude model | a Fable subagent (Claude Code's `oracle` agent), continued with `SendMessage` | `codex` pair |
 | Cursor, Grok, or OpenCode | `claude` pair | `codex` pair |
 
-Pair refuses a `claude` partner for a Claude lead, hence the subagent. The
-`claude` pair reads the source from its root at `$REPO`; the `codex` pair
-takes a scratch Git directory, because one directory holds one pair:
+Pair refuses a `claude` partner for a Claude lead, hence the subagent. Each
+planning pair gets its own detached worktree of the planning base: it reads
+the source there, and a fresh root never resumes a pair already rooted at
+`$REPO`, because one directory holds one pair. Create only the seats that are
+pairs:
 
 ```bash
-node "$HEADLESS_PAIR" init --repo "$REPO" --partner claude \
+PLAN_BASE=$(git -C "$REPO" rev-parse <planning-base>)
+FABLE_DIR=$(mktemp -d) && git -C "$REPO" worktree add -q --detach "$FABLE_DIR" "$PLAN_BASE"
+node "$HEADLESS_PAIR" init --repo "$FABLE_DIR" --partner claude \
   --model latest:fable --effort <seat-effort> --role peer
-PLAN_DIR=$(mktemp -d) && git init -q "$PLAN_DIR"
-node "$HEADLESS_PAIR" init --repo "$PLAN_DIR" --partner codex \
+ASTRA_DIR=$(mktemp -d) && git -C "$REPO" worktree add -q --detach "$ASTRA_DIR" "$PLAN_BASE"
+node "$HEADLESS_PAIR" init --repo "$ASTRA_DIR" --partner codex \
   --model latest:astra --effort <seat-effort> --role peer \
   [--identity <codex-home>]
 ```
@@ -288,7 +292,7 @@ node "$UNIT" dismantle --repo "$REPO" --unit <id> --force <id>
 ```
 
 When the batch needs no more replanning, end each planning pair with
-`node "$HEADLESS_PAIR" end --repo <pair-root>` and `trash` the scratch
-`PLAN_DIR`. Run `unit list` again. Done when it shows no live record for each
+`node "$HEADLESS_PAIR" end --repo <plan-dir>`, then remove its worktree with
+`git -C "$REPO" worktree remove <plan-dir>`. Run `unit list` again. Done when it shows no live record for each
 completed unit, no planning pair remains, and `git worktree list` matches the
 pre-run baseline.

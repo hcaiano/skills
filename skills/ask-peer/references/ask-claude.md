@@ -1,8 +1,8 @@
 # Ask Claude from Codex
 
 Use the logged-in Claude subscription through `claude -p`; never supply an API
-key. Leave `--model` unset so Claude's config picks it; add `--model fable`
-only when the user asks for Fable. Set `EFFORT` from the seat in `SKILL.md`.
+key. Set `MODEL=opus` (the seat's family, whatever Claude's config default is)
+unless the user named a model, and `EFFORT` from the seat in `SKILL.md`.
 Check `claude --help` when flags drift.
 
 ## Read-only question or review
@@ -13,7 +13,7 @@ Write the prompt to a temporary file so shell quoting cannot alter it:
 P=$(mktemp -t ask-claude.XXXXXX)
 F=$(mktemp -t ask-claude-result.XXXXXX)
 # Write the complete prompt to "$P", then:
-claude -p --effort "$EFFORT" --permission-mode dontAsk \
+claude -p --model "$MODEL" --effort "$EFFORT" --permission-mode dontAsk \
   --tools Read,Grep,Glob --add-dir "$WORKSPACE_ROOT" \
   --output-format json <"$P" >"$F"
 ```
@@ -23,7 +23,7 @@ same exchange. Resume from the workspace root with the same `--model` and
 `--effort`:
 
 ```bash
-claude -p --resume "$SESSION_ID" --effort "$EFFORT" \
+claude -p --resume "$SESSION_ID" --model "$MODEL" --effort "$EFFORT" \
   --permission-mode dontAsk --tools Read,Grep,Glob \
   --output-format json <"$P" >"$F"
 ```
