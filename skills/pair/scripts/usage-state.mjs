@@ -287,16 +287,8 @@ const readClaudeLive = async () => {
   return { ...weekly, stale_minutes: 0,
     short_window: Number.isFinite(burst?.utilization) ? burstWindow(burst.utilization, epoch(burst.resets_at)) : null };
 };
-let claudeSource = claude ? 'statusline' : null;
-let claudeError = null;
-if (live) {
-  try {
-    claude = await readClaudeLive();
-    claudeSource = 'oauth/usage';
-  } catch (error) {
-    claudeError = `live quota unavailable (${error.message}); snapshot is not current account proof`;
-  }
-}
+// Each account is independent: start the Claude read now, join it below.
+const claudeLive = live ? readClaudeLive().then((pool) => ({ pool }), (error) => ({ error })) : null;
 const homes = listCodexHomes();
 
 const measuredPool = (reading) => {
@@ -327,14 +319,17 @@ const realSessions = (home) => { try { return fs.realpathSync(path.join(home, 's
 const sessionOwners = new Map();
 for (const home of Object.values(homes)) {
   const sessions = realSessions(home);
-  if (sessions) sessionOwners.set(sessions, (sessionOwners.get(sessions) ?? 0) + 1);
+  if (!sessions) continue;
+  let canonical = home;
+  try { canonical = fs.realpathSync(home); } catch {}
+  sessionOwners.set(sessions, (sessionOwners.get(sessions) ?? new Set()).add(canonical));
 }
 for (const [identity, home] of Object.entries(homes)) {
   let canonical = home;
   try { canonical = fs.realpathSync(home); } catch {}
   if (seenHomes.has(canonical)) continue;
   seenHomes.add(canonical);
-  const shared = sessionOwners.get(realSessions(canonical)) > 1;
+  const shared = (sessionOwners.get(realSessions(canonical))?.size ?? 0) > 1;
   let pool = shared ? null : readCodexSnapshot(canonical);
   let source = shared ? 'shared-session-snapshot' : 'session-snapshot';
   let liveError = shared && !live ? 'sessions folder shared with another home; only --live proves this account' : null;
@@ -357,6 +352,17 @@ eligible.sort(([, a], [, b]) => (a.pool.pace ?? 1) - (b.pool.pace ?? 1) || a.poo
 const codex = codexIdentities.default?.pool ?? null;
 
 const cursor = await readCursorUsage();
+let claudeSource = claude ? 'statusline' : null;
+let claudeError = null;
+if (claudeLive) {
+  const read = await claudeLive;
+  if (read.pool) {
+    claude = read.pool;
+    claudeSource = 'oauth/usage';
+  } else {
+    claudeError = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
+  }
+}
 // One state per pool, so a caller acts on `states` instead of re-deriving the
 // thresholds. Codex takes the default identity's state, which already keeps a
 // failed live read from reporting a snapshot as current headroom. Cursor's

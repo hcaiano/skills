@@ -64,8 +64,9 @@ Resolve each Codex or Cursor reviewer's exact ID with pair's
 --model latest:<family> --effort <effort>`, adding `--identity <name>` for the
 Codex account the capacity check chose, and pass its `cli_model`: it is the
 family's newest version, and for Cursor it already carries the effort. Run
-the Codex wrapper as `env CODEX_HOME=<identity_home> node …/headless-codex.mjs`
-so it runs on the account whose catalog was read.
+the Codex wrapper as
+`env CODEX_HOME=<identity_home> CODEX_BIN=<codex_bin> node …/headless-codex.mjs`
+so it runs on the account and the install whose catalog was read.
 
 ## 4. Review
 

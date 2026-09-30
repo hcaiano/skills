@@ -759,6 +759,7 @@ test("resolve names the exact ID a pair would staff, with no session and the sam
   assert.equal(sol.cli_model, "gpt-5.6-sol");
   assert.equal(sol.identity, "lais");
   assert.equal(sol.identity_home, realpathSync(laisHome));
+  assert.equal(sol.codex_bin, join(bin, "codex"));
   // Only the identity's catalog is read; no session turn runs.
   assert.deepEqual(invocations().map((call) => [call.argv[0], call.codex_home]), [["app-server", realpathSync(laisHome)], ["app-server", realpathSync(laisHome)]]);
   assert.equal(run("ok", "claude", "resolve", "--partner", "cursor", "--model", "latest:fable", "--effort", "high").receipt.cli_model, "claude-fable-5-1-high");

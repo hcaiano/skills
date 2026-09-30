@@ -2250,6 +2250,8 @@ const runResolve = async () => {
     // The Codex home whose catalog was read: run the model there, so the ID
     // and the account it runs on cannot come from different logins.
     ...(account.identity_home ? { identity_home: account.identity_home } : {}),
+    // Codex installs publish different catalogs: run the binary that was read.
+    ...(codexBin ? { codex_bin: codexBin } : {}),
     model,
     // What to pass the CLI's own model flag: a Claude alias the CLI resolves,
     // a Cursor ID that already carries the effort, or an exact catalog ID.

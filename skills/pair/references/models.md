@@ -52,7 +52,7 @@ set the seats; a benchmark or vendor label nominates a trial, never a default.
 | [Executor](#executor-seat) | `sol` high, medium if mechanical | `opus` high, `sonnet` high, `grok` high | other Codex identity |
 | [Review](#review-seat) | `astra` high | `opus` high on a `dual` | `sol` high, then Cursor `kimi` or `grok` high |
 | [Inspection](#inspection-seat) | `sol` low | — | `grok` low |
-| [Analysis](#analysis-seat) | `astra` xhigh | `opus` xhigh | — |
+| [Analysis](#analysis-seat) | `astra` high, xhigh per the ladder | `opus` high, xhigh per the ladder | — |
 | [Peer](#peer-seat) | `sol` high for a Claude lead | `opus` high for a Codex lead | other Codex identity |
 | [Research](#research-seat) | `grok` high | `astra` high for deep research | Claude with WebSearch |
 | [Design](#design-seat) | `opus` high, medium for UI diffs | Cursor `kimi` high as second opinion | — |

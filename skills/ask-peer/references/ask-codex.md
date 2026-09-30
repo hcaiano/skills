@@ -11,12 +11,13 @@ R=$(node "$PAIR_DIR/scripts/pair-headless.mjs" resolve --partner codex \
   --identity "$IDENTITY" --model "$MODEL_REQUEST" --effort "$EFFORT")
 MODEL=$(jq -r '.cli_model // empty' <<<"$R")
 export CODEX_HOME=$(jq -r '.identity_home // empty' <<<"$R")
+CODEX=$(jq -r '.codex_bin // empty' <<<"$R")
 ```
 
 `PAIR_DIR` is the installed `pair` skill directory. Check `R.ok`, `MODEL`, and
 `CODEX_HOME` before proceeding; on a refusal, read `R.reason` and resolve it.
-The exported `CODEX_HOME` makes every `exec` and `resume` use the account whose
-catalog the resolver read. Pass `MODEL` and `EFFORT` on every run and
+The exported `CODEX_HOME` and `$CODEX` make every `exec` and `resume` use the
+account and the install whose catalog the resolver read. Pass `MODEL` and `EFFORT` on every run and
 resume. Check `codex exec --help` when flags drift.
 
 ## Read-only question or review
@@ -26,7 +27,7 @@ P=$(mktemp -t ask-codex.XXXXXX)
 F=$(mktemp -t ask-codex-result.XXXXXX)
 J=$(mktemp -t ask-codex-events.XXXXXX)
 # Write the complete prompt to "$P", then:
-codex exec --json -s read-only -C "$WORKSPACE_ROOT" -m "$MODEL" \
+"$CODEX" exec --json -s read-only -C "$WORKSPACE_ROOT" -m "$MODEL" \
   -c model_reasoning_effort="$EFFORT" -o "$F" - <"$P" >"$J"
 SID=$(jq -r 'select(.type == "thread.started") | .thread_id' "$J" | head -n1)
 ```
@@ -36,7 +37,7 @@ the reason. Keep `SID` only for a follow-up in the same exchange, and resume
 by that id, never `--last`:
 
 ```bash
-(cd "$WORKSPACE_ROOT" && codex exec resume "$SID" -m "$MODEL" \
+(cd "$WORKSPACE_ROOT" && "$CODEX" exec resume "$SID" -m "$MODEL" \
   -c sandbox_mode="read-only" -c model_reasoning_effort="$EFFORT" \
   -o "$F" - <"$P" >/dev/null)
 ```

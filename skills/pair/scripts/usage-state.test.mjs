@@ -271,3 +271,23 @@ test("reads are live by default, and a pool that empties early raises an alert",
   assert.deepEqual(offline.alerts.map((alert) => alert.pool), ["claude"]);
   assert.equal(offline.states.claude, "protected");
 });
+
+test("a home reached under two identity names is one account, not a shared folder", () => {
+  const taskHome = mkdtempSync(join(tmpdir(), "pair-aliased-home-"));
+  const profile = join(taskHome, ".codex-profiles", "main");
+  mkdirSync(join(profile, "sessions"), { recursive: true });
+  writeFileSync(join(profile, "sessions", "quota.jsonl"), JSON.stringify({
+    timestamp: new Date().toISOString(),
+    payload: { rate_limits: { limit_id: "codex", primary: {
+      used_percent: 20, window_minutes: 10080, resets_at: Date.now() / 1000 + 72 * 3600,
+    } } },
+  }) + "\n");
+  symlinkSync(profile, join(taskHome, ".codex"));
+  const result = spawnSync(process.execPath, [script, "--offline"], {
+    encoding: "utf8", env: { ...process.env, HOME: taskHome, USAGE_STATE_SKIP_CURSOR: "1" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.equal(output.codex_identities.default.pool.used_percent, 20);
+  assert.equal(output.codex_identities.default.state, "available");
+});
