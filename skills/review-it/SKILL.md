@@ -30,8 +30,9 @@ Standalone, run them first. Do not review a moving target.
 
 Grade the complete diff by what it changes:
 
-- `skip`: docs, config, or a mechanical low-risk change whose focused proof
-  covers every altered behavior. No LLM review.
+- `skip`: a low-risk change whose focused proof covers every changed behavior,
+  including agent behavior. Skill and agent-instruction documents can change
+  runtime decisions. No LLM review.
 - `single`: a normal runtime change inside one subsystem.
 - `dual`: auth, permissions, security, payments, migrations, destructive data,
   infrastructure, concurrency, public contracts, cross-subsystem changes,
@@ -48,16 +49,23 @@ change. `dual` uses two different families, one per axis. Staff them from the
 roster's [Review seat](../pair/references/models.md#review-seat); the roster
 owns the families, their IDs, and their efforts.
 
-Read capacity first with `node <pair-dir>/scripts/usage-state.mjs --live` from
-the sibling `pair` skill (`--live` refreshes a stale Codex reading), and skip any pool whose `states` entry is not
-`available`; a Cursor model draws on the Cursor pool that bills it. The
-roster's [Pools](../pair/references/models.md#pools) section defines the
-states. When the Codex pool is skipped, a Cursor family from the Review seat
-takes that reviewer's place; record the swap. When only one family is left for
-a `dual`, run one reviewer on both axes and record the reduction. If no
-eligible family remains, state each pool's use, pace, and reset, and ask
-whether to spend a protected pool or wait. If the helper is not installed,
-record that and staff anyway.
+Read capacity first with `node <pair-dir>/scripts/usage-state.mjs` from the
+sibling `pair` skill, and staff each reviewer from a pool the roster's
+[Pools](../pair/references/models.md#pools) rules allow; a Cursor model draws
+on the Cursor pool that bills it. When the Codex pool is skipped, a Cursor
+family from the Review seat takes that reviewer's place; record the swap. When
+only one family is left for a `dual`, run one reviewer on both axes and record
+the reduction. If no eligible family remains, state each pool's use, pace, and
+reset, and ask whether to wait. If the helper is not installed, record that
+and staff anyway.
+
+Resolve each Codex or Cursor reviewer's exact ID with pair's
+`node <pair-dir>/scripts/pair-headless.mjs resolve --partner <codex|cursor>
+--model latest:<family> --effort <effort>`, adding `--identity <name>` for the
+Codex account the capacity check chose, and pass its `cli_model`: it is the
+family's newest version, and for Cursor it already carries the effort. Run
+the Codex wrapper as `env CODEX_HOME=<identity_home> node …/headless-codex.mjs`
+so it runs on the account whose catalog was read.
 
 ## 4. Review
 
@@ -71,11 +79,10 @@ Each reviewer runs read-only through its wrapper in this skill's `scripts/`,
 at the seat's model and effort:
 
 - Claude: `headless-claude.mjs "<prompt>" --effort <effort>` (Opus by default).
-- Codex: `headless-codex.mjs "<prompt>" --model <id> --effort <effort>
+- Codex: `headless-codex.mjs "<prompt>" --model <cli_model> --effort <effort>
   --base origin/<target-branch>`.
-- Cursor: `headless-cursor.mjs "<prompt>" --model <id>
-  --base origin/<target-branch>`; the ID carries the effort and must appear in
-  `cursor-agent --list-models`.
+- Cursor: `headless-cursor.mjs "<prompt>" --model <cli_model>
+  --base origin/<target-branch>`.
 
 The Codex and Cursor wrappers pin the range themselves; pass `--commit <sha>`
 or `--uncommitted` for those ranges. Launch each wrapper through the process
@@ -134,7 +141,7 @@ Leave this block. Callers embed it verbatim.
 - Gate: <skip | single | dual> — <reason; any capacity reduction>
 - Risk: <signals and blast radius>
 - Regrade: <kept, raised, or lowered, and why>
-- Reviewers: <harness/model — axis — finding count>
+- Reviewers: <harness/model effort — axis — findings N, fixed N, deferred N, discarded N>
 - Findings: <each finding — fixed in <sha> | deferred to <issue> | discarded: <reason>>
 - Second review: <ran or skipped, and why>
 - Reviewed HEAD: <40-char SHA the reviewers read>

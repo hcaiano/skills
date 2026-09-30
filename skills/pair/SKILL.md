@@ -33,19 +33,16 @@ by ending the pair, not by restarting its pane.
 
 With no pair to resume, take every choice the user or an orchestrate unit has
 already made — partner, model, effort, identity, role — as final and do not
-ask for it again. Ask the user in plain chat text only for a material choice
-that is still missing, and start nothing until they answer:
+ask for it again. Fill unspecified choices from the
+[roster](references/models.md) and the live pool check: the Peer seat for an
+equal collaborator, the Executor seat for delegated implementation. Use
+`peer` when the task leaves the role open. The seat supplies partner family,
+model, and effort; for Codex, choose the available identity with the lower
+`pace` (`default` is `~/.codex`, a named home is
+`~/.codex-profiles/<name>`). Ask the user in plain chat text only when no
+eligible route remains or their preference is ambiguous.
 
-- **Partner**: a CLI allowed by the transport rule above. A Codex partner may
-  also name an **identity**, the account it runs as; `default` is `~/.codex`
-  and a named one is `~/.codex-profiles/<name>`.
-- **Model and effort**: `CLI default`, an exact model, or `latest:<family>`,
-  with effort supported by that model and backend. The
-  [roster](references/models.md) names the seat, family, and effort for each
-  role.
-
-The **role** is the last choice, asked only when nothing has set it; it
-decides who holds the write leases by default:
+The role decides who holds the write leases by default:
 
 - `peer` (default): equals. Split scopes, one lease per scope, review each
   other's `ready`.

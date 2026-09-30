@@ -1,9 +1,23 @@
 # Ask Codex from Claude
 
-Drive the local Codex CLI directly. Set `MODEL` to the Sol ID from the active
-config, or to the model the user named (see `SKILL.md`), and pass it on every
-run and resume. Set `EFFORT` from the seat in `SKILL.md` (`high` for a review). Check
-`codex exec --help` when flags drift.
+Drive the local Codex CLI directly. Resolve the requested model through the
+sibling `pair` skill on the account the pool check chose. `IDENTITY` is
+`default` or a `~/.codex-profiles` name. Set `USER_MODEL` only when the user
+named a model; otherwise the roster's seat supplies `FAMILY` and `EFFORT`:
+
+```bash
+MODEL_REQUEST=${USER_MODEL:-latest:$FAMILY}
+R=$(node "$PAIR_DIR/scripts/pair-headless.mjs" resolve --partner codex \
+  --identity "$IDENTITY" --model "$MODEL_REQUEST" --effort "$EFFORT")
+MODEL=$(jq -r '.cli_model // empty' <<<"$R")
+export CODEX_HOME=$(jq -r '.identity_home // empty' <<<"$R")
+```
+
+`PAIR_DIR` is the installed `pair` skill directory. Check `R.ok`, `MODEL`, and
+`CODEX_HOME` before proceeding; on a refusal, read `R.reason` and resolve it.
+The exported `CODEX_HOME` makes every `exec` and `resume` use the account whose
+catalog the resolver read. Pass `MODEL` and `EFFORT` on every run and
+resume. Check `codex exec --help` when flags drift.
 
 ## Read-only question or review
 

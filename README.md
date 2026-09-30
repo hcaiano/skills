@@ -128,13 +128,14 @@ install `pair` as well.
   requires the `herdr` CLI and the separate upstream `herdr` skill. Optional
   machine-local pieces, each degrading gracefully when missing:
   `~/.local/bin/agent-run` (the heavy-work slot; without it validation runs
-  unqueued), `~/.claude/usage-state.json` written by the statusline (without
-  it the Claude pool reads `unknown`), `~/.codex-profiles/<name>` (a second
-  Codex home for `--identity`), and Claude Code's `oracle` agent (the Fable
-  planning seat for a Claude lead).
-- `ask-peer` requires authenticated Claude and Codex CLIs, plus `jq` for the
-  Codex path. Codex consults Claude (Fable only on request); Claude Code
-  consults Codex. Efforts come from `pair`'s roster.
+  unqueued), Claude Code's stored login (the capacity helper's live Claude
+  reading; `~/.claude/usage-state.json` from the statusline is the offline
+  fallback, and without either the Claude pool reads `unknown`), and
+  `~/.codex-profiles/<name>` (a second Codex home for `--identity`).
+- `ask-peer` requires authenticated Claude and Codex CLIs, plus `jq` and
+  `pair` for the Codex path. Codex consults Claude (Fable only on request);
+  Claude Code consults Codex. Seats and efforts come from `pair`'s roster, and
+  the Codex model ID from `pair`'s resolver.
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `pair` with a `codex` partner anywhere else.
 - `test-audit` campaigns ship each subsystem PR through `ship-it` (and so
@@ -144,7 +145,7 @@ install `pair` as well.
   graded gate and never reimplements one.
 - `review-it` requires `pair` installed alongside it: it staffs reviewers from
   `pair`'s roster (the Review seat and pool rules), sizes pools with `pair`'s
-  usage-state helper, and reads `pair`'s caller-pane proof to run a gate
+  usage-state helper, resolves reviewer IDs with `pair`'s resolver, and reads `pair`'s caller-pane proof to run a gate
   command in a visible Herdr pane.
 
 These dependencies are not bundled here and must be installed separately.

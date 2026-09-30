@@ -7,27 +7,23 @@ explicit model choices and current repository instructions win over both.
 
 ## Choose the seat
 
-Set the bar from the task's risk and context, then staff the roster seat for
-the role: the [planning seat](../../pair/references/models.md#planning-seat)
-for joint planning, routed per lead in `SKILL.md`, and the
-[executor seat](../../pair/references/models.md#executor-seat) for each unit.
-Available quota never lowers the required proof or authorizes more work.
-
+Staff the roster's
+[planning seat](../../pair/references/models.md#planning-seat) for joint
+planning, routed per lead in `SKILL.md`, and the
+[executor seat](../../pair/references/models.md#executor-seat) for each unit,
+following its [routing rules](../../pair/references/models.md#route-the-work).
 A new unit requests its family as `--model latest:<family>`; a live unit keeps
 the model it resolved. Record the requested form and the resolved model that
-pair reports. An unknown catalog is not permission to invent an ID or
-substitute another family; explicit version pins stand when Henrique requests
-them.
+pair reports; explicit version pins stand when Henrique requests them.
 
 ## Read capacity
 
 ```bash
-node <pair-dir>/scripts/usage-state.mjs --live
+node <pair-dir>/scripts/usage-state.mjs
 ```
 
-Read the helper's `states` and each `codex_identities.<name>.state`; the
-roster's [pool rules](../../pair/references/models.md#pools) say what each
-state allows. Orchestrate adds these actions:
+The roster's [pool rules](../../pair/references/models.md#pools) say what
+each state allows. Orchestrate adds these actions:
 
 - Recheck before every wave. `recommended_codex_identity` is a hint, not a
   reservation: the account must also expose the chosen model.
@@ -35,8 +31,6 @@ state allows. Orchestrate adds these actions:
   the `status --all` round. A pool that turns `protected` or `unavailable`
   mid-wave moves the unit's next turn to another eligible identity through
   restaff.
-- `claude` stays `unknown` while the statusline's `~/.claude/usage-state.json`
-  is missing or stale; the roster's rule for an unknown pool applies.
 
 ## Codex identities
 
