@@ -77,6 +77,7 @@ test("every helper command and flag the docs run exists in that helper", () => {
     ["references/headless.md", '$PAIR_SCRIPT', "pair-headless.mjs", (source, command) => new RegExp(`^\\s+${command}: run`, "mu").test(source)],
     ["references/caller-pane-resolution.md", '$CALLER_PROOF_SCRIPT', "caller-proof.mjs", null],
     ["references/models.md", "scripts/usage-state.mjs", "usage-state.mjs", null],
+    ["references/models.md", "scripts/models-catalog.mjs", "models-catalog.mjs", null],
   ];
   for (const [doc, variable, script, dispatches] of cases) {
     const source = read(join(here, script));

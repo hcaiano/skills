@@ -1107,7 +1107,7 @@ const newestByVersion = (candidates) => {
 
 // Codex catalog entries are `gpt-<version>-<family>`; the version is the
 // numeric run between the vendor prefix and the family token.
-const CODEX_ID = /^gpt-(\d+(?:\.\d+)*)-([a-z0-9]+)$/iu;
+export const CODEX_ID = /^gpt-(\d+(?:\.\d+)*)-([a-z0-9]+)$/iu;
 
 export const pickLatestCodex = (catalog, family, effort = null) => {
   const entries = Array.isArray(catalog?.data) ? catalog.data : Array.isArray(catalog) ? catalog : [];
@@ -1141,6 +1141,7 @@ export const pickLatestCodex = (catalog, family, effort = null) => {
 // `grok models` prints one model per line under "Available models:", the
 // default marked with `*`. Grok has one family, so `latest:grok` is the only
 // request and its version is the trailing number.
+export const GROK_LINE = /^\s*[*-]\s+([a-z0-9]+)-(\d+(?:\.\d+)*)(?:\s+\([^)]*\))?\s*$/iu;
 export const pickLatestGrok = (text, family = "grok") => {
   const wanted = String(family).toLowerCase();
   const candidates = [];
@@ -1149,7 +1150,7 @@ export const pickLatestGrok = (text, family = "grok") => {
     // The whole line is the ID plus, at most, the CLI's own parenthesised
     // annotation such as "(default)". A suffixed ID like grok-4.7-preview is
     // a different model and never truncated into a stable one.
-    const match = line.match(/^\s*[*-]\s+([a-z0-9]+)-(\d+(?:\.\d+)*)(?:\s+\([^)]*\))?\s*$/iu);
+    const match = line.match(GROK_LINE);
     if (!match || match[1].toLowerCase() !== wanted) continue;
     const id = `${match[1]}-${match[2]}`;
     if (seen.has(id)) continue;
@@ -1167,8 +1168,8 @@ export const pickLatestGrok = (text, family = "grok") => {
 // GPT and `<vendor>-<family>-<version>-<effort>` for the others — and both
 // carry optional `thinking` and `-fast` variants. The plain form is the seat;
 // variants are chosen only by exact ID.
-const CURSOR_LINE = /^\s*([a-z0-9.-]+)\s+-\s+(.*)$/iu;
-const CURSOR_VERSION = "([a-z]?\\d+(?:[.-]\\d+)*)";
+export const CURSOR_LINE = /^\s*([a-z0-9.-]+)\s+-\s+(.*)$/iu;
+export const CURSOR_VERSION = "([a-z]?\\d+(?:[.-]\\d+)*)";
 
 export const pickLatestCursor = (text, family, effort) => {
   const wanted = String(family).toLowerCase();
@@ -1216,7 +1217,7 @@ export const pickLatestCursor = (text, family, effort) => {
 export const parseClaudeInit = (transcript) =>
   parseJsonObjects(transcript).find((event) => event.type === "system" && event.subtype === "init") ?? null;
 
-const catalogText = (bin, args, env) => {
+export const catalogText = (bin, args, env) => {
   const run = spawnSync(bin, args, { encoding: "utf8", env, timeout: 30000 });
   if (run.error) return { error: `cannot run ${bin} ${args.join(" ")}: ${run.error.message}` };
   if (run.status !== 0) return { error: `${bin} ${args.join(" ")} exited ${run.status}: ${(run.stderr || "").trim().slice(-300)}` };

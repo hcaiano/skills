@@ -26,8 +26,12 @@ beside this one. Set these absolute paths:
 ORCHESTRATE_DIR=<this skill directory>
 UNIT="$ORCHESTRATE_DIR/scripts/unit.mjs"
 HEADLESS_PAIR="$ORCHESTRATE_DIR/../pair/scripts/pair-headless.mjs"
+SKILL_DIR="$ORCHESTRATE_DIR/../pair"
 REPO=$(git -C <task-repository> rev-parse --show-toplevel)
 ```
+
+Run the [catalog check](../pair/references/models.md#families) once per
+invocation, before staffing a planning pair or unit.
 
 Units and planning pairs run on the headless backend, the only one that
 resolves the roster's `latest:<family>` seats and named Codex identities;

@@ -31,9 +31,10 @@ model, or effort differs from what the user just asked for, say so and keep
 going — respawning discards the pair's whole history, and a model is changed
 by ending the pair, not by restarting its pane.
 
-With no pair to resume, take every choice the user or an orchestrate unit has
-already made — partner, model, effort, identity, role — as final and do not
-ask for it again. Fill unspecified choices from the
+With no pair to resume, run the
+[catalog check](references/models.md#families) before choosing the partner.
+Take every choice the user or an orchestrate unit has already made — partner,
+model, effort, identity, role — as final and do not ask for it again. Fill unspecified choices from the
 [roster](references/models.md) and the live pool check: the Peer seat for an
 equal collaborator, the Executor seat for delegated implementation. Use
 `peer` when the task leaves the role open. The seat supplies partner family,

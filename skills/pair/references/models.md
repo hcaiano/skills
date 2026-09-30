@@ -121,6 +121,21 @@ the one public test.
 
 ## Families
 
+A new pair or orchestrate batch starts with a read-only catalog check;
+`$SKILL_DIR` is the `pair` skill directory:
+
+```bash
+node "$SKILL_DIR/scripts/models-catalog.mjs"
+```
+
+For an `outdated` CLI, run its reported `update` command before staffing it
+when no turn of that CLI is in flight on this machine. If a turn is in flight,
+staff with its current catalog and tell Henrique. Tell Henrique once about
+each `unknown_families` entry or `stale_examples` row: a new family needs a
+seat decision; a stale example needs roster recalibration. A source `error`
+means its result is unknown. The newest-version choice still comes from
+`latest:` or `resolve` at staffing time.
+
 A family is the stable part of a vendor ID, such as `sol` in `gpt-6.1-sol`.
 Rules name families, never versions. Request one with
 `--model latest:<family>` on the headless backend; Herdr panes take exact IDs
