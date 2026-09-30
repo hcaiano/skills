@@ -59,8 +59,8 @@ change. `dual` uses two different families, one per axis. Pick from:
 
 Never Google models or Composer. Fable reviews only when the user asks for it.
 
-Check capacity first with `node <orchestrate-dir>/scripts/usage-state.mjs`
-from the sibling `orchestrate` skill; a Cursor model draws on the Cursor pool
+Check capacity first with `node <pair-dir>/scripts/usage-state.mjs`
+from the sibling `pair` skill; a Cursor model draws on the Cursor pool
 that bills it. Skip a pool at `used_percent` >= 90, with `pace` > 1, or whose
 CLI refuses. A skipped Codex pool takes Astra with it: staff a Cursor family
 from the list in its place and record the swap, never an older GPT. If no

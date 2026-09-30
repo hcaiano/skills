@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const script = join(here, "usage-state.mjs");
 
 test("a one-record Codex session keeps its first JSONL record", () => {
-  const home = mkdtempSync(join(tmpdir(), "orchestrate-usage-state-"));
+  const home = mkdtempSync(join(tmpdir(), "pair-usage-state-"));
   const sessions = join(home, ".codex", "sessions");
   mkdirSync(sessions, { recursive: true });
   const now = Date.now();

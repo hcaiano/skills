@@ -22,7 +22,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { codexRead, listCodexHomes } from '../../pair/scripts/codex-rpc.mjs';
+import { codexRead, listCodexHomes } from './codex-rpc.mjs';
 
 const WEEK_MINUTES = 10080;
 const WEEK_HOURS = WEEK_MINUTES / 60;

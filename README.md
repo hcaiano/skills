@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains eleven active skills under `skills/` and small maintenance
+The repository contains nine active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -76,8 +76,6 @@ carries both, and the stale one still answers under the retired workflow.
 
 - `art-director` — manually explore and choose a visual direction before
   implementation, using generated concepts and optional identity-system proof.
-- `no-slop` — draft or edit writing in Henrique's voice, or identify concrete
-  AI-slop patterns without rewriting.
 
 ### Delivery
 
@@ -86,9 +84,7 @@ carries both, and the stale one still answers under the retired workflow.
   receipt; never pushes, opens a PR, or merges.
 - `ship-it` — prove a finished change, run the graded gate above, validate
   the final HEAD deterministically, and carry the authorized PR delivery
-  forward.
-- `review-pr-comments` — handle feedback that actually appears on an existing
-  PR, batching valid fixes and leaving the PR merge-ready.
+  forward. Also the loop for feedback on an existing PR.
 
 ## Deprecated
 
@@ -109,9 +105,17 @@ npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code cod
 npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-orchestrate --yes
 ```
 
-`skills update` re-appends that subpath, so updates keep working.
+- `review-pr-comments` — replaced by `ship-it`'s PR-feedback step, which keeps
+  the delivery receipt valid. Keep it with the same subpath command and
+  `--skill review-pr-comments`.
+- `no-slop` — replaced by the upstream `unslop` skill; write in your own voice
+  with a voice skill such as `caianizer`. Keep it with `--skill no-slop`.
 
-Keeping either deprecated skill does not install its active dependencies.
+`skills update` re-appends that subpath, so updates keep working. An install
+made before a skill moved here still carries it: remove it by name as described
+under Install.
+
+Keeping a deprecated skill does not install its active dependencies.
 `review-it`'s visible Herdr gate reads its caller-pane proof from `pair`, so
 install `pair` as well.
 
@@ -129,7 +133,7 @@ install `pair` as well.
   only when the current runtime cannot generate images directly.
 - `ship-it` requires `review-it` installed alongside it: it delegates its
   graded gate and never reimplements one.
-- `review-it` reads the usage-state helper bundled with `orchestrate`
+- `review-it` reads the usage-state helper bundled with `pair`
   to size its review pools, and reads `pair`'s caller-pane proof to run a
   gate command in a visible Herdr pane. A missing usage-state helper records an
   unread pool state and changes nothing else. A missing `pair` runs the

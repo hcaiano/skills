@@ -27,7 +27,7 @@ even when the lead runs in Herdr; that backend does not yet resolve these inputs
 ## Read capacity and choose an account
 
 ```bash
-node <orchestrate-dir>/scripts/usage-state.mjs --live
+node <pair-dir>/scripts/usage-state.mjs --live
 ```
 
 The default invocation reads local snapshots and both monthly Cursor pools.

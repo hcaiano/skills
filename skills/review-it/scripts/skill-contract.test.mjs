@@ -28,7 +28,7 @@ test("every relative link and named script resolves", () => {
       assert.ok(existsSync(join(base, target)), `${name} links to missing ${target}`);
     }
     for (const [, script] of text.matchAll(/scripts\/([a-z-]+\.mjs)/gu)) {
-      // usage-state.mjs belongs to the sibling orchestrate skill.
+      // usage-state.mjs belongs to the sibling pair skill.
       if (script === "usage-state.mjs") continue;
       assert.ok(existsSync(join(here, script)), `${name} names missing scripts/${script}`);
     }

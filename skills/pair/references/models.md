@@ -153,7 +153,7 @@ the one whose catalog staffed it.
 Before staffing, read the Claude, Codex, and Cursor pools with:
 
 ```bash
-node "$SKILL_DIR/../orchestrate/scripts/usage-state.mjs"
+node "$SKILL_DIR/scripts/usage-state.mjs"
 ```
 
 The helper reads Cursor's native `/usage` command through the logged-in CLI. It

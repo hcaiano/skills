@@ -47,7 +47,7 @@ test("the unit helper exposes one tested lifecycle surface", () => {
     assert.match(unit, new RegExp(`command === "${command}"`, "u"));
   }
   assert.ok(existsSync(join(here, "unit.mjs")));
-  assert.ok(existsSync(join(here, "usage-state.mjs")));
+  assert.ok(existsSync(join(here, "../../pair/scripts/usage-state.mjs")));
   assert.equal(existsSync(join(here, "send.mjs")), false);
 });
 
