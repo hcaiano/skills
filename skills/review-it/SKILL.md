@@ -46,17 +46,28 @@ earlier grade is provisional: regrade the actual diff and record why.
 ## 3. Staff the reviewers
 
 `single` uses one reviewer from a model family that did not implement the
-change. `dual` uses two different families, one per axis. Pick from native
-Claude (Opus), native Codex (Astra, high effort), and Cursor (Fable or Sol from
-`other_models`; Grok from `cursor_models` only as a fallback). Never Google
-models or Composer.
+change. `dual` uses two different families, one per axis. Pick from:
+
+- native Claude: Opus.
+- native Codex: Astra, high effort. GPT runs only through Codex: OpenAI no
+  longer serves Cursor, so never pick a GPT model there.
+- Cursor: the newest member of Grok, Kimi, GLM, or Muse Spark in
+  `cursor-agent --list-models`, `-high` by default. On 2026-09-29 these were
+  Grok 4.7 (`grok-4.7-high`, `grok-4.7-xhigh`), Kimi K3 (`kimi-k3-high`,
+  `kimi-k3-max`), GLM 5.2 (`glm-5.2-high`, `glm-5.2-max`), and Muse Spark 1.3
+  (`muse-spark-1.3-high`, `muse-spark-1.3-max`).
+
+Never Google models or Composer. Fable reviews only when the user asks for it.
 
 Check capacity first with `node <orchestrate-dir>/scripts/usage-state.mjs`
-from the sibling `orchestrate` skill. Skip a pool at `used_percent` >= 90, with
-`pace` > 1, or whose CLI refuses. If no eligible pool remains, state the
-use, pace, and reset, and ask whether to spend a protected pool or wait. When
-only one pool is left for a `dual`, run one reviewer on both axes and record
-the reduction. If the helper is not installed, record that and staff anyway.
+from the sibling `orchestrate` skill; a Cursor model draws on the Cursor pool
+that bills it. Skip a pool at `used_percent` >= 90, with `pace` > 1, or whose
+CLI refuses. A skipped Codex pool takes Astra with it: staff a Cursor family
+from the list in its place and record the swap, never an older GPT. If no
+eligible family remains, state the use, pace, and reset, and ask whether to
+spend a protected pool or wait. When only one family is left for a `dual`, run
+one reviewer on both axes and record the reduction. If the helper is not
+installed, record that and staff anyway.
 
 ## 4. Review
 

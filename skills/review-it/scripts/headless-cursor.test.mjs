@@ -46,19 +46,25 @@ const fail = (mode, ...args) => {
 };
 
 test('Cursor review pins the range and uses read-only plan mode', () => {
-  const result = run('ok', 'axis: Standards', '--model', 'cursor-grok-4.6-high', '--base', 'HEAD');
+  const result = run('ok', 'axis: Standards', '--model', 'grok-4.7-high', '--base', 'HEAD');
   assert.equal(result.ok, true);
-  assert.equal(result.model, 'cursor-grok-4.6-high');
+  assert.equal(result.model, 'grok-4.7-high');
   assert.equal(result.result, 'one material finding');
   assert.equal(result.review_range.selector, '--base');
   const argv = JSON.parse(readFileSync(argvLog, 'utf8'));
-  assert.deepEqual(argv.slice(0, 7), ['-p', '--mode', 'plan', '--output-format', 'text', '--model', 'cursor-grok-4.6-high']);
+  assert.deepEqual(argv.slice(0, 7), ['-p', '--mode', 'plan', '--output-format', 'text', '--model', 'grok-4.7-high']);
   assert.match(argv.at(-1), /The range is fixed\. Do not recompute it/u);
 });
 
 test('Cursor review requires a model and one range', () => {
   assert.match(fail('ok', 'review', '--base', 'HEAD').reason, /--model is required/u);
   assert.match(fail('ok', 'review', '--model', 'm').reason, /exactly one range selector required/u);
+});
+
+test('Cursor review refuses GPT models, which run only through Codex', () => {
+  writeFileSync(argvLog, 'not started');
+  assert.match(fail('ok', 'review', '--model', 'gpt-5.6-sol-high', '--base', 'HEAD').reason, /run only through headless-codex\.mjs/u);
+  assert.equal(readFileSync(argvLog, 'utf8'), 'not started');
 });
 
 test('Cursor review rejects empty output, failures, and tree changes', () => {

@@ -32,6 +32,8 @@ const totalMs = parseFloat(opt('total-min', '60')) * 60000;
 const emit = receiptEmitter(receiptPath);
 
 if (!model) emit({ ok: false, reason: `--model is required. ${usage}` }, 2);
+// OpenAI no longer serves Cursor, so its GPT entries are stale.
+if (/^gpt-/iu.test(model)) emit({ ok: false, reason: `${model} is a GPT model; GPT reviews run only through headless-codex.mjs` }, 2);
 const selectors = [base && '--base', commit && '--commit', uncommitted && '--uncommitted'].filter(Boolean);
 if (selectors.length !== 1) {
   emit({ ok: false, reason: `exactly one range selector required, got ${selectors.length ? selectors.join(' + ') : 'none'}. ${usage}` }, 2);
