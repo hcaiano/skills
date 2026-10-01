@@ -143,7 +143,7 @@ test("each backend documents every outcome its helper emits", () => {
 
   const headless = read(join(pairDir, "references/headless.md"));
   const headlessCode = read(join(here, "pair-headless.mjs"));
-  for (const status of ["replied", "empty-reply", "failed", "hang-killed", "running", "worker-lost", "wait-timeout", "fork-scheduled"]) {
+  for (const status of ["replied", "empty-reply", "failed", "hang-killed", "startup-stalled", "running", "worker-lost", "wait-timeout", "fork-scheduled"]) {
     assert.ok(headless.includes(`status=${status}`), `headless.md documents ${status}`);
     assert.ok(headlessCode.includes(`status: "${status}"`), `pair-headless.mjs emits ${status}`);
   }
