@@ -36,7 +36,7 @@ later turn runs that one.
 ```bash
 node "$PAIR_SCRIPT" init --repo "$REPO_ROOT" --partner "$PARTNER" \
   [--identity "$IDENTITY"] [--model "$MODEL"] [--effort "$EFFORT"] \
-  [--role peer|executor]
+  [--role peer|executor] [--startup-min N] [--idle-min N] [--total-min N]
 ```
 
 A new session spends one partner turn on the protocol preamble, so the
@@ -90,7 +90,7 @@ Write only the body to a temp file, then invoke:
 BODY=$(mktemp); trap 'rm -- "$BODY"' EXIT
 # Write the partner message body to "$BODY".
 node "$PAIR_SCRIPT" send --repo "$REPO_ROOT" --kind "$KIND" --body-file "$BODY" \
-  [--write|--read-only] [--background] [--idle-min N] [--total-min N]
+  [--write|--read-only] [--background] [--startup-min N] [--idle-min N] [--total-min N]
 ```
 
 The helper injects the header, resumes the recorded session, and hands the
@@ -111,12 +111,28 @@ a receipt. To stay reachable, poll `status` (its `in_flight` marker) and the
 transcript's size, and keep `wait` for short bounds or the harness's own
 background facility.
 
-Budgets: a writable `kind=task` turn gets 45 idle and 120 total minutes,
-because a delivery turn runs the repository's own CI; every other turn and
-`init` get 20 and 60. `--idle-min` and `--total-min` replace them, and a
-hang-kill receipt names the flag to raise. Time the partner spends queued for
-the devbox heavy-work slot is not counted, so size `--total-min` to the
-validation's own run time. Run `send`, `wait`, and `init` directly, never
+The startup budget is 5 minutes per spawn for `init` and `send`, across all
+five partners. `--startup-min N` replaces it. The first byte on stdout or
+stderr ends startup monitoring, including warnings and incomplete JSON.
+Claude, Codex, Cursor, Grok, and OpenCode all stream their events through
+these pipes. Once any output exists, only the normal idle and total budgets
+apply.
+
+A startup deadline kills the partner's process tree, including MCP children
+and the detached process group. The supervisor retries the identical command
+and prompt once only if the transcript remains zero bytes after termination. Output arriving during
+termination prevents replay. A second silent startup ends with
+`status=startup-stalled`. The startup clock starts at each partner spawn;
+launcher queue time is excluded, as is detected waiting for the devbox heavy
+slot.
+
+A writable `kind=task` turn gets 45 idle and 120 total minutes because a
+delivery turn runs the repository's own CI; every other turn and `init` get
+20 and 60. `--idle-min` and `--total-min` replace them, and a hang-kill
+receipt names the flag to raise. Idle and total budgets keep their existing
+behaviour, including exclusion of detected heavy-slot queue time. The total
+budget covers both startup attempts. Size `--total-min` to the validation's
+own run time. Run `send`, `wait`, and `init` directly, never
 inside `agent-run heavy`: the partner's own validation takes the slot when it
 runs, and a send held inside it blocks every other unit's validation behind an
 idle model session.
@@ -139,11 +155,22 @@ Terminal receipts print `seq`, `transcript`, `reply_file`, and `status`, plus
   write-lease turn may have left edits, so inspect the task directory and
   `git status` when Git is present before resending. `partial_reply=true`
   means some assistant text was recovered.
+- `status=startup-stalled`: both startup attempts produced zero output and
+  their process trees were killed. Read `reason` and `recovery` before
+  resending. For Codex, run `codex mcp list` under the recorded `CODEX_HOME`
+  and inspect the MCP OAuth credential store for a blocked or locked keyring.
+  Keep the MCP configuration enabled. Other partners name startup
+  configuration and authentication checks. A failed `init` also saves this
+  receipt as `0000-init-receipt.json` without recording a session.
 - `status=worker-lost`: the supervisor died before writing a receipt, and
   `wait` reports it at once. Inspect the transcript, lock, and task directory,
   then `clear` before a new send.
 - `status=wait-timeout`: no receipt within the wait bound. Inspect `status`
   and the transcript before choosing a new action.
+
+Turn receipts record `startup_min`, `idle_min`, and `total_min` in minutes,
+and `startup_retries`, which is 0 or 1. The in-flight marker records the
+same budgets and retry count while a `send` runs.
 
 A receipt may also carry `heavy_queue` (queue time excluded from the
 budgets), `throttle_signals` (transcript lines that look like a rate limit,

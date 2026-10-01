@@ -117,6 +117,32 @@ const CODEX_CATALOG = JSON.stringify({ data: [...CODEX_PAGE_ONE, ...CODEX_PAGE_T
 const markerReport = `
 const lead_markers = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CODEX_THREAD_ID", "CODEX_SANDBOX", "CURSOR_AGENT", "CURSOR_AGENT_CHAT_ID", "GROK_SESSION_ID", "GROK_AGENT", "OPENCODE_CLIENT", "OPENCODE_PID", "OPENCODE_WORKSPACE_ID"].filter((name) => process.env[name]);
 `;
+// Startup cases run through the real CLI boundary. A silent descendant ignores
+// SIGTERM, proving the watchdog escalates the whole detached process group.
+const startupProbe = `
+if (mode === "startup-queued") {
+  require("node:child_process").spawnSync(process.execPath, [require("node:path").join(__dirname, "agent-run"), "heavy", "--", "bun", "test"], { stdio: "ignore" });
+}
+if (mode === "startup-late") {
+  process.on("SIGTERM", () => { process.stdout.write("late startup warning"); process.exit(0); });
+  setInterval(() => {}, 1000);
+  return;
+}
+if (mode.startsWith("startup-")) {
+  const attempts = fs.readFileSync(process.env.FAKE_LOG, "utf8").trim().split("\\n").map(JSON.parse).filter((entry) => entry.argv[0] !== "app-server").length;
+  if (mode === "startup-silent" || (mode === "startup-retry" && attempts === 1)) {
+    const descendant = require("node:child_process").spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+    fs.appendFileSync(process.env.FAKE_STARTUP_PIDS, JSON.stringify({ parent: process.pid, child: descendant.pid }) + "\\n");
+    setInterval(() => {}, 1000);
+    return;
+  }
+  if (mode === "startup-output" || mode === "startup-stderr") {
+    (mode === "startup-stderr" ? process.stderr : process.stdout).write("startup warning");
+    setInterval(() => {}, 1000);
+    return;
+  }
+}
+`;
 const codexFake = ({ old }) => `#!/usr/bin/env node
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
@@ -153,6 +179,7 @@ if (argv[0] === "app-server") {
 ${markerProbe}
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "codex", argv, stdin, cwd: process.cwd(), codex_home: process.env.CODEX_HOME ?? null, bin_path: process.argv[1], lead_markers }) + "\\n");
+${startupProbe}
 if (mode === "hang") { setInterval(() => {}, 1000); return; }
 if (mode !== "nosid") process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "${CODEX_SID}" }) + "\\n");
 // A queued turn: the partner's validation sits in the devbox heavy queue
@@ -191,6 +218,7 @@ ${markerProbe}
 ${markerReport}
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "claude", argv, stdin, cwd: process.cwd(), lead_markers }) + "\\n");
+${startupProbe}
 if (mode === "fail") { process.stderr.write("auth expired\\n"); process.exit(1); }
 // stream-json: a system init event, an assistant event, then the final result.
 // The init event reports the exact model, as the live CLI does: an alias
@@ -240,6 +268,7 @@ if (argv[0] === "--list-models") {
 ${markerProbe}
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "cursor-agent", argv, stdin, cwd: process.cwd() }) + "\\n");
+${startupProbe}
 if (mode === "fail") { process.stderr.write("cursor auth expired\\n"); process.exit(1); }
 process.stdout.write(JSON.stringify({
   type: "result",
@@ -264,6 +293,7 @@ ${markerProbe}
 const promptFile = argv[argv.indexOf("--prompt-file") + 1];
 const stdin = fs.readFileSync(promptFile, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "grok", argv, stdin, cwd: process.cwd() }) + "\\n");
+${startupProbe}
 if (mode === "fail") { process.stderr.write("grok rate limit\\n"); process.exit(1); }
 if (mode === "hang-partial") {
   process.stdout.write(JSON.stringify({ type: "text", data: "partial answer" }) + "\\n");
@@ -297,6 +327,7 @@ const argv = process.argv.slice(2);
 const mode = process.env.FAKE_MODE || "ok";
 const stdin = fs.readFileSync(0, "utf8");
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ bin: "opencode", argv, stdin, cwd: process.cwd() }) + "\\n");
+${startupProbe}
 if (mode === "fail") { process.stderr.write("opencode rate limit\\n"); process.exit(1); }
 const sid = argv.includes("--session") ? argv[argv.indexOf("--session") + 1] : "${OPENCODE_SID}";
 process.stdout.write(JSON.stringify({ type: "step_start", sessionID: sid, part: { type: "step-start", sessionID: sid } }) + "\\n");
@@ -339,6 +370,7 @@ const env = (mode, self = "claude") => ({
   PATH: `${bin}:${process.env.PATH}`,
   FAKE_MODE: mode,
   FAKE_LOG: log,
+  FAKE_STARTUP_PIDS: join(root, "startup-pids.jsonl"),
   FAKE_MARKER_SEEN: join(root, "marker-seen.json"),
   HOME: root,
   CLAUDECODE: self === "claude" ? "1" : "",
@@ -1177,6 +1209,10 @@ test("a deadline that is not a positive number is a usage error", () => {
   const bad = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go"), "--idle-min", "abc");
   assert.equal(bad.receipt.ok, false);
   assert.match(bad.receipt.reason, /--idle-min must be a positive number/u);
+  const badStartup = run("ok", "claude", "send", "--repo", repo, "--kind", "task", "--body-file", bodyFile("go"), "--startup-min", "0");
+  assert.match(badStartup.receipt.reason, /--startup-min must be a positive number/u);
+  const badInit = run("ok", "claude", "init", "--repo", newRepo("startup-deadline-guard"), "--partner", "codex", "--startup-min", "abc");
+  assert.match(badInit.receipt.reason, /--startup-min must be a positive number/u);
   // The refusal happens before anything is spawned or recorded.
   assert.deepEqual(invocations(), []);
   assert.equal(JSON.parse(readFileSync(join(realpathSync(repo), ".git", "pair", "session.json"), "utf8")).seq, 0);
@@ -1396,6 +1432,73 @@ test("init fails loudly when the CLI reports no resumable session", () => {
   assert.equal(receipt.ok, false);
   assert.match(receipt.reason, /no session id/u);
   assert.equal(existsSync(join(repo, ".git", "pair", "session.json")), false);
+});
+
+const startupBudgets = ["--startup-min", "0.01", "--idle-min", "0.08", "--total-min", "0.3"];
+const partnerLead = (partner) => partner === "claude" ? "codex" : "claude";
+const startupTurns = (partner, phase, mode, name) => {
+  const repo = newRepo(`${name}-${partner}-${phase}`);
+  const self = partnerLead(partner);
+  if (phase === "send") run("ok", self, "init", "--repo", repo, "--partner", partner);
+  const args = phase === "init"
+    ? ["init", "--repo", repo, "--partner", partner]
+    : ["send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("startup check")];
+  return { repo, result: run(mode, self, ...args, ...startupBudgets) };
+};
+
+for (const partner of AGENT_KINDS) {
+  for (const phase of ["init", "send"]) {
+    test(`startup watchdog kills a silent ${partner} ${phase} and retries only once`, () => {
+      writeFileSync(join(root, "startup-pids.jsonl"), "");
+      const { repo, result: { receipt } } = startupTurns(partner, phase, "startup-silent", "startup-stall");
+      assert.equal(receipt.status, "startup-stalled");
+      assert.equal(receipt.startup_retries, 1);
+      assert.equal(receipt.startup_min, 0.01);
+      assert.match(receipt.reason, /no output/u);
+      assert.match(receipt.recovery, partner === "codex" ? /codex mcp list.*MCP OAuth credential store/u : /startup.*authentication/u);
+      assert.equal(readFileSync(receipt.transcript).length, 0);
+      assert.equal(JSON.parse(readFileSync(receipt.receipt_file, "utf8")).status, "startup-stalled");
+      const pids = readFileSync(join(root, "startup-pids.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+      assert.equal(pids.length, 2, "exactly two partner processes were spawned");
+      for (const { parent, child } of pids) {
+        assert.equal(processAlive(parent), false, `parent ${parent} was killed`);
+        // Linux may retain a killed orphan as a zombie until init reaps it.
+        let zombie = false;
+        try { zombie = /\) Z /u.test(readFileSync(`/proc/${child}/stat`, "utf8")); } catch {}
+        assert.ok(zombie || !processAlive(child), `descendant ${child} was killed`);
+      }
+      if (phase === "send") assert.equal(existsSync(join(repo, ".git", "pair", "in-flight.json")), false);
+    });
+
+    test(`startup watchdog recovers a silent ${partner} ${phase} on its one retry`, () => {
+      const { result: { receipt } } = startupTurns(partner, phase, "startup-retry", "startup-recover");
+      assert.equal(receipt.status, phase === "init" ? "created" : "replied");
+      assert.equal(receipt.startup_retries, 1);
+      const turns = invocations().filter((entry) => entry.argv[0] !== "app-server");
+      assert.equal(turns.length, 2);
+      assert.deepEqual(turns[0].argv, turns[1].argv);
+      assert.equal(turns[0].stdin, turns[1].stdin);
+    });
+  }
+  for (const mode of ["startup-output", "startup-stderr"]) {
+    test(`startup watchdog never retries ${partner} after ${mode} then idle`, () => {
+      const { result: { receipt } } = startupTurns(partner, "send", mode, mode);
+      assert.equal(receipt.status, "hang-killed");
+      assert.match(receipt.reason, /hang: no output/u);
+      assert.equal(receipt.startup_retries, 0);
+      assert.equal(receipt.startup_min, 0.01);
+      assert.equal(invocations().filter((entry) => entry.argv[0] !== "app-server").length, 1);
+      assert.equal(readFileSync(receipt.transcript, "utf8"), "startup warning");
+    });
+  }
+}
+
+test("startup watchdog never replays output drained during termination", () => {
+  const { result: { receipt } } = startupTurns("grok", "send", "startup-late", "startup-late");
+  assert.equal(receipt.status, "hang-killed");
+  assert.equal(receipt.startup_retries, 0);
+  assert.equal(invocations().length, 1);
+  assert.equal(readFileSync(receipt.transcript, "utf8"), "late startup warning");
 });
 
 test("a hung turn is killed on its idle deadline", () => {
@@ -2195,6 +2298,17 @@ test("time queued behind the devbox heavy slot is excluded from the budgets and 
   assert.equal(control.status, "hang-killed");
   assert.match(control.reason, /total budget 0m exceeded — raise it with send --total-min$/u);
   assert.equal(control.heavy_queue, undefined);
+});
+
+test("startup watchdog excludes a silent wait in the devbox heavy queue", (t) => {
+  if (process.platform !== "linux") { t.skip("the queue probe reads /proc"); return; }
+  const repo = newRepo("startup-heavy-queue");
+  run("ok", "claude", "init", "--repo", repo, "--partner", "codex");
+  const receipt = runWith({ PAIR_HEADLESS_QUEUE_PROBE_MS: "200", FAKE_HEAVY_WAIT_MS: "5000" }, "startup-queued", "claude", "send", "--repo", repo, "--kind", "question", "--body-file", bodyFile("wait for slot"), "--startup-min", "0.05", "--total-min", "0.05", "--idle-min", "0.05");
+  assert.equal(receipt.status, "replied");
+  assert.equal(receipt.startup_retries, 0);
+  assert.ok(receipt.heavy_queue.seconds >= 2);
+  assert.equal(invocations().filter((entry) => entry.argv[0] !== "app-server").length, 1);
 });
 
 test("a Codex turn's receipt carries the account pool reading and any throttle lines", () => {
