@@ -54,8 +54,8 @@ carries both, and the stale one still answers under the retired workflow.
 
 ### Orchestration and collaboration
 
-- `t3-capacity` — choose accounts and models before T3 Code MCP delegation or
-  requested thread launches, using live usage, pace, and `pair`'s pool rules.
+- `t3-capacity` — check account usage, pace, resets, and the billing pools
+  used by T3 Code instances, reusing `pair`'s usage reader.
 - `orchestrate` — run an explicit task list through isolated worktrees,
   headless pairs, pull requests, verified merges, and cleanup in any harness.
 - `pair` — keep two agents collaborating persistently, any pair of `claude`,
