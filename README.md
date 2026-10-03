@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains nine active skills under `skills/` and small maintenance
+The repository contains ten active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -54,6 +54,8 @@ carries both, and the stale one still answers under the retired workflow.
 
 ### Orchestration and collaboration
 
+- `t3-capacity` — choose accounts and models before T3 Code MCP delegation or
+  requested thread launches, using live usage, pace, and `pair`'s pool rules.
 - `orchestrate` — run an explicit task list through isolated worktrees,
   headless pairs, pull requests, verified merges, and cleanup in any harness.
 - `pair` — keep two agents collaborating persistently, any pair of `claude`,
@@ -122,6 +124,10 @@ install `pair` as well.
 
 ## Dependencies
 
+- `t3-capacity` requires `pair` installed alongside it, Node.js, and the T3 Code
+  orchestration MCP. It reuses Pair's usage reader and reads the grok.com
+  login's billing endpoint for Grok. Account readings run on the T3 server's
+  environment; unverified account mappings and missing usage remain unknown.
 - `orchestrate` requires `pair`, `git`, and `gh`. Units default to the
   headless backend, which needs only the chosen partner CLI (`claude`,
   `codex`, `cursor-agent`, `grok`, or `opencode`); `--backend herdr` also
