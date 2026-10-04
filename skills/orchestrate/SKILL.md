@@ -33,10 +33,10 @@ REPO=$(git -C <task-repository> rev-parse --show-toplevel)
 Run the [catalog check](../pair/references/models.md#families) once per
 invocation, before staffing a planning pair or unit.
 
-Units and planning pairs run on the headless backend, the only one that
+Units run on the headless backend, the only one that
 resolves the roster's `latest:<family>` seats and named Codex identities;
-`unit create` defaults to it everywhere. Pass `--backend herdr` only when the
-user asks for visible executor panes, and read
+`unit create` defaults to it everywhere. Planning pairs outside T3 use it too.
+Pass `--backend herdr` only when the user asks for visible executor panes, and read
 [Herdr units](references/herdr-units.md) for it and for every recorded Herdr
 unit.
 
@@ -85,8 +85,14 @@ Plan **consequential** work with two independent proposals: a multi-unit
 batch, or an issue that `review-it` would grade `dual` by its
 [grade triggers](../review-it/SKILL.md#2-grade). A routine single issue gets
 the lead's plan and one critique from the other seat at high, scoped to
-assumptions and acceptance proof rather than a second full plan. Keep the
-user's chosen lead and route the two seats by what it runs:
+assumptions and acceptance proof rather than a second full plan.
+
+In T3, use [t3-capacity](../t3-capacity/SKILL.md) before choosing accounts,
+then native read-only delegation for planning and critiques. Executor units
+use the unit runner. The pair routing and detached-worktree setup
+below apply outside T3.
+
+Keep the user's chosen lead and route the two seats by what it runs:
 
 | Lead runs | Opus | Astra |
 |---|---|---|
@@ -113,11 +119,9 @@ node "$HEADLESS_PAIR" init --repo "$ASTRA_DIR" --partner codex \
   [--identity <codex-home>]
 ```
 
-A seat with no route, or whose pool the
-[capacity helper](references/staffing.md#read-capacity) marks `unavailable`
-with no fallback the planning seat names, blocks joint planning: report it
-before any interview, and keep previously approved independent execution
-eligible.
+A seat with no route, or an `unavailable` pool with no fallback from the planning seat,
+blocks joint planning. Report it before any interview, and keep previously
+approved independent execution eligible.
 
 One lead conducts the user interview. For consequential work both planners
 inspect the same issue and relevant source and write independent proposals
