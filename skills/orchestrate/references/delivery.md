@@ -24,9 +24,11 @@ scope-approved SHA and tells it to read and execute the installed
 time queued for the heavy slot excluded; when the repository's full local-CI
 run approaches that, size the send's `--total-min` to it. The executor runs ship-it's proportional proof and
 graded review gate on the complete diff, pushes, opens or updates one PR
-against the recorded base with the complete `## Delivery gate` receipt in its
-body, and returns the PR URL, exact head SHA, check state, and review-checked
-timestamp. Ship-it delegation carries no merge authority: the executor stops at
+against the recorded base with a concise human-facing body, and returns the
+PR URL, exact head SHA, check state, review-checked timestamp, and the internal
+`## Delivery gate` record. Read that record from the executor's supplied path
+or agent handoff; keep technical receipts out of the PR body and comments.
+Ship-it delegation carries no merge authority: the executor stops at
 merge-ready, and the PR stays held under Hold or merge.
 
 The review-it gate inside ship-it is the delivery's code review: it grades the

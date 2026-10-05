@@ -1,7 +1,7 @@
 # Visible Herdr runs
 
-Read this when step 4 runs in an interactive Herdr lead. Each review then runs
-in its own labelled pane that the user can watch and interrupt.
+Read this when launching reviewers from an interactive Herdr lead. Each review
+runs in its own labelled pane that the user can watch and interrupt.
 
 ## Caller pin
 
@@ -45,6 +45,6 @@ receipt, then close its pane with `herdr pane close <pane_id>` unless the
 reuse rule assigns it the next command. Close only panes this gate created,
 never the caller's or another unit's.
 
-Done when every pane this gate created is closed before step 5 and its ID is on
-the receipt's `Transport` line. If the helper cannot establish or preserve
+Done when every pane this gate created is closed before returning the record
+and its ID is on the receipt's `Transport` line. If the helper cannot establish or preserve
 these facts, stop and report the run's transport and the observed state.

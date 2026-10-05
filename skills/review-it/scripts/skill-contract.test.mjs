@@ -6,7 +6,7 @@ import test from "node:test";
 const here = new URL(".", import.meta.url).pathname;
 const skillDir = join(here, "..");
 const read = (path) => readFileSync(path, "utf8");
-const docs = ["SKILL.md", "references/review-brief.md", "references/visible-herdr-runs.md"];
+const docs = ["SKILL.md", "references/review-brief.md", "references/execution.md", "references/visible-herdr-runs.md"];
 const reviewIt = read(join(skillDir, "SKILL.md"));
 const openai = read(join(skillDir, "agents/openai.yaml"));
 
