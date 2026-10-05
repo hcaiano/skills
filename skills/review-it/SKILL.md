@@ -31,54 +31,21 @@ Weakening tests requires at least `single`. When unsure, grade up. The user's
 grade is a floor; record why you keep or change a caller's provisional grade.
 For `skip`, proceed directly to the record.
 
-## 3. Staff and run
+## 3. Review
 
-Use the [Review seat](../pair/references/models.md#review-seat) and
-[Pools](../pair/references/models.md#pools), checking capacity with
-`node <pair-dir>/scripts/usage-state.mjs`. `single` uses one family that did not
-implement the change; `dual` uses two families. Record substitutions or a
-capacity reduction to one reviewer covering both axes. If no family is
-eligible, report pool use, pace, and reset and ask whether to wait. If the
-capacity helper is missing, record that and staff anyway.
-
-For Codex or Cursor, resolve the newest eligible model with
-`node <pair-dir>/scripts/pair-headless.mjs resolve --partner <codex|cursor>
---model latest:<family> --effort <effort>`. For Codex, add the selected
-`--identity <name>` and run with the returned `CODEX_HOME=<identity_home>` and
-`CODEX_BIN=<codex_bin>`. Pass `cli_model`; Cursor's ID already includes effort.
+`single` uses one reviewer from a family that did not implement the change,
+covering Standards and Spec. `dual` uses two families, one per axis, in parallel.
+Before launching or restaffing, read [execution](references/execution.md) for
+model selection, capacity, wrappers, and transport.
 
 Paste the [review brief](references/review-brief.md) and assigned axes into
-each prompt, with the pinned range, commit list, repo instructions, and spec
-source. `single` covers both axes; `dual` assigns Standards and Spec separately
-and starts both before waiting.
+each prompt, with the pinned range, commit list, repo instructions, and spec.
 
-Run read-only through the matching wrapper in `scripts/`:
-
-- `headless-claude.mjs "<prompt>" --effort <effort>`
-- `headless-codex.mjs "<prompt>" --model <cli_model> --effort <effort> --base origin/<target-branch>`
-- `headless-cursor.mjs "<prompt>" --model <cli_model> --base origin/<target-branch>`
-
-For Codex/Cursor, replace `--base` with `--commit <sha>` or `--uncommitted`
-when appropriate. Store each reviewer's receipt outside the repository to
-avoid changing the tree fingerprint.
-
-```bash
-RECEIPT_DIR=$(mktemp -d -t review-it.XXXXXX)
-RUN_TRANSPORT=<skill dir>/scripts/run-transport.mjs
-RUN=$(node "$RUN_TRANSPORT" start "${CALLER_ID[@]}" \
-  --label "review-it · <standards|spec|combined> review" \
-  -- node <skill dir>/scripts/<wrapper> <args...> --receipt "$RECEIPT_DIR/<axis>.json")
-node "$RUN_TRANSPORT" wait --run-file "$(printf '%s' "$RUN" | jq -r .run_file)"
-```
-
-Interactive Herdr leads first read [visible runs](references/visible-herdr-runs.md)
-for `CALLER_ID` and pane rules. Elsewhere, including headless pair executors,
-leave `CALLER_ID` empty and report the local run's label and transcript path.
-
-A review passes only with successful `wait`, wrapper `{ok: true}`, and substantive
-output. Refusals, rate limits, or empty results require retry or restaffing.
-Promote `single` to `dual` on a material other-axis finding, a dual-risk signal,
-or conflicting sources; run the missing reviewer on the same HEAD.
+A review counts only after successful `wait`, a wrapper receipt with
+`ok: true`, and substantive output. Refusals, rate limits, or empty results
+require retry or restaffing. Promote `single` to `dual` on a material other-axis
+finding, a dual-risk signal, or conflicting sources; run the missing reviewer
+on the same HEAD.
 
 ## 4. Fix
 
