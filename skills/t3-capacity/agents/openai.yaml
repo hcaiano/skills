@@ -1,0 +1,7 @@
+interface:
+  display_name: "T3 Capacity"
+  short_description: "Check account usage, pace, and resets for T3 delegation"
+  default_prompt: "Use $t3-capacity to check account usage and available capacity before delegating through T3 Code."
+
+policy:
+  allow_implicit_invocation: true
