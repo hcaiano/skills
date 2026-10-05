@@ -133,9 +133,13 @@ Rerun the affected focused checks. On a branch range, commit the fixes and end
 on a clean HEAD. On an uncommitted range, leave the fixes in the working tree
 and commit nothing.
 
-## 6. Receipt
+## 6. Internal record
 
-Leave this block. Callers embed it verbatim.
+Save this block outside the working tree, alongside the wrapper receipts, and
+return its absolute path to the caller. The caller retains it with the delivery
+evidence. If it cannot read that path, hand over the record directly through
+agent transport. This record is for verification, not for the PR description
+or the human-facing report.
 
 ```markdown
 ## Review gate
@@ -154,6 +158,8 @@ Paste SHAs from `git rev-parse HEAD`; never retype them.
 
 ## Report
 
-Give the user the receipt, each discarded or deferred finding, and the HEAD the
-gate ends on. Say that nothing was pushed and what the change still needs to
-ship.
+Give the user a short outcome: whether the gate passed, material fixes, and
+remaining blockers or decisions. A clean review needs one sentence. For an open
+finding, name the impact, location, and required action. Keep discarded nits,
+reviewer metadata, full SHAs, and transport details in the internal record.
+Make clear this is a local review result and state what still needs to ship.

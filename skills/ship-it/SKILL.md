@@ -10,7 +10,8 @@ Take finished work to a green PR, and through merge and deploy when the user
 authorizes them. The [review gate](../review-it/SKILL.md) checks quality
 before the PR exists; this skill runs that gate and never reimplements it.
 Invoked on an existing PR to handle its feedback, start at step 6; when that PR
-body has no `## Delivery gate` receipt yet, run steps 1–5 on its branch first.
+has no accessible delivery record for its current head, run steps 1–5 on its
+branch first. Accept an existing PR-body receipt as a legacy record.
 
 1. **Prepare.** Read the repo instructions. Inspect the branch, diff, and
    working tree, and keep unrelated user changes out. If you are on the target
@@ -35,8 +36,29 @@ body has no `## Delivery gate` receipt yet, run steps 1–5 on its branch first.
    only when the repo names it as the delivery gate, through the repo's
    documented CI queue or lease. Push only the HEAD those checks ran on.
 
-5. **Open or update the PR.** Keep one ready-for-review (non-draft) PR. Its
-   body carries this receipt:
+5. **Open or update the PR.** Keep one ready-for-review (non-draft) PR. Write
+   for a human deciding whether to merge. Aim for 100–200 words; a small change
+   usually needs less. Follow the repository template when required, keeping
+   each answer short. Include:
+
+   - One or two sentences explaining the problem and resulting behavior.
+   - A short validation summary: what passed and any meaningful gap. Distinguish
+     local checks, remote CI, and production verification when relevant.
+   - Risks, rollout steps, or a decision only when the reviewer must act on them.
+   - The issue link and visual evidence when applicable.
+
+   Use plain language. Include implementation details only when they explain a
+   tradeoff the reviewer needs to assess. Omit file inventories, command logs,
+   model names, review counts, discarded nits, and empty sections. Rewrite for
+   the final change instead of appending the history of fixes. Keep blockers
+   and material limitations visible even when they need more space.
+
+   Keep the technical record outside the PR body and comments. Save it under
+   `$(git rev-parse --git-path agent-receipts)/ship-it/<branch>/`, using one file
+   per validated HEAD. Return its absolute path to the calling agent; if the
+   caller cannot read it, hand over the record directly through agent transport.
+   It is local evidence, not a link for GitHub readers. Preserve this receipt
+   and the review record there:
 
    ```markdown
    ## Delivery gate
@@ -46,7 +68,7 @@ body has no `## Delivery gate` receipt yet, run steps 1–5 on its branch first.
    - Delegated to CI: <check and reason, or none>
    - Residual findings: <review findings left open, or none>
 
-   <the `## Review gate` block, verbatim>
+   <the internal `## Review gate` record>
    ```
 
 6. **Get CI green and close the feedback.** This is the one loop for PR
@@ -70,9 +92,11 @@ body has no `## Delivery gate` receipt yet, run steps 1–5 on its branch first.
 
    Make each fix batch one commit. While the review cap allows, a batch that
    changes behavior, expands scope, or adds a security or architecture risk
-   first runs review-it with that commit as its range; add its receipt block
-   to the PR body. Then take the batch through step 4 and refresh the
+   first runs review-it with that commit as its range; retain its record with
+   the delivery evidence. Then take the batch through step 4 and save the
    `## Delivery gate` receipt so `Final validated HEAD` equals the new PR head.
+   Update the PR summary only when behavior, validation, or risk changed.
+   When updating a legacy PR, move its gate receipts into the internal record.
    Stop after two fix batches, a base merge counting as one, and report the
    remaining items with your triage and a recommendation. Feedback after the
    final push does not reopen the loop.
@@ -97,5 +121,8 @@ body has no `## Delivery gate` receipt yet, run steps 1–5 on its branch first.
    its caller. With authorization, merge with the repo's method, verify the
    merged commit, and run and verify the documented deploy when it is in scope.
 
-8. **Report** the PR link, exact head, check status, receipt summary, merge and
-   deploy evidence when applicable, and any deferred or discarded findings.
+8. **Report** the PR link, readiness, and any blocker or decision needed in a
+   few sentences. Mention merge or deploy only when performed or still required.
+   Keep full SHAs, receipts, and discarded findings in the internal handoff;
+   provide them to the human only when requested. Never call a PR merge-ready
+   while required checks or material findings remain unresolved.

@@ -71,7 +71,9 @@ only against the caller's stated intent.
 
 ## Output
 
-Return findings grouped under `## Standards` and `## Spec` (only the assigned
-axes), each as: severity, `file:line`, citation, problem, and the fix in one or
-two sentences. End with the count per axis and the worst finding per axis. Do
-not merge or rerank across axes.
+Return only actionable findings, ordered by impact within the assigned axes.
+For each, give severity, `file:line`, and one or two sentences covering the
+trigger, consequence, evidence, and suggested fix. Group by axis only when
+reviewing both. State any missing evidence that limits the review. If there
+are no findings, say so in one sentence. Omit praise, walkthroughs, repeated
+summaries, and counts that the caller can derive from the findings.
