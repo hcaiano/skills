@@ -1,7 +1,0 @@
-interface:
-  display_name: "T3 Capacity"
-  short_description: "Check T3 account usage, pace, and resets"
-  default_prompt: "Use $t3-capacity to check account usage, pace, and resets for my T3 Code instances."
-
-policy:
-  allow_implicit_invocation: true

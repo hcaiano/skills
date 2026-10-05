@@ -1,0 +1,7 @@
+interface:
+  display_name: "T3 Delegate"
+  short_description: "Delegate T3 tasks by model fit and account capacity"
+  default_prompt: "Use $t3-delegate to choose a capable model and account for this task and delegate it through T3 Code."
+
+policy:
+  allow_implicit_invocation: true

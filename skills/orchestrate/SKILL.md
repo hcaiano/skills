@@ -31,7 +31,7 @@ REPO=$(git -C <task-repository> rev-parse --show-toplevel)
 ```
 
 Run the [catalog check](../pair/references/models.md#families) once per
-invocation, before staffing a planning pair or unit.
+invocation, before staffing a CLI planning pair or executor unit.
 
 Units run on the headless backend, the only one that
 resolves the roster's `latest:<family>` seats and named Codex identities;
@@ -87,10 +87,10 @@ batch, or an issue that `review-it` would grade `dual` by its
 the lead's plan and one critique from the other seat at high, scoped to
 assumptions and acceptance proof rather than a second full plan.
 
-In T3, use [t3-capacity](../t3-capacity/SKILL.md) before choosing accounts,
-then native read-only delegation for planning and critiques. Executor units
-use the unit runner. The pair routing and detached-worktree setup
-below apply outside T3.
+In T3, use [t3-delegate](../t3-delegate/SKILL.md) for the read-only planning
+and critique seats. Delegated tasks inherit the caller's checkout; executor
+units keep the unit runner and isolated worktrees. The pair routing and
+detached-worktree setup below apply outside T3.
 
 Keep the user's chosen lead and route the two seats by what it runs:
 
@@ -119,9 +119,10 @@ node "$HEADLESS_PAIR" init --repo "$ASTRA_DIR" --partner codex \
   [--identity <codex-home>]
 ```
 
-A seat with no route, or an `unavailable` pool with no fallback from the planning seat,
-blocks joint planning. Report it before any interview, and keep previously
-approved independent execution eligible.
+A required seat with no permitted route under the
+[pool rules](../pair/references/models.md#pools) and planning fallbacks blocks
+joint planning. Unknown capacity proves no headroom. Report the blocker before
+any interview, and keep previously approved independent execution eligible.
 
 One lead conducts the user interview. For consequential work both planners
 inspect the same issue and relevant source and write independent proposals
