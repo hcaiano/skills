@@ -76,6 +76,7 @@ These are local evidence, not GitHub links.
 ## Delivery gate
 - Focused proof: <commands and behavior covered>
 - Final validated HEAD: <full SHA from git rev-parse HEAD>
+- Review-checked timestamp: <UTC time of the final PR feedback fetch>
 - Final checks: <commands and results on that SHA>
 - Delegated to CI: <check and reason, or none>
 - Residual findings: <open findings, or none>
