@@ -25,15 +25,14 @@ then move them into the internal record when updating the PR.
    never force-push. On the clean final HEAD, rerun focused proof and the repo's
    lint, typecheck, and build for changed code. Run full local CI only when the
    repo requires it, using its queue or lease. Push that validated HEAD.
-5. **Publish.** Keep one non-draft PR. Describe the problem and resulting
-   behavior, summarize validation, and expose material risks or decisions.
-   Include issue links and visual evidence where relevant. Follow required
-   templates; otherwise a small change needs only a short paragraph and a
-   validation line. Rewrite for the final change rather than appending history.
-   Aim for under 200 words, allowing space for material blockers or limitations.
-   State what passed and any gaps, distinguishing local checks, CI, and production.
-   Keep technical receipts in the internal record below, outside PR bodies and
-   comments.
+5. **Publish.** Keep one non-draft PR. Write for a human scanning before merge:
+   one or two short sentences saying what changes and why, then one validation
+   line. Routine PRs should usually stay below 80 words. Add only risks, gaps,
+   decisions, or evidence that affect review or merge; keep material blockers
+   visible. Distinguish local checks, CI, and production where relevant.
+   Use plain language and required repo templates. Omit process history, file
+   inventories, audit details, and repeated summaries, including bot summaries.
+   Rewrite the body for the final change. Keep receipts in the internal record.
 6. **Close feedback.** Fetch all reviews, comments, unresolved and outdated
    threads, and checks. Fix failures, material defects, and human requests.
    Explain and resolve nits, duplicates, and unsupported findings without a
