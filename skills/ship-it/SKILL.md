@@ -30,6 +30,8 @@ then move them into the internal record when updating the PR.
    Include issue links and visual evidence where relevant. Follow required
    templates; otherwise a small change needs only a short paragraph and a
    validation line. Rewrite for the final change rather than appending history.
+   Aim for under 200 words, allowing space for material blockers or limitations.
+   State what passed and any gaps, distinguishing local checks, CI, and production.
    Keep technical receipts in the internal record below, outside PR bodies and
    comments.
 6. **Close feedback.** Fetch all reviews, comments, unresolved and outdated
@@ -44,7 +46,7 @@ then move them into the internal record when updating the PR.
    step 4 and refresh the delivery record; update the PR summary when needed.
    Stop after two fix batches, counting a base merge as one, and report remaining
    items with a recommendation. Feedback after the final push does not reopen
-   the loop. A remote commit made by someone else requires user direction.
+   the loop. Any remote commit this delivery did not make requires user direction.
 
    Allow three LLM review rounds per delivery, including second passes and prior
    user `/code-review` runs. Step 3 always runs. Beyond the cap, review only a

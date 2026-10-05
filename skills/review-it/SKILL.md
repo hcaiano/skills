@@ -47,10 +47,10 @@ For Codex or Cursor, resolve the newest eligible model with
 `--identity <name>` and run with the returned `CODEX_HOME=<identity_home>` and
 `CODEX_BIN=<codex_bin>`. Pass `cli_model`; Cursor's ID already includes effort.
 
-Give each reviewer the [review brief](references/review-brief.md), pinned
-range, commit list, repo instructions, and spec source. `single` covers both
-axes; `dual` assigns Standards and Spec separately and starts both before
-waiting. Paste the brief when the reviewer cannot read the file.
+Paste the [review brief](references/review-brief.md) and assigned axes into
+each prompt, with the pinned range, commit list, repo instructions, and spec
+source. `single` covers both axes; `dual` assigns Standards and Spec separately
+and starts both before waiting.
 
 Run read-only through the matching wrapper in `scripts/`:
 
