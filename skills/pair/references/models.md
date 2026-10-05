@@ -2,10 +2,8 @@
 
 Read this reference when choosing who does a piece of work: a model, effort,
 account, or pool. It owns routing, families, seats, effort, and pool rules;
-other skills name a seat and link here. For T3 delegation,
-[t3-delegate](../../t3-delegate/SKILL.md) uses T3's live catalog and verified
-capacity mappings. The CLI catalog, resolver, and usage commands below apply
-to CLI workflows. Last calibrated 2026-09-30.
+other skills name a seat and link here. The CLIs and their live catalogs stay
+the source of truth for exact IDs. Last calibrated 2026-09-30.
 
 ## Route the work
 
@@ -18,11 +16,11 @@ to CLI workflows. Last calibrated 2026-09-30.
    to Astra or Sol; it never lowers the bar.
 2. **The lead keeps** work that needs this conversation's context or judgement,
    a tight loop with the user, design, or a short investigation, and work that
-   costs as much to brief as to do.
-3. **Delegate** a task whose scope, proof, and stop point fit in one brief.
-   Use `t3-delegate` for bounded T3 child work, `pair` for persistent
-   collaboration, and `orchestrate` for isolated executor units. Choose the
-   seat for the task's role. Delegate bounded work even while the lead's pool has
+   costs as much to brief as to do. The lead is often Opus, the strongest
+   model: it implements as well as plans.
+3. **Delegate** a task whose scope, proof, and stop point fit in one brief: one
+   task to a pair on the [Executor seat](#executor-seat), several independent
+   units to `orchestrate`. Delegate bounded work even while the lead's pool has
    room, so every subscription carries work each week. A Claude subagent
    (Claude Code's Agent tool) draws on the lead's own Claude pool: it saves
    context, not quota.
@@ -40,7 +38,7 @@ to CLI workflows. Last calibrated 2026-09-30.
    independent review, a hard analysis pass, or one effort step on a genuinely
    hard task. It never buys invented work or a repeated passing check.
 
-The user's explicit partner, model, account, or effort replaces a seat. `CLI default`
+The user's explicit partner, model, or effort replaces a seat. `CLI default`
 is valid only when it resolves to an eligible newest-generation model.
 
 ## Seats
@@ -245,9 +243,9 @@ offline.
 Use `states` (`claude`, `codex`, `cursor_models`, `other_models`),
 `codex_identities.<name>.state` for each Codex account, and `alerts`.
 `cursor_models` bills Grok, Composer, and Auto on Cursor; `other_models` bills
-every other Cursor-hosted model. Pair has no usage source for Grok outside
-Cursor or OpenCode: a refusal, rate limit, or Grok's `402` "balance exhausted"
-is its only signal.
+every other Cursor-hosted model. Grok outside Cursor and OpenCode have no
+usage source: a refusal, rate limit, or Grok's `402` "balance exhausted" is
+their only signal.
 
 - **available**: staff it. Among available pools that clear the same bar,
   prefer lower `pace`, then lower `used_percent`, then speed, and balance a

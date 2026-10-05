@@ -54,8 +54,7 @@ carries both, and the stale one still answers under the retired workflow.
 
 ### Orchestration and collaboration
 
-- `t3-delegate` — delegate bounded T3 Code tasks using the shared model policy
-  and verified account capacity.
+- `t3-capacity` — check account usage, pace, and resets before T3 Code delegation.
 - `orchestrate` — run an explicit task list through isolated worktrees,
   headless pairs, pull requests, verified merges, and cleanup in any harness.
 - `pair` — keep two agents collaborating persistently, any pair of `claude`,
@@ -124,12 +123,11 @@ install `pair` as well.
 
 ## Dependencies
 
-- `t3-delegate` requires `pair` installed alongside it, Node.js, and the T3 Code
+- `t3-capacity` requires `pair` installed alongside it, Node.js, and the T3 Code
   orchestration MCP. It reuses Pair's usage reader and reads the grok.com
   login's billing endpoint for Grok. Account readings run on the T3 server's
   environment; unverified account mappings and missing usage remain unknown.
-- `orchestrate` requires `pair`, `git`, and `gh`, plus `t3-delegate` for T3
-  planning and critiques. Units default to the
+- `orchestrate` requires `pair`, `git`, and `gh`. Units default to the
   headless backend, which needs only the chosen partner CLI (`claude`,
   `codex`, `cursor-agent`, `grok`, or `opencode`); `--backend herdr` also
   requires the `herdr` CLI and the separate upstream `herdr` skill. Optional
