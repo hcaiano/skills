@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 // Read-only questions to a Codex account through `codex app-server` over
-// stdio. Exactly three methods are allowed — account, rate limits, and the
-// model catalog — so a caller can learn what an account is and what it can
-// run, and never start a model turn. Each call spawns one short-lived server,
-// runs the documented `initialize` → `initialized` handshake, sends the one
-// request, and kills the server on the first answer, on timeout, or when the
-// output grows past a bound.
+// stdio. Only the rate-limit read is allowed, so a caller can learn how much
+// an account has left and never start a model turn. Each call spawns one
+// short-lived server, runs the documented `initialize` → `initialized`
+// handshake, sends the one request, and kills the server on the first answer,
+// on timeout, or when the output grows past a bound.
 //
 // The account is chosen by `codexHome`: Codex keeps one login per
 // `CODEX_HOME`, so the named home is the identity. Nothing in the home is
@@ -13,58 +12,26 @@
 // JSON result of the request. The server's stderr is never surfaced: it can
 // carry account diagnostics, and an error here only needs to say which step
 // failed.
-//
-// The binary matters as much as the home: two Codex installs on one machine
-// publish different catalogs (2026-09-07: 0.147.0 on PATH had no Astra, the
-// 0.153.4 app binary did). `CODEX_BIN` names the binary explicitly; the
-// portable default is `codex` on PATH, and the caller records which one it
-// verified so the catalog it resolved against is the binary it later runs.
-import { spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, readdirSync, realpathSync, statSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, join, resolve } from "node:path";
+import { join } from "node:path";
 
-export const CODEX_READ_METHODS = new Set([
-  "account/read",
-  "account/rateLimits/read",
-  "model/list",
-]);
+const CODEX_READ_METHODS = new Set(["account/rateLimits/read"]);
 
-const CLIENT_INFO = { name: "pair-codex-rpc", title: "pair codex read helper", version: "1" };
+const CLIENT_INFO = { name: "t3-capacity-codex-rpc", title: "t3-capacity codex read helper", version: "1" };
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 const KILL_GRACE_MS = 1000;
-// A catalog is a handful of pages at most; a server that keeps paginating is
-// looping, and the cursor loop below stops rather than follow it forever.
-const MAX_CATALOG_PAGES = 20;
 
-export const codexBinary = (env = process.env) => (env.CODEX_BIN?.trim() ? env.CODEX_BIN.trim() : "codex");
-
-// The binary is verified by asking it for its version — the one call that
-// needs no account and no server — so a typo in CODEX_BIN or a missing
-// install fails here, before a catalog read is trusted or a session is made.
-export const verifyCodexBinary = (bin, { env = process.env } = {}) => {
-  // Pin the executable selected on PATH, not the word `codex`: a resumed
-  // caller may have a different PATH order. Preserve the selected shim path.
-  const candidates = bin.includes("/") ? [resolve(bin)]
-    : (env.PATH ?? "").split(delimiter).map((directory) => resolve(directory, bin));
-  const executable = candidates.find((candidate) => {
-    try { accessSync(candidate, constants.X_OK); return statSync(candidate).isFile(); } catch { return false; }
-  });
-  if (!executable) return { error: `cannot run ${bin} --version: executable not found` };
-  const run = spawnSync(executable, ["--version"], { encoding: "utf8", env, timeout: 15000 });
-  if (run.error) return { error: `cannot run ${bin} --version: ${run.error.message}` };
-  if (run.status !== 0) return { error: `${bin} --version exited ${run.status}` };
-  const version = run.stdout.trim().match(/\d+\.\d+\.\d+\S*/u)?.[0] ?? run.stdout.trim().split("\n")[0];
-  return { bin: executable, version: version || null };
-};
+const codexBinary = (env = process.env) => (env.CODEX_BIN?.trim() ? env.CODEX_BIN.trim() : "codex");
 
 // The home that identifies a Codex account. `default` is `~/.codex`; a named
 // identity is `~/.codex-profiles/<name>`. Only simple names are accepted. A
 // named home has to exist already — this helper reads accounts, it never makes
 // one — while the default home is the CLI's own to create on first run.
-export const CODEX_IDENTITY_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
+const CODEX_IDENTITY_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u;
 
-export const codexHomeFor = (identity = "default", { home = homedir() } = {}) => {
+const codexHomeFor = (identity = "default", { home = homedir() } = {}) => {
   const name = identity ?? "default";
   if (!CODEX_IDENTITY_NAME.test(name)) {
     return { error: `invalid identity name ${JSON.stringify(name)} — use letters, digits, _ or -` };
@@ -219,25 +186,3 @@ export const codexRead = (
     });
     send({ id: 1, method: "initialize", params: { clientInfo: CLIENT_INFO } });
   });
-
-// The complete visible catalog: every `model/list` page, followed by cursor
-// until the server reports none. A repeated cursor or more pages than any
-// real catalog has is a looping server, and the read fails rather than spin.
-export const codexModelCatalog = async ({ codexHome, bin, env = process.env, timeoutMs } = {}) => {
-  const data = [];
-  const cursors = new Set();
-  let cursor = null;
-  for (let page = 0; page < MAX_CATALOG_PAGES; page++) {
-    const params = cursor ? { cursor } : {};
-    const result = await codexRead("model/list", params, { codexHome, bin, env, ...(timeoutMs ? { timeoutMs } : {}) });
-    if (Array.isArray(result?.data)) data.push(...result.data);
-    const next = result?.nextCursor ?? null;
-    if (next == null || next === "") return { data, pages: page + 1 };
-    if (typeof next !== "string" || cursors.has(next)) {
-      throw new Error(`model/list repeated cursor ${JSON.stringify(next)} on page ${page + 1} — refusing to loop`);
-    }
-    cursors.add(next);
-    cursor = next;
-  }
-  throw new Error(`model/list did not end within ${MAX_CATALOG_PAGES} pages — refusing to loop`);
-};
