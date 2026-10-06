@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains five active skills under `skills/` and small maintenance
+The repository contains six active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -55,6 +55,8 @@ leaves the globally installed copy in place.
 
 ### Engineering
 
+- `review-it` — grade a finished change by risk, have other models review it
+  through T3 Code, and fix the findings before a PR opens.
 - `write-pr` — write a short, human-first PR description: what and why, merge
   danger, before/after screenshots, checks, and review.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious
@@ -91,14 +93,15 @@ npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code cod
   `--skill review-pr-comments`.
 - `no-slop` — replaced by the upstream `unslop` skill; write in your own voice
   with a voice skill such as `caianizer`. Keep it with `--skill no-slop`.
-- `pair`, `orchestrate`, `review-it`, `ship-it`, `ask-peer`, and `debug-mode` —
-  retired when the workflow moved to T3 Code only, where pstack skills and T3
-  delegation do this work. `orchestrate`, `review-it`, and `ask-peer` read
-  `pair`'s scripts and roster, and `ship-it` runs `review-it`, so keep them
-  together:
+- `pair`, `orchestrate`, `ship-it`, `ask-peer`, and `debug-mode` — retired
+  when the workflow moved to T3 Code only, where pstack skills and T3
+  delegation do this work. `orchestrate` and `ask-peer` read `pair`'s scripts
+  and roster, so keep them together. `ship-it` and `orchestrate` expect the
+  old Herdr `review-it`, which Git history keeps; the active `review-it` is
+  its T3 rewrite:
 
 ```bash
-npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill pair orchestrate review-it ship-it ask-peer debug-mode --yes
+npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill pair orchestrate ship-it ask-peer debug-mode --yes
 ```
 
 `skills update` re-appends that subpath, so updates keep working. An install
@@ -111,6 +114,9 @@ under Install.
   Claude, Codex and Cursor usage with its own usage reader and the grok.com
   login's billing endpoint for Grok. Account readings run on the T3 server's
   environment; unverified account mappings and missing usage remain unknown.
+- `review-it` requires the T3 Code orchestration MCP, `t3-capacity`, and
+  pstack's `poteto-mode` (for `references/t3-execution.md` and the
+  `interrogate reviewers` line in `pstack-models.md`).
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `delegate_task` to a Codex instance anywhere else.
 - `test-audit` campaigns open each subsystem PR through poteto-mode's Opening

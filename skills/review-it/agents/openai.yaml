@@ -1,7 +1,7 @@
 interface:
   display_name: "Review It"
-  short_description: "Grade, review, and correct a finished change without shipping it"
+  short_description: "Grade, review, and fix a finished change before a PR opens"
   default_prompt: "Use $review-it to grade and review the current change."
 
 policy:
-  allow_implicit_invocation: false
+  allow_implicit_invocation: true
