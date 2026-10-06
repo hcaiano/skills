@@ -1,28 +1,48 @@
 # Agent Skills
 
-This repository is the source of truth for Henrique's custom agent workflow skills.
+Henrique's custom agent workflow skills, installed into several coding agents
+from this one repo.
 
-Installed third-party skills should stay managed by their upstream sources and lock files. Custom skills in this repo may be linked into:
+## Language
 
-- `~/.agents/skills` — the one canonical copy every agent reads
-- `~/.claude/skills`
-- `~/.codex/skills`
-- `~/.cursor/skills`
-- `~/.grok/skills`
+### Installation
 
-Each agent directory holds symlinks into `~/.agents/skills`, written by the
-Skills CLI when the agent is named in `--agent`. Registering a new agent means
-adding it to that flag, never hand-linking the directory.
+**Canonical copy**:
+The single installed copy of a skill under `~/.agents/skills/<name>`, which
+every agent reads.
+_Avoid_: Global copy, master copy.
 
-Active skills should have names that include the runtime they bind to when a skill is tied to one. A skill that detects its own runtime takes the bare verb (`pair`), as does a runtime-independent one (`orchestrate`, `ship-it`, `debug-mode`).
+**Agent directory**:
+An agent's own skills folder (`~/.claude/skills`, `~/.codex/skills`,
+`~/.cursor/skills`, `~/.grok/skills`), holding symlinks to canonical copies.
+_Avoid_: Skill folder (ambiguous with a skill's source folder).
 
-The caller pane proof — which pane the calling agent runs in — belongs to `pair` (`scripts/caller-proof.mjs`, `references/caller-pane-resolution.md`). It is agent-kind agnostic and is the single caller-identity contract used by `pair`'s Herdr backend and `review-it`'s visible transport.
+**Active skill**:
+A skill under `skills/`, installed by `--skill '*'`.
 
-`pair`'s Herdr backend has an external runtime dependency on the `herdr` CLI and the separate `herdr` skill; its headless backend depends only on the chosen partner CLI (`claude`, `codex`,
-`cursor-agent`, `grok`, or `opencode`). `orchestrate` records the selected pair
-backend for each unit: headless is the default everywhere, and Herdr is an
-explicit `--backend herdr` choice. Do not copy herdr primitives into this skill unless the upstream skill becomes unavailable; document the dependency instead.
+**Deprecated skill**:
+A frozen, self-contained copy of a removed skill under the root `deprecated/`
+folder, invisible to `--skill '*'` and installed only by its subpath.
+_Avoid_: Archived skill, legacy skill.
 
-The root `deprecated/` folder holds frozen, self-contained copies of removed skills. The Skills CLI scans the repo root at depth 1 and `skills/` at depth 3, so that root location is what keeps them invisible to `--skill '*'`; existing users install them from the `hcaiano/skills/deprecated` subpath.
+### Naming
 
-When adding an active skill, place it directly under `skills/` and install or update the runtime copies through the Vercel Skills CLI.
+**Runtime-bound skill**:
+A skill tied to one runtime, whose name includes that runtime.
+
+**Bare verb**:
+The name of a skill that detects its own runtime or is runtime-independent
+(`pair`, `orchestrate`, `ship-it`).
+
+### Pairing
+
+**Caller pane proof**:
+The evidence of which pane the calling agent runs in. Owned by `pair`; the one
+caller-identity contract that `pair`'s Herdr backend and `review-it`'s visible
+transport share.
+_Avoid_: Caller detection.
+
+**Pair backend**:
+How `pair` runs its partner agent: **headless** (the default, needing only the
+partner CLI) or **Herdr** (an explicit `--backend herdr` choice, needing the
+`herdr` CLI and skill).
