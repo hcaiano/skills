@@ -1,0 +1,6 @@
+interface:
+  display_name: "Write PR"
+  short_description: "Write a short, human-first PR description with evidence"
+
+policy:
+  allow_implicit_invocation: true
