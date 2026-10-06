@@ -1,76 +1,63 @@
 ---
 name: review-it
-description: "Grade a finished change by risk, get it reviewed by other models through T3 Code, and fix the findings before a PR opens. Use before opening or updating any PR."
+description: "Pre-PR review: grade a finished change by risk, have another model family review it, and fix the findings. Use before opening or updating a PR."
 ---
 
 # Review it
 
-This is the pre-PR review. It replaces the `interrogate` run that poteto-mode
-asks for before a PR; `review-it` decides when the full panel is worth it.
-Return a reviewed, committed change and a one-line receipt for the PR's Review
-section. The caller owns push, PR, CI and merge.
+## 1. Pin
 
-## 1. Pin the range
+Run the affected checks, commit everything including new files, and pin
+`<merge-base with origin/<target>>..HEAD`. HEAD stays fixed while reviewers run.
 
-Commit the change, including new files, then fetch `origin/<target-branch>`
-and review `<merge-base>..HEAD`. Run the affected checks first. Keep HEAD
-fixed while reviewers run.
-
-Collect what the reviewers need: the intent and acceptance criteria in your
-own words (chat-only requirements included), paths to any spec or issue, and
-the model families that wrote the change, delegated workers included. Unknown
+Write down the intent and acceptance criteria, chat-only ones included, and the
+model families that wrote the change, delegated workers included. Unknown
 authorship counts as every family that may have written it.
 
 ## 2. Grade
 
-Grade the actual diff, including agent behavior in instruction files:
-
-- `skip`: no change to code that runs or to agent instructions; only docs,
-  comments or copy.
+- `skip`: only docs, comments or copy; no code that runs and no agent
+  instructions.
 - `single`: any other change bounded to one subsystem.
 - `dual`: security, auth, permissions, payments, migrations, destructive data,
   infrastructure, concurrency, public contracts, cross-subsystem changes,
   ambiguous requirements, or unbounded impact.
 
-Weakening tests needs at least `single`. When unsure, grade up. A grade the
-user gives is a floor. For `skip`, go to step 5.
+When unsure, grade up. A grade the user gives is a floor. `skip` goes straight
+to the receipt.
 
 ## 3. Review
 
-`single`: take the first seat in the `interrogate reviewers` line of
-`pstack-models.md` that can resolve to a model family that did not write the
-change. Resolve it with `t3-capacity`, as poteto-mode's
-`references/t3-execution.md` describes, and check the family again after any
-capacity fallback. With no other family available, report the capacity
-blocker. Launch one `delegate_task` with `mode: "async"` and drain it with
-`task_status`. The brief is self-contained: the absolute path of the
-[review brief](references/review-brief.md), the worktree path, the pinned range
-and HEAD, the intent and acceptance criteria, and the paths of the spec or
-issue and the repo's instruction files.
+`single`: one `delegate_task` reviewer from a family that did not write the
+change. Take the first such seat in the `interrogate reviewers` line of
+`pstack-models.md` and resolve it with `t3-capacity`; recheck the family after
+any capacity fallback, and report a blocker when no other family has capacity.
+The brief carries the absolute path of the [review brief](references/review-brief.md),
+the worktree, the pinned range, the intent and acceptance criteria, and the
+paths of any spec, issue and repo instruction files.
 
-`dual`: run the `interrogate` skill on the pinned range with the same intent.
-Its Act On findings are the findings for step 4.
+`dual`: run `interrogate` on the pinned range with the same intent; its Act On
+findings are the findings.
 
-A review counts only when it returns substantive output on the pinned HEAD.
-Retry or restaff refusals, quota errors and empty results. Promote `single` to
-`dual` when the reviewer finds a material issue or a `dual` risk.
+A review counts once it returns substantive findings on the pinned HEAD; restaff
+refusals, quota errors and empty results. A material finding or a `dual` risk
+promotes `single` to `dual`.
 
 ## 4. Fix
 
-Verify and deduplicate findings. Apply valid, in-scope fixes in one batch,
-including structural simplifications. Drop nits and keep out-of-scope ideas as
+Verify and deduplicate the findings, then apply the valid in-scope ones,
+structural simplifications included, in one batch. Out-of-scope ideas become
 follow-ups. New contracts, architecture changes or fixes that roughly double
-the diff need user direction. Rerun the affected checks and commit.
+the diff go to the user. Rerun the affected checks and commit.
 
-Run one more review only when the fixes change behavior, scope, security or
-architecture: a new `delegate_task` on the new HEAD, carrying the prior
-findings and the fixes. Apply its valid findings without a third round, then
-rerun the affected checks and commit; stop for user direction if they need
-another such change.
+When the fixes change behavior, scope, security or architecture, run one final
+review: a new `delegate_task` on the new HEAD with the prior findings. Apply,
+check and commit its valid findings; anything needing another such change goes
+to the user.
 
 ## 5. Receipt
 
-Return this line for `write-pr`'s Review section, with blockers and their next
-step when any remain:
+Return this line for `write-pr`'s Review section, plus any blocker and its next
+step:
 
 `Review: <skip | single | dual> by <models>; <n> fixed, <n> rejected; reviewed <short SHA>`
