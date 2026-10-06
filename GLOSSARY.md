@@ -28,21 +28,7 @@ _Avoid_: Archived skill, legacy skill.
 ### Naming
 
 **Runtime-bound skill**:
-A skill tied to one runtime, whose name includes that runtime.
+A skill tied to one runtime, whose name carries that runtime (`t3-capacity`).
 
-**Bare verb**:
-The name of a skill that detects its own runtime or is runtime-independent
-(`pair`, `orchestrate`, `ship-it`).
-
-### Pairing
-
-**Caller pane proof**:
-The evidence of which pane the calling agent runs in. Owned by `pair`; the one
-caller-identity contract that `pair`'s Herdr backend and `review-it`'s visible
-transport share.
-_Avoid_: Caller detection.
-
-**Pair backend**:
-How `pair` runs its partner agent: **headless** (the default, needing only the
-partner CLI) or **Herdr** (an explicit `--backend herdr` choice, needing the
-`herdr` CLI and skill).
+**Plain name**:
+The name of a runtime-independent skill (`test-audit`, `cyber-audit`).

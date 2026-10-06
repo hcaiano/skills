@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains ten active skills under `skills/` and small maintenance
+The repository contains four active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -47,28 +47,14 @@ Two traps here, both measured while removing `review-gate`:
 `--global` matters too: without it the command targets project scope and
 leaves the globally installed copy in place.
 
-`review-gate` was renamed to `review-it`. An install made before that rename
-carries both, and the stale one still answers under the retired workflow.
-
 ## Skills
 
-### Orchestration and collaboration
+### Orchestration
 
 - `t3-capacity` — check account usage, pace, and resets before T3 Code delegation.
-- `orchestrate` — run an explicit task list through isolated worktrees,
-  headless pairs, pull requests, verified merges, and cleanup in any harness.
-- `pair` — keep two agents collaborating persistently, any pair of `claude`,
-  `codex`, `cursor`, `grok`, and `opencode`: persistent headless CLI sessions,
-  or a visible Herdr tab on request. Its model roster
-  (`references/models.md`) is the one place that names seats, efforts, and
-  pool rules for every skill here.
-- `ask-peer` — request one focused opinion, review, or bounded work pass from
-  the opposite model without starting a persistent pair.
 
 ### Engineering
 
-- `debug-mode` — diagnose or debug broken, failing, flaky, slow, or
-  production-only bugs with a red feedback loop and runtime evidence.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious
   package, or supply-chain advisory and leave a written report.
 - `test-audit` — gate new tests against a value bar, and prune low-value
@@ -79,15 +65,6 @@ carries both, and the stale one still answers under the retired workflow.
 - `art-director` — manually explore and choose a visual direction before
   implementation, using generated concepts and optional identity-system proof.
 
-### Delivery
-
-- `review-it` — grade a finished change, run one Standards and Spec review
-  round from another model family, and batch material fixes. Ends at a clean local HEAD and a
-  receipt; never pushes, opens a PR, or merges.
-- `ship-it` — prove a finished change, run the graded gate above, validate
-  the final HEAD deterministically, and carry the authorized PR delivery
-  forward. Also the loop for feedback on an existing PR.
-
 ## Deprecated
 
 Frozen skills live in the root `deprecated/` folder. The Skills CLI scans the
@@ -95,31 +72,36 @@ repo root at depth 1 and `skills/` at depth 3, so that location keeps them out
 of `--skill '*'` by design — moving them under `skills/` would publish them
 again.
 
-- `herdr-pair` — replaced by `pair`. Existing users keep it with:
+- `herdr-pair` — replaced by `pair`, itself now deprecated. Existing users keep it with:
 
 ```bash
 npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-pair --yes
 ```
 
-- `herdr-orchestrate` — replaced by `orchestrate`. Existing users keep it with:
+- `herdr-orchestrate` — replaced by `orchestrate`, itself now deprecated. Existing users keep it with:
 
 ```bash
 npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-orchestrate --yes
 ```
 
-- `review-pr-comments` — replaced by `ship-it`'s PR-feedback step, which keeps
+- `review-pr-comments` — replaced by `ship-it`'s PR-feedback step (`ship-it` is now deprecated), which keeps
   the delivery receipt valid. Keep it with the same subpath command and
   `--skill review-pr-comments`.
 - `no-slop` — replaced by the upstream `unslop` skill; write in your own voice
   with a voice skill such as `caianizer`. Keep it with `--skill no-slop`.
+- `pair`, `orchestrate`, `review-it`, `ship-it`, `ask-peer`, and `debug-mode` —
+  retired when the workflow moved to T3 Code only, where pstack skills and T3
+  delegation do this work. `orchestrate`, `review-it`, and `ask-peer` read
+  `pair`'s scripts and roster, and `ship-it` runs `review-it`, so keep them
+  together:
+
+```bash
+npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill pair orchestrate review-it ship-it ask-peer debug-mode --yes
+```
 
 `skills update` re-appends that subpath, so updates keep working. An install
 made before a skill moved here still carries it: remove it by name as described
 under Install.
-
-Keeping a deprecated skill does not install its active dependencies.
-`review-it`'s visible Herdr gate reads its caller-pane proof from `pair`, so
-install `pair` as well.
 
 ## Dependencies
 
@@ -127,31 +109,11 @@ install `pair` as well.
   Claude, Codex and Cursor usage with its own usage reader and the grok.com
   login's billing endpoint for Grok. Account readings run on the T3 server's
   environment; unverified account mappings and missing usage remain unknown.
-- `orchestrate` requires `pair`, `git`, and `gh`. Units default to the
-  headless backend, which needs only the chosen partner CLI (`claude`,
-  `codex`, `cursor-agent`, `grok`, or `opencode`); `--backend herdr` also
-  requires the `herdr` CLI and the separate upstream `herdr` skill. Optional
-  machine-local pieces, each degrading gracefully when missing:
-  `~/.local/bin/agent-run` (the heavy-work slot; without it validation runs
-  unqueued), Claude Code's stored login (the capacity helper's live Claude
-  reading; `~/.claude/usage-state.json` from the statusline is the offline
-  fallback, and without either the Claude pool reads `unknown`), and
-  `~/.codex-profiles/<name>` (a second Codex home for `--identity`).
-- `ask-peer` requires authenticated Claude and Codex CLIs, plus `jq` and
-  `pair` for the Codex path. Codex consults Claude (Fable only on request);
-  Claude Code consults Codex. Seats and efforts come from `pair`'s roster, and
-  the Codex model ID from `pair`'s resolver.
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `delegate_task` to a Codex instance anywhere else.
 - `test-audit` campaigns open each subsystem PR through poteto-mode's Opening
   a PR playbook with an `interrogate` review, and run reviewers with
   `delegate_task`.
-- `ship-it` requires `review-it` installed alongside it: it delegates its
-  graded gate and never reimplements one.
-- `review-it` requires `pair` installed alongside it: it staffs reviewers from
-  `pair`'s roster (the Review seat and pool rules), sizes pools with `pair`'s
-  usage-state helper, resolves reviewer IDs with `pair`'s resolver, and reads `pair`'s caller-pane proof to run a gate
-  command in a visible Herdr pane.
 
 These dependencies are not bundled here and must be installed separately.
 
