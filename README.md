@@ -72,19 +72,19 @@ repo root at depth 1 and `skills/` at depth 3, so that location keeps them out
 of `--skill '*'` by design — moving them under `skills/` would publish them
 again.
 
-- `herdr-pair` — replaced by `pair`. Existing users keep it with:
+- `herdr-pair` — replaced by `pair`, itself now deprecated. Existing users keep it with:
 
 ```bash
 npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-pair --yes
 ```
 
-- `herdr-orchestrate` — replaced by `orchestrate`. Existing users keep it with:
+- `herdr-orchestrate` — replaced by `orchestrate`, itself now deprecated. Existing users keep it with:
 
 ```bash
 npx skills@latest add hcaiano/skills/deprecated --global --agent claude-code codex cursor grok --skill herdr-orchestrate --yes
 ```
 
-- `review-pr-comments` — replaced by `ship-it`'s PR-feedback step, which keeps
+- `review-pr-comments` — replaced by `ship-it`'s PR-feedback step (`ship-it` is now deprecated), which keeps
   the delivery receipt valid. Keep it with the same subpath command and
   `--skill review-pr-comments`.
 - `no-slop` — replaced by the upstream `unslop` skill; write in your own voice
