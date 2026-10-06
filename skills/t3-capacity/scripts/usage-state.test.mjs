@@ -12,7 +12,7 @@ const script = join(here, "usage-state.mjs");
 
 // The macOS login keychain ignores HOME: every helper spawned here finds this
 // stub `security` first, so a real Claude login never reaches a test.
-const stubBin = mkdtempSync(join(tmpdir(), "pair-usage-stub-"));
+const stubBin = mkdtempSync(join(tmpdir(), "t3-capacity-usage-stub-"));
 writeFileSync(join(stubBin, "security"), "#!/bin/sh\nexit 44\n");
 chmodSync(join(stubBin, "security"), 0o755);
 process.env.PATH = `${stubBin}:${process.env.PATH}`;
@@ -26,7 +26,7 @@ test("rejects conflicting live and offline flags", () => {
 });
 
 test("a one-record Codex session keeps its first JSONL record", () => {
-  const home = mkdtempSync(join(tmpdir(), "pair-usage-state-"));
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-usage-state-"));
   const sessions = join(home, ".codex", "sessions");
   mkdirSync(sessions, { recursive: true });
   const now = Date.now();
@@ -78,7 +78,7 @@ printf 'Usage • Ultra  Resets ${reset}\\nIncluded 19%% used\\n  Auto 5%% used\
 });
 
 test("states classifies every pool with one rule set", () => {
-  const home = mkdtempSync(join(tmpdir(), "pair-usage-states-"));
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-usage-states-"));
   const now = Date.now() / 1000;
   // 60% spent with 72 of 168 hours left burns faster than the rest can fund.
   mkdirSync(join(home, ".claude"), { recursive: true });
@@ -183,7 +183,7 @@ rl.on('line', line=>{
 });
 
 test("live Claude usage outranks the statusline snapshot, and a failed read is unknown", async () => {
-  const home = mkdtempSync(join(tmpdir(), "pair-claude-live-"));
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-live-"));
   mkdirSync(join(home, ".claude"), { recursive: true });
   const now = Date.now() / 1000;
   // A fresh snapshot of a cool pool: alone it would read available.
@@ -234,7 +234,7 @@ test("live Claude usage outranks the statusline snapshot, and a failed read is u
 });
 
 test("Codex homes sharing one sessions folder prove no account without --live", () => {
-  const taskHome = mkdtempSync(join(tmpdir(), "pair-shared-sessions-"));
+  const taskHome = mkdtempSync(join(tmpdir(), "t3-capacity-shared-sessions-"));
   const sessions = join(taskHome, ".codex", "sessions");
   mkdirSync(sessions, { recursive: true });
   writeFileSync(join(sessions, "quota.jsonl"), JSON.stringify({
@@ -258,7 +258,7 @@ test("Codex homes sharing one sessions folder prove no account without --live", 
 });
 
 test("reads are live by default, and a pool that empties early raises an alert", () => {
-  const home = mkdtempSync(join(tmpdir(), "pair-usage-default-live-"));
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-usage-default-live-"));
   const now = Date.now() / 1000;
   // 64% after 34 of 168 hours: empty in under a day, with five and a half left.
   mkdirSync(join(home, ".claude"), { recursive: true });
@@ -280,7 +280,7 @@ test("reads are live by default, and a pool that empties early raises an alert",
 });
 
 test("a home reached under two identity names is one account, not a shared folder", () => {
-  const taskHome = mkdtempSync(join(tmpdir(), "pair-aliased-home-"));
+  const taskHome = mkdtempSync(join(tmpdir(), "t3-capacity-aliased-home-"));
   const profile = join(taskHome, ".codex-profiles", "main");
   mkdirSync(join(profile, "sessions"), { recursive: true });
   writeFileSync(join(profile, "sessions", "quota.jsonl"), JSON.stringify({
@@ -300,7 +300,7 @@ test("a home reached under two identity names is one account, not a shared folde
 });
 
 test("an expired stored Claude login is refused before any request", async () => {
-  const home = mkdtempSync(join(tmpdir(), "pair-claude-expired-"));
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-expired-"));
   mkdirSync(join(home, ".claude"), { recursive: true });
   writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({
     claudeAiOauth: { accessToken: "stale-token", expiresAt: Date.now() - 3600 * 1000 },
