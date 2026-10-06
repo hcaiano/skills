@@ -123,8 +123,8 @@ install `pair` as well.
 
 ## Dependencies
 
-- `t3-capacity` requires `pair` installed alongside it, Node.js, and the T3 Code
-  orchestration MCP. It reuses Pair's usage reader and reads the grok.com
+- `t3-capacity` requires Node.js and the T3 Code orchestration MCP. It reads
+  Claude, Codex and Cursor usage with its own usage reader and the grok.com
   login's billing endpoint for Grok. Account readings run on the T3 server's
   environment; unverified account mappings and missing usage remain unknown.
 - `orchestrate` requires `pair`, `git`, and `gh`. Units default to the
@@ -142,10 +142,10 @@ install `pair` as well.
   Claude Code consults Codex. Seats and efforts come from `pair`'s roster, and
   the Codex model ID from `pair`'s resolver.
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
-  and through a `pair` with a `codex` partner anywhere else.
-- `test-audit` campaigns ship each subsystem PR through `ship-it` (and so
-  `review-it`), and use `ask-peer` for the preservation review when subagents
-  are unavailable.
+  and through a `delegate_task` to a Codex instance anywhere else.
+- `test-audit` campaigns open each subsystem PR through poteto-mode's Opening
+  a PR playbook with an `interrogate` review, and run reviewers with
+  `delegate_task`.
 - `ship-it` requires `review-it` installed alongside it: it delegates its
   graded gate and never reimplements one.
 - `review-it` requires `pair` installed alongside it: it staffs reviewers from

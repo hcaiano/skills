@@ -9,7 +9,7 @@ import test from "node:test";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "t3-capacity.mjs");
 
-// The macOS login keychain ignores HOME: pair's helper finds a stub
+// The macOS login keychain ignores HOME: usage-state finds a stub
 // `security` first, so a real Claude login never reaches a test.
 const securityStub = (body) => {
   const dir = mkdtempSync(join(tmpdir(), "t3-capacity-stub-"));
@@ -19,7 +19,7 @@ const securityStub = (body) => {
 };
 const stubBin = securityStub("#!/bin/sh\nexit 44\n");
 
-// Answers pair's read-only rate-limit request per CODEX_HOME: the home whose
+// Answers usage-state's read-only rate-limit request per CODEX_HOME: the home whose
 // path ends in `second` has headroom, `third` burns faster than it can fund,
 // every other home is nearly spent.
 const fakeCodex = (dir) => {
@@ -148,7 +148,7 @@ test("a native launcher's settings home is proof, and one login read twice is on
 });
 
 test("on macOS a Claude credentials file proves no account, since the quota read may use the Keychain",
-  { skip: process.platform !== "darwin" && "pair reads the Keychain only on macOS" }, async () => {
+  { skip: process.platform !== "darwin" && "usage-state reads the Keychain only on macOS" }, async () => {
     const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-"));
     const now = Date.now();
     login(join(home, ".claude", ".credentials.json"),
@@ -156,7 +156,7 @@ test("on macOS a Claude credentials file proves no account, since the quota read
     const t3Home = join(home, ".t3", "claude-home");
     mkdirSync(t3Home, { recursive: true });
     linkSync(join(home, ".claude", ".credentials.json"), join(t3Home, ".credentials.json"));
-    // A Keychain login that expires later than the file: pair's reader takes it.
+    // A Keychain login that expires later than the file: usage-state takes it.
     const keychain = securityStub(`#!/bin/sh\nprintf '%s' '${JSON.stringify({
       claudeAiOauth: { accessToken: "keychain-token", expiresAt: now + 10 * 3600 * 1000 } })}'\n`);
     const seen = [];
@@ -189,7 +189,7 @@ test("on macOS a Claude credentials file proves no account, since the quota read
     }
   });
 
-test("Grok reads only the grok.com login, paced like pair's pools", async () => {
+test("Grok reads only the grok.com login, paced like usage-state's pools", async () => {
   const home = mkdtempSync(join(tmpdir(), "t3-capacity-grok-"));
   const seen = [];
   const period = (end) => ({ config: { creditUsagePercent: 80,

@@ -106,9 +106,8 @@ Done when every lane plan is applied and each lane's keepers pass.
 Before claiming completion, have independent read-only reviewers, one per
 boundary group, compare deleted coverage against the keepers. They look for
 contracts that lost their only proof, and for new assertions that cannot fail,
-such as a rejection row the production code never reaches. Without subagents,
-read and execute the installed `ask-peer/SKILL.md` by path to get this review
-from another model.
+such as a rejection row the production code never reaches. Run each reviewer
+with `delegate_task`, read-only, on a different model than the author's.
 
 For each restored contract, make one deliberate **mutation** of the production
 owner and confirm the keeper goes red. Copy the owner file before mutating it;
@@ -134,19 +133,23 @@ When the default branch changed a file the campaign deleted, keep the deletion,
 port the new contract into its keeper, and confirm every new regression test
 there still has a home. Rerun the whole subsystem suite on the merged head.
 
-Once the user authorizes delivery, ship the subsystem PR with
-[ship-it](../../ship-it/SKILL.md). Its review-it gate grades deleted coverage at
-least `single`. Pass the step-6 preservation review in
-as the spec source. The PR carries the [audit.md](audit.md) report, plus:
+Run interrogate on the subsystem diff. Its intent paragraph carries the step-6
+preservation review: each retired contract, the keeper that now proves it, and
+the gaps restored with their mutations. Once the user authorizes delivery, open
+the subsystem PR through poteto-mode's Opening a PR playbook. The PR carries
+the [audit.md](audit.md) report, plus:
 
 - baseline and final test and test-support line counts, production counted
   separately;
 - lanes, retired layers, and keepers;
 - preservation gaps found and their mutations;
-- product defects with control and candidate proof.
+- product defects with control and candidate proof;
+- interrogate's Act On findings and how each was resolved.
 
-Done when ship-it has delivered the PR and the report is saved as `result.md`
-in the subsystem's notes folder.
+Done when the report is saved as `result.md` in the subsystem's notes folder
+and either the PR is open with each Act On finding fixed and verified
+(restored coverage gets step 6's mutation proof) or rejected with source
+evidence, or a blocking finding is reported to the user and the PR is held.
 
 ## 9. Close the app
 

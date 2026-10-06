@@ -7,7 +7,7 @@
 //              cursor_models, other_models, grok, with the instances proved
 //              to bill it (an empty list is a reading no instance claimed)
 //   available  mapped pools in the available state, lower pace first
-//   alerts     pair's early-empty alerts, unchanged
+//   alerts     the usage reader's early-empty alerts, unchanged
 //   candidates with --candidate: each <instance>/<model> with the pool it
 //              bills and that pool's state, pace and use
 //   choice     the candidate to delegate to, or null when none can take work
@@ -26,28 +26,28 @@
 // "declare"?}}}. With neither --instance nor --mapping, the file
 // ~/.agents/t3-capacity.json is read when present. Flags add to the file.
 //
-// Usage comes from pair's usage-state helper; this script adds only the Grok
-// reading pair lacks and the proof that a T3 instance bills a pool. Nothing
-// maps without --settings, the settings file of the T3 server this shell runs
-// under: the caller confirms that server, since no file proves it. An
-// instance must appear there under the driver the capabilities report. The
+// Nothing maps without --settings, the settings file of the T3 server this
+// shell runs under: the caller confirms that server, since no file proves it.
+// An instance must appear there under the driver the capabilities report. The
 // settings name each instance's binary and home, but a custom launcher can
 // switch the account, and a shared history home is not an account, so a
 // mapping needs one of:
-//   default-login  a native CLI with no home override: the login pair reads
+//   default-login  a native CLI with no home override: the login the usage
+//                  reader reads
 //   same-file      the instance's login file is the reader's (device + inode)
 //   user-declared  --declare, from an explicit user statement; it names a
 //                  pool of the instance's own driver
-// On macOS, pair's Claude read takes whichever of the credentials file and
-// the login Keychain expires last, and the Cursor CLI keeps its login in the
-// Keychain, so neither file says which account was read: Claude maps there
-// only by declaration, and Cursor only by default-login or declaration.
+// On macOS, the usage reader's Claude read takes whichever of the credentials
+// file and the login Keychain expires last, and the Cursor CLI keeps its login
+// in the Keychain, so neither file says which account was read: Claude maps
+// there only by declaration, and Cursor only by default-login or declaration.
 // Nothing here writes a file, prints a credential, or runs a launcher.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pace, poolState } from './usage-state.mjs';
 
 const usage = 'usage: t3-capacity.mjs --instance <id>:<driverKind>... [--auth-home <id>=<dir>]... '
   + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
@@ -65,15 +65,15 @@ const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i += 2) {
   const [flag, value] = [args[i], args[i + 1]];
   if (value == null) fail(usage);
-  const pair = (separator) => {
+  const split = (separator) => {
     const at = value.indexOf(separator);
     if (at < 1 || at === value.length - 1) fail(`${flag} needs <id>${separator}<value>, got ${value}\n${usage}`);
     return [value.slice(0, at), value.slice(at + 1)];
   };
-  if (flag === '--instance') { const [id, driver] = pair(':'); instances.push({ id, driver }); }
-  else if (flag === '--auth-home') { const [id, dir] = pair('='); authHomes.set(id, expand(dir)); }
+  if (flag === '--instance') { const [id, driver] = split(':'); instances.push({ id, driver }); }
+  else if (flag === '--auth-home') { const [id, dir] = split('='); authHomes.set(id, expand(dir)); }
   else if (flag === '--declare') {
-    const [id, pool] = pair('=');
+    const [id, pool] = split('=');
     declared.set(id, pool);
   } else if (flag === '--settings') settingsFile = path.resolve(value);
   else if (flag === '--mapping') mappingFile = expand(value);
@@ -114,43 +114,18 @@ for (const [id, pool] of declared) {
 
 const home = os.homedir();
 const here = path.dirname(fileURLToPath(import.meta.url));
-const usageState = path.resolve(here, '..', '..', 'pair', 'scripts', 'usage-state.mjs');
+const usageScript = path.join(here, 'usage-state.mjs');
 
-const readPairUsage = () => new Promise((resolve) => {
-  const child = spawn(process.execPath, [usageState], { stdio: ['ignore', 'pipe', 'ignore'] });
+const readUsageState = () => new Promise((resolve) => {
+  const child = spawn(process.execPath, [usageScript], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', (chunk) => { out += chunk; });
-  child.on('error', (error) => resolve({ error: `pair usage-state did not run: ${error.message}` }));
+  child.on('error', (error) => resolve({ error: `usage-state did not run: ${error.message}` }));
   child.on('close', (code) => {
-    try { resolve(code === 0 ? JSON.parse(out) : { error: `pair usage-state exited ${code}` }); }
-    catch { resolve({ error: 'pair usage-state printed no JSON' }); }
+    try { resolve(code === 0 ? JSON.parse(out) : { error: `usage-state exited ${code}` }); }
+    catch { resolve({ error: 'usage-state printed no JSON' }); }
   });
 });
-
-// Pair's pace and state rules, applied to the one pool pair cannot read.
-// Keep these in step with pair's usage-state.mjs.
-const pace = (usedPercent, hoursLeft, windowHours) => {
-  if (hoursLeft == null || hoursLeft <= 0) return null;
-  const used = Math.round(usedPercent);
-  const elapsed = Math.max(windowHours - hoursLeft, 0);
-  const daysLeft = hoursLeft / 24;
-  const burn = elapsed >= 12 ? used / (elapsed / 24) : null;
-  const budget = hoursLeft >= 6 ? (100 - used) / daysLeft : null;
-  const round = (n, d = 1) => (n == null || !Number.isFinite(n) ? null : Math.round(n * 10 ** d) / 10 ** d);
-  return {
-    used_percent: used, elapsed_hours: Math.round(elapsed), resets_in_hours: Math.round(hoursLeft),
-    days_left: round(daysLeft, 2), burn_per_day: round(burn), budget_per_day: round(budget),
-    pace: burn != null && budget ? round(burn / budget, 2) : null,
-    days_to_empty: burn ? round((100 - used) / burn) : null, short_window: null, stale_minutes: 0,
-  };
-};
-const poolState = (pool) => {
-  if (!pool) return 'unknown';
-  if (pool.used_percent >= 90 || pool.short_window?.used_percent >= 90) return 'unavailable';
-  if (pool.pace > 1) return 'protected';
-  if (pool.stale_minutes == null || pool.stale_minutes > 15) return 'unknown';
-  return 'available';
-};
 
 // The grok.com login the Grok CLI uses by default, read the way T3's own
 // Grok usage reader does. An API key, another auth deployment, or a custom
@@ -204,27 +179,28 @@ const readGrok = async () => {
   const hoursLeft = (end - Date.now()) / 3600000;
   const reading = start ? pace(Math.min(Math.max(used, 0), 100), hoursLeft, (end - start) / 3600000) : null;
   if (!reading) throw new Error(`billing period ${type ?? 'unknown'} cannot be paced`);
-  return { ...reading, period: type.toLowerCase(), estimated_start: new Date(start).toISOString() };
+  return { ...reading, short_window: null, stale_minutes: 0, period: type.toLowerCase(),
+    estimated_start: new Date(start).toISOString() };
 };
 
-const [pairUsage, grok] = await Promise.all([
-  readPairUsage(),
+const [usageState, grok] = await Promise.all([
+  readUsageState(),
   readGrok().then((reading) => ({ reading }), (error) => ({ error: error.message })),
 ]);
 
 const accounts = {};
 const account = (key, fields) => { accounts[key] = { state: 'unknown', reading: null, ...fields, instances: [] }; };
-if (pairUsage.error) {
-  for (const key of ['claude', 'cursor_models', 'other_models']) account(key, { error: pairUsage.error });
+if (usageState.error) {
+  for (const key of ['claude', 'cursor_models', 'other_models']) account(key, { error: usageState.error });
 } else {
-  account('claude', { state: pairUsage.states.claude, reading: pairUsage.claude, source: pairUsage.claude_source,
-    ...(pairUsage.claude_error ? { error: pairUsage.claude_error } : {}) });
+  account('claude', { state: usageState.states.claude, reading: usageState.claude, source: usageState.claude_source,
+    ...(usageState.claude_error ? { error: usageState.claude_error } : {}) });
   for (const key of ['cursor_models', 'other_models']) {
-    const reading = pairUsage.cursor?.[key] ?? null;
-    account(key, { state: pairUsage.states[key], reading: reading && { ...reading, resets_on: pairUsage.cursor.resets_on },
+    const reading = usageState.cursor?.[key] ?? null;
+    account(key, { state: usageState.states[key], reading: reading && { ...reading, resets_on: usageState.cursor.resets_on },
       ...(reading ? {} : { error: 'no Cursor /usage reading' }) });
   }
-  for (const [name, entry] of Object.entries(pairUsage.codex_identities)) {
+  for (const [name, entry] of Object.entries(usageState.codex_identities)) {
     account(`codex:${name}`, { state: entry.state, reading: entry.pool, source: entry.source, home: entry.home,
       ...(entry.error ? { error: entry.error } : {}) });
   }
@@ -344,7 +320,7 @@ for (const state of ['available', 'protected']) {
 }
 
 console.log(JSON.stringify({
-  instances: mapped, accounts, available, alerts: pairUsage.alerts ?? [],
+  instances: mapped, accounts, available, alerts: usageState.alerts ?? [],
   ...(tiers.length ? { candidates: ranked.flat(), choice } : {}),
   ...(settingsError ? { settings_error: settingsError } : {}),
 }, null, 1));

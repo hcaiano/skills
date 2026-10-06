@@ -13,10 +13,13 @@ starts after this skill ends.
 ## Image generation
 
 In Codex, use the built-in `imagegen` skill: its generation, editing,
-validation, and save-path rules own the image work. Anywhere else, open a
-[`pair`](../pair/SKILL.md) with a `codex` partner rooted at this workspace and
-hand it each generation brief; it generates with `imagegen`, saves the images in the workspace, and
-returns their paths and exact prompts.
+validation, and save-path rules own the image work. Anywhere else, delegate
+each generation brief with `delegate_task` to a Codex provider instance chosen
+with [`t3-capacity`](../t3-capacity/SKILL.md). The delegate generates with
+`imagegen`, always saves the images in this workspace, and returns their
+absolute paths and exact prompts. Each brief stands alone: absolute reference
+image paths, the save directory, and for a refinement the prior exact prompt and
+the one trait to change. Open every returned path before curating it.
 
 Run intake as a grilling conversation: investigate facts yourself, ask
 decisions one at a time with your recommended answer, and wait for the user's
