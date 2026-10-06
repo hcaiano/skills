@@ -27,7 +27,7 @@ window is listed with its machine.
 Read `~/.agents/skills/retro/SKILL.md` and apply its categories. Measure each
 session against the workflow in `~/.agents/AGENTS.md` and look for:
 
-- PR bodies off `write-pr`'s shape, or media outside the before/after table;
+- PR bodies off `write-pr`'s shape;
 - `review-it` skipped, graded too low, or missing its receipt;
 - red CI, conflicts or open review threads left behind;
 - questions to the user that the docs already answered;
@@ -42,8 +42,9 @@ Drop findings already open in a PR or proposed in an earlier retro thread.
 A defect inside a skill in `hcaiano/skills` gets fixed: branch, edit in the
 `writing-for-agents` style, run `review-it`, open the PR with `write-pr`, merge
 once the review is clean and checks pass, then reinstall with
-`env -u CLAUDE_CONFIG_DIR -u GROK_HOME -u CURSOR_CONFIG_DIR -u CODEX_HOME npx skills@latest add hcaiano/skills --skill <name> -g -a claude-code codex cursor grok -y`.
-At most three merged fixes per run.
+`env -u CLAUDE_CONFIG_DIR -u GROK_HOME -u CURSOR_CONFIG_DIR -u CODEX_HOME npx skills@latest add hcaiano/skills --skill <name> -g -a claude-code codex cursor grok -y`
+and confirm `~/.agents/skills/<name>/SKILL.md` matches the merged file. At most
+three merged fixes per run; the rest become proposals.
 
 Everything else is a proposal for the user: `~/.agents/AGENTS.md`,
 `pstack-models.md`, pstack itself, work repositories, new skills, and any
@@ -52,5 +53,8 @@ removed or weakened rule.
 ## 4. Report
 
 Reply with the merged fixes and their PR links, then the proposals ranked by
-severity with their evidence. With nothing material, one line. Then write the
-run's start time to `~/.local/state/workflow-retro/last-run`.
+severity with their evidence. With nothing material, one line.
+
+When step 1 covered both machines, write the run's start time as ISO 8601 UTC
+to `~/.local/state/workflow-retro/last-run`. Otherwise keep the old time and
+report which machine or source failed, so the next run covers the gap.
