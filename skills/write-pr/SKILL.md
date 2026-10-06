@@ -23,10 +23,11 @@ real complexity. In this order:
    only for a material ramification.
 3. **Screenshots**, for any visible change: one `| State | Before | After |`
    table with a row per affected state. Each pair comes from the real app
-   with the same route, viewport, theme, role, locale and test data, at 2x
-   device pixel ratio. Crop both to the same box around the changed component,
-   small enough that its text reads at half the body width (about 400 CSS
-   px); on desktop that means the component, not the full row. Take a missing before from a worktree at the baseline commit.
+   with the same route, viewport, theme, role, locale and test data. Crop
+   both to the same box around the changed component, at most about 400 CSS
+   px wide so it shows unscaled and sharp in its column; on desktop that means
+   the component, not the full row. Take a missing before from a worktree at
+   the baseline commit.
    Name the baseline and final commits.
 4. **Video**, only when movement, timing or a complex interaction cannot be
    read from stills.
