@@ -146,10 +146,10 @@ the [audit.md](audit.md) report, plus:
 - product defects with control and candidate proof;
 - interrogate's Act On findings and how each was resolved.
 
-Done when each Act On finding is fixed and verified (restored coverage gets
-step 6's mutation proof), rejected with source evidence in the PR, or reported
-to the user as blocking the handoff; the PR is open; and the report is saved as
-`result.md` in the subsystem's notes folder.
+Done when the report is saved as `result.md` in the subsystem's notes folder
+and either the PR is open with each Act On finding fixed and verified
+(restored coverage gets step 6's mutation proof) or rejected with source
+evidence, or a blocking finding is reported to the user and the PR is held.
 
 ## 9. Close the app
 
