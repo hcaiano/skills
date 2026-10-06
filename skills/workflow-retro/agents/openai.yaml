@@ -1,0 +1,6 @@
+interface:
+  display_name: "Workflow Retro"
+  short_description: "Daily retro of agent sessions on both machines"
+
+policy:
+  allow_implicit_invocation: false

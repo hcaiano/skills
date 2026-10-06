@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains six active skills under `skills/` and small maintenance
+The repository contains seven active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -55,6 +55,9 @@ leaves the globally installed copy in place.
 
 ### Engineering
 
+- `workflow-retro` — daily retro of every agent session on the PC and the
+  MacBook: fixes defects in these skills and proposes everything else. Run by a
+  T3 scheduled task on the PC.
 - `review-it` — pre-PR review: grade a change by risk, have another model
   family review it (the full `interrogate` panel when risky), and fix the
   findings.
