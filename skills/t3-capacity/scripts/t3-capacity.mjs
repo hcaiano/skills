@@ -46,6 +46,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pace, poolState } from './usage-state.mjs';
 
 const usage = 'usage: t3-capacity.mjs --instance <id>:<driverKind>... [--auth-home <id>=<dir>]... '
   + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
@@ -125,31 +126,6 @@ const readUsageState = () => new Promise((resolve) => {
   });
 });
 
-// usage-state's pace and state rules, applied to the one pool it cannot read.
-// Keep these in step with usage-state.mjs.
-const pace = (usedPercent, hoursLeft, windowHours) => {
-  if (hoursLeft == null || hoursLeft <= 0) return null;
-  const used = Math.round(usedPercent);
-  const elapsed = Math.max(windowHours - hoursLeft, 0);
-  const daysLeft = hoursLeft / 24;
-  const burn = elapsed >= 12 ? used / (elapsed / 24) : null;
-  const budget = hoursLeft >= 6 ? (100 - used) / daysLeft : null;
-  const round = (n, d = 1) => (n == null || !Number.isFinite(n) ? null : Math.round(n * 10 ** d) / 10 ** d);
-  return {
-    used_percent: used, elapsed_hours: Math.round(elapsed), resets_in_hours: Math.round(hoursLeft),
-    days_left: round(daysLeft, 2), burn_per_day: round(burn), budget_per_day: round(budget),
-    pace: burn != null && budget ? round(burn / budget, 2) : null,
-    days_to_empty: burn ? round((100 - used) / burn) : null, short_window: null, stale_minutes: 0,
-  };
-};
-const poolState = (pool) => {
-  if (!pool) return 'unknown';
-  if (pool.used_percent >= 90 || pool.short_window?.used_percent >= 90) return 'unavailable';
-  if (pool.pace > 1) return 'protected';
-  if (pool.stale_minutes == null || pool.stale_minutes > 15) return 'unknown';
-  return 'available';
-};
-
 // The grok.com login the Grok CLI uses by default, read the way T3's own
 // Grok usage reader does. An API key, another auth deployment, or a custom
 // endpoint names a different account, so each refuses rather than guesses.
@@ -202,7 +178,8 @@ const readGrok = async () => {
   const hoursLeft = (end - Date.now()) / 3600000;
   const reading = start ? pace(Math.min(Math.max(used, 0), 100), hoursLeft, (end - start) / 3600000) : null;
   if (!reading) throw new Error(`billing period ${type ?? 'unknown'} cannot be paced`);
-  return { ...reading, period: type.toLowerCase(), estimated_start: new Date(start).toISOString() };
+  return { ...reading, short_window: null, stale_minutes: 0, period: type.toLowerCase(),
+    estimated_start: new Date(start).toISOString() };
 };
 
 const [usageState, grok] = await Promise.all([
