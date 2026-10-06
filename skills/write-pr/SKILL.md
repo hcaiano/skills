@@ -10,12 +10,12 @@ A repo's own contributing or PR rules win where they conflict.
 **Title.** Conventional Commits, `type(scope): subject`, imperative, no
 trailing period.
 
-**Body, in this order:**
+**Body.** About 150 words of prose in total for a routine PR, not counting
+tables and check lists; add detail only when the reviewer needs it to judge
+real complexity. In this order:
 
-1. **What and why.** The problem and the resulting behavior in plain words,
-   then what the PR deliberately leaves out. About 150 words of prose for a
-   routine PR; add detail only when the reviewer needs it to judge real
-   complexity.
+1. **What and why.** One short paragraph: the problem, the resulting behavior
+   in plain words, and what the PR deliberately leaves out.
 2. **Merge danger.** `Door: one-way` when a revert cannot undo it (data
    migrations, deletions, schema or public API changes, external side
    effects), otherwise `two-way`. `Blast radius:` one word, plus one line only
@@ -33,8 +33,8 @@ trailing period.
 
 Put logs, research and long output behind links or in collapsed `<details>`.
 
-**Media.** Attach with `gh pr create|edit|comment --attach <file>`; a
-`![alt](./file.png)` in the body marks where it lands. Keep media out of git.
+**Media.** Attach with `gh pr create|edit|comment --attach <file>` and keep it
+out of git.
 Missing browser, login or upload access is a blocker to report.
 
 Done when every applicable section is present, the body reads in under a
