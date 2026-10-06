@@ -15,17 +15,19 @@ trailing period.
 tables and check lists; add detail only when the reviewer needs it to judge
 real complexity. In this order:
 
-1. **What and why.** One short paragraph: the problem, the resulting behavior
-   in plain words, and what the PR deliberately leaves out.
+1. **What and why.** One paragraph of at most 80 words: the problem, the
+   resulting behavior in plain words, and what the PR deliberately leaves out.
 2. **Merge danger.** `Door: one-way` when a revert cannot undo it (data
    migrations, deletions, schema or public API changes, external side
-   effects), otherwise `two-way`. `Blast radius:` one word, plus one line only
-   for a material ramification.
+   effects), otherwise `two-way`. `Blast radius:` one word. Add one sentence
+   only for a material ramification.
 3. **Screenshots**, for any visible change: one `| State | Before | After |`
    table with a row per affected state. Each pair comes from the real app
-   with the same route, viewport, theme, role, locale and test data, cropped
-   to the changed area at the same pixel size so the two columns stay equal
-   and readable. Take a missing before from a worktree at the baseline commit.
+   with the same route, viewport, theme, role, locale and test data. Crop
+   both to the same box around the changed component, at most about 400 CSS
+   px wide so it shows unscaled and sharp in its column; on desktop that means
+   the component, not the full row. Take a missing before from a worktree at
+   the baseline commit.
    Name the baseline and final commits.
 4. **Video**, only when movement, timing or a complex interaction cannot be
    read from stills.
