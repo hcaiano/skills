@@ -63,8 +63,9 @@ the diff need user direction. Rerun the affected checks and commit.
 
 Run one more review only when the fixes change behavior, scope, security or
 architecture: a new `delegate_task` on the new HEAD, carrying the prior
-findings and the fixes. Apply its valid findings without a third round; stop
-for user direction if they need another such change.
+findings and the fixes. Apply its valid findings without a third round, then
+rerun the affected checks and commit; stop for user direction if they need
+another such change.
 
 ## 5. Receipt
 
