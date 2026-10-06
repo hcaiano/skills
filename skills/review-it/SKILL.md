@@ -7,8 +7,8 @@ description: "Pre-PR review: grade a finished change by risk, have another model
 
 ## 1. Pin
 
-Run the affected checks, commit everything including new files, and pin
-`<merge-base with origin/<target>>..HEAD`. HEAD stays fixed while reviewers run.
+Run the affected checks, commit everything including new files, fetch the
+target branch, and pin `<merge-base with origin/<target>>..HEAD`. HEAD stays fixed while reviewers run.
 
 Write down the intent and acceptance criteria, chat-only ones included, and the
 model families that wrote the change, delegated workers included. Unknown
@@ -39,7 +39,7 @@ paths of any spec, issue and repo instruction files.
 `dual`: run `interrogate` on the pinned range with the same intent; its Act On
 findings are the findings.
 
-A review counts once it returns substantive findings on the pinned HEAD; restaff
+A review counts once it returns a substantive verdict on the pinned HEAD; restaff
 refusals, quota errors and empty results. A material finding or a `dual` risk
 promotes `single` to `dual`.
 
