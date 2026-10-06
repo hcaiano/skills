@@ -18,13 +18,12 @@ plain names, without a plugin namespace such as `hcaiano:`.
 
 Run the same command to update the installed copies after changing this repo.
 
-Stop Codex, Claude Code, Cursor, Grok, and other running skill loaders before
-any global `skills add` or `skills update`. Skills CLI 1.5.23 replaces each
-canonical `~/.agents/skills/<name>` directory by removing it and then copying
-the new files. A live loader can read during that gap and report a missing
-`SKILL.md`. Finish the CLI command before starting an agent again. After an
-interrupted update, verify the affected path is readable and rerun the same CLI
-command while the loaders are stopped.
+Install and update while agents run. The CLI swaps each canonical
+`~/.agents/skills/<name>` directory in place, so afterwards check that
+`~/.agents/skills/<name>/SKILL.md` is readable, and rerun the same command if
+it is not. Inside a T3 session, unset `CLAUDE_CONFIG_DIR`, `GROK_HOME`,
+`CURSOR_CONFIG_DIR` and `CODEX_HOME` for the command (`env -u ...`); otherwise
+the CLI writes broken `../../../.agents/...` links.
 
 Adding never removes. When a skill is renamed or dropped here, the old copy
 stays installed and keeps answering under its old name, so remove it by name:
