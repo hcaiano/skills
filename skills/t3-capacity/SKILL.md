@@ -4,7 +4,7 @@ description: "Check account usage and pace before delegating through T3 Code or 
 ---
 
 Use `orchestrator_capabilities` for instance IDs, drivers and models. Set
-`SKILL_DIR` to this skill's directory, with `pair` installed beside it, and run:
+`SKILL_DIR` to this skill's directory and run:
 
 ```bash
 node "$SKILL_DIR/scripts/t3-capacity.mjs" \
