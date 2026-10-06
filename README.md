@@ -55,8 +55,9 @@ leaves the globally installed copy in place.
 
 ### Engineering
 
-- `review-it` — grade a finished change by risk, have other models review it
-  through T3 Code, and fix the findings before a PR opens.
+- `review-it` — grade a finished change by risk, have another model review it
+  (or the full `interrogate` panel for risky changes), and fix the findings
+  before a PR opens.
 - `write-pr` — write a short, human-first PR description: what and why, merge
   danger, before/after screenshots, checks, and review.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious
@@ -115,8 +116,9 @@ under Install.
   login's billing endpoint for Grok. Account readings run on the T3 server's
   environment; unverified account mappings and missing usage remain unknown.
 - `review-it` requires the T3 Code orchestration MCP, `t3-capacity`, and
-  pstack's `poteto-mode` (for `references/t3-execution.md` and the
-  `interrogate reviewers` line in `pstack-models.md`).
+  pstack's `poteto-mode` and `interrogate` (for `references/t3-execution.md`,
+  the `interrogate reviewers` line in `pstack-models.md`, and the `dual`
+  panel).
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `delegate_task` to a Codex instance anywhere else.
 - `test-audit` campaigns open each subsystem PR through poteto-mode's Opening
