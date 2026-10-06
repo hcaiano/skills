@@ -25,8 +25,9 @@ authorship counts as every family that may have written it.
 
 Grade the actual diff, including agent behavior in instruction files:
 
-- `skip`: low risk, with focused proof covering every changed behavior.
-- `single`: a bounded runtime change within one subsystem.
+- `skip`: no change to code that runs or to agent instructions; only docs,
+  comments or copy.
+- `single`: any other change bounded to one subsystem.
 - `dual`: security, auth, permissions, payments, migrations, destructive data,
   infrastructure, concurrency, public contracts, cross-subsystem changes,
   ambiguous requirements, or unbounded impact.
