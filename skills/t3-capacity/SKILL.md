@@ -3,17 +3,23 @@ name: t3-capacity
 description: "Check account usage and pace before delegating through T3 Code or after a usage limit."
 ---
 
-Use `orchestrator_capabilities` for instance IDs and drivers. Set `SKILL_DIR`
-to this skill's directory, with `pair` installed beside it, and run:
+Use `orchestrator_capabilities` for instance IDs, drivers and models. Set
+`SKILL_DIR` to this skill's directory, with `pair` installed beside it, and run:
 
 ```bash
 node "$SKILL_DIR/scripts/t3-capacity.mjs" \
-  --settings <server-settings.json> \
-  --instance <id>:<driver> [--instance ...]
+  [--candidate <id>/<model>[,<id>/<model>...]]...
 ```
 
-Use confirmed settings for the server running this shell, or omit
-`--settings`. Follow mapping notes; `--declare` needs a user-stated mapping.
+With no `--instance`, the script reads the recorded mapping in
+`~/.agents/t3-capacity.json`. Without that file, pass `--settings` for the
+server running this shell and one `--instance <id>:<driver>` per instance.
+Follow mapping notes; `--declare` and a recorded declaration need a
+user-stated mapping.
+
+To pick a delegate, pass each preference tier as one `--candidate` flag,
+listing every instance that serves each model in that tier. Delegate to
+`choice`. A null `choice` is a capacity blocker: report it, never guess.
 
 Summarize usage, pace, resets and account states. Pace above 1 risks
 exhaustion before reset. Unknown capacity proves no headroom.
