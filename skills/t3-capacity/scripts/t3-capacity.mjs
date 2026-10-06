@@ -8,6 +8,23 @@
 //              to bill it (an empty list is a reading no instance claimed)
 //   available  mapped pools in the available state, lower pace first
 //   alerts     pair's early-empty alerts, unchanged
+//   candidates with --candidate: each <instance>/<model> with the pool it
+//              bills and that pool's state, pace and use
+//   choice     the candidate to delegate to, or null when none can take work
+//
+// Each --candidate flag is one preference tier of comma-separated
+// <instance>/<model> entries. The choice is the first tier holding an
+// available candidate, then the first holding a protected one; within a tier
+// the lowest pace wins. Unknown and unavailable pools are never chosen.
+// Cursor bills its own models (Auto, Composer, Cursor Grok) to cursor_models
+// and every other model to other_models, which overflows into on-demand
+// spend, so a Cursor candidate takes the state of the pool its model bills.
+//
+// --mapping names a JSON file holding the settings path and the per-instance
+// drivers, login homes and declarations below, so one recorded statement maps
+// every run: {"settings": path, "instances": {id: {"driver", "authHome"?,
+// "declare"?}}}. With neither --instance nor --mapping, the file
+// ~/.agents/t3-capacity.json is read when present. Flags add to the file.
 //
 // Usage comes from pair's usage-state helper; this script adds only the Grok
 // reading pair lacks and the proof that a T3 instance bills a pool. Nothing
@@ -33,13 +50,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const usage = 'usage: t3-capacity.mjs --instance <id>:<driverKind>... [--auth-home <id>=<dir>]... '
-  + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>]';
+  + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
+  + '[--mapping <file>] [--candidate <id>/<model>[,<id>/<model>...]]...';
 const fail = (message) => { console.error(message); process.exit(2); };
 
 const instances = [];
 const authHomes = new Map();
 const declared = new Map();
 let settingsFile = null;
+let mappingFile = null;
+const tiers = [];
+const expand = (dir) => path.resolve(dir.replace(/^~(?=\/|$)/u, os.homedir()));
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i += 2) {
   const [flag, value] = [args[i], args[i + 1]];
@@ -50,12 +71,36 @@ for (let i = 0; i < args.length; i += 2) {
     return [value.slice(0, at), value.slice(at + 1)];
   };
   if (flag === '--instance') { const [id, driver] = pair(':'); instances.push({ id, driver }); }
-  else if (flag === '--auth-home') { const [id, dir] = pair('='); authHomes.set(id, path.resolve(dir.replace(/^~(?=\/|$)/u, os.homedir()))); }
+  else if (flag === '--auth-home') { const [id, dir] = pair('='); authHomes.set(id, expand(dir)); }
   else if (flag === '--declare') {
     const [id, pool] = pair('=');
     declared.set(id, pool);
   } else if (flag === '--settings') settingsFile = path.resolve(value);
-  else fail(usage);
+  else if (flag === '--mapping') mappingFile = expand(value);
+  else if (flag === '--candidate') {
+    tiers.push(value.split(',').map((entry) => {
+      const at = entry.indexOf('/');
+      if (at < 1 || at === entry.length - 1) fail(`--candidate needs <id>/<model>, got ${entry}\n${usage}`);
+      return { instance: entry.slice(0, at), model: entry.slice(at + 1) };
+    }));
+  } else fail(usage);
+}
+const defaultMapping = path.join(os.homedir(), '.agents', 't3-capacity.json');
+if (!mappingFile && !instances.length && fs.existsSync(defaultMapping)) mappingFile = defaultMapping;
+if (mappingFile) {
+  let mapping;
+  try { mapping = JSON.parse(fs.readFileSync(mappingFile, 'utf8')); }
+  catch { fail(`mapping ${mappingFile} is missing or not JSON`); }
+  settingsFile ??= mapping.settings ? expand(mapping.settings) : null;
+  for (const [id, entry] of Object.entries(mapping.instances ?? {})) {
+    if (!entry?.driver) fail(`mapping ${mappingFile} gives ${id} no driver`);
+    if (!instances.some((instance) => instance.id === id)) instances.push({ id, driver: entry.driver });
+    if (entry.authHome && !authHomes.has(id)) authHomes.set(id, expand(entry.authHome));
+    if (entry.declare && !declared.has(id)) declared.set(id, entry.declare);
+  }
+}
+for (const { instance } of tiers.flat()) {
+  if (!instances.some(({ id }) => id === instance)) fail(`--candidate names ${instance}, which no instance lists`);
 }
 if (!instances.length) fail(`name at least one instance from orchestrator_capabilities\n${usage}`);
 // A declaration names an account, never another subscription: the driver
@@ -274,12 +319,32 @@ const mapped = instances.map((instance) => {
   return result;
 });
 
+const byPace = (a, b) => (a.pace ?? 1) - (b.pace ?? 1) || (a.used_percent ?? 100) - (b.used_percent ?? 100);
 const available = Object.entries(accounts)
   .filter(([, entry]) => entry.state === 'available' && entry.instances.length && !entry.same_account_as)
-  .sort(([, a], [, b]) => (a.reading.pace ?? 1) - (b.reading.pace ?? 1) || a.reading.used_percent - b.reading.used_percent)
+  .sort(([, a], [, b]) => byPace(a.reading, b.reading))
   .map(([key]) => key);
+
+const cursorOwn = /^(?:default|auto|composer|grok)(?:[-.]|$)/iu;
+const ranked = tiers.map((tier, index) => tier.map(({ instance, model }) => {
+  const { pools, driver } = mapped.find(({ id }) => id === instance);
+  const billed = driver === 'cursor' && pools.length ? [cursorOwn.test(model) ? 'cursor_models' : 'other_models'] : pools;
+  const pool = billed.length === 1 ? billed[0] : null;
+  const reading = pool ? accounts[pool].reading : null;
+  return { tier: index, instance, model, pool, state: pool ? accounts[pool].state : 'unknown',
+    pace: reading?.pace ?? null, used_percent: reading?.used_percent ?? null };
+}));
+let choice = null;
+for (const state of ['available', 'protected']) {
+  for (const tier of ranked) {
+    choice = tier.filter((candidate) => candidate.state === state).sort(byPace)[0] ?? null;
+    if (choice) break;
+  }
+  if (choice) break;
+}
 
 console.log(JSON.stringify({
   instances: mapped, accounts, available, alerts: pairUsage.alerts ?? [],
+  ...(tiers.length ? { candidates: ranked.flat(), choice } : {}),
   ...(settingsError ? { settings_error: settingsError } : {}),
 }, null, 1));

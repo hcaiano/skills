@@ -20,7 +20,8 @@ const securityStub = (body) => {
 const stubBin = securityStub("#!/bin/sh\nexit 44\n");
 
 // Answers pair's read-only rate-limit request per CODEX_HOME: the home whose
-// path ends in `second` has headroom, every other home is nearly spent.
+// path ends in `second` has headroom, `third` burns faster than it can fund,
+// every other home is nearly spent.
 const fakeCodex = (dir) => {
   const bin = join(dir, "codex-fixture");
   writeFileSync(bin, `#!/usr/bin/env node
@@ -29,7 +30,7 @@ rl.on('line', line=>{
  const m=JSON.parse(line);
  if(m.method==='initialize') console.log(JSON.stringify({id:m.id,result:{}}));
  if(m.method==='account/rateLimits/read') {
-  const used=process.env.CODEX_HOME.endsWith('second')?35:95;
+  const used=process.env.CODEX_HOME.endsWith('second')?35:process.env.CODEX_HOME.endsWith('third')?70:95;
   console.log(JSON.stringify({id:m.id,result:{rateLimitsByLimitId:{codex:{limitId:'codex',
    primary:{usedPercent:used,windowDurationMins:10080,resetsAt:Date.now()/1000+72*3600}}}}}));
  }
@@ -237,4 +238,42 @@ test("Grok reads only the grok.com login, paced like pair's pools", async () => 
   } finally {
     server.close();
   }
+});
+
+test("a recorded mapping maps every run, and the choice walks preference tiers by pool state", async () => {
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-candidates-"));
+  const homes = {};
+  for (const name of ["spent", "second", "third"]) {
+    homes[name] = join(home, ".codex-profiles", name);
+    login(join(homes[name], "auth.json"));
+  }
+  login(join(home, ".codex", "auth.json"));
+  const settings = settingsFile(home, Object.fromEntries([
+    ...Object.keys(homes).map((name) => [name, { driver: "codex", config: { binaryPath: `/opt/t3-${name}` } }]),
+    ["cursor", { driver: "cursor", config: { binaryPath: "/opt/t3-cursor" } }],
+  ]));
+  mkdirSync(join(home, ".agents"), { recursive: true });
+  writeFileSync(join(home, ".agents", "t3-capacity.json"), JSON.stringify({ settings, instances: {
+    ...Object.fromEntries(Object.entries(homes).map(([name, dir]) => [name, { driver: "codex", authHome: dir }])),
+    cursor: { driver: "cursor", declare: "cursor" },
+  } }));
+  const env = { HOME: home, CODEX_BIN: fakeCodex(home) };
+  const pick = async (...tiers) => (await run(tiers.flatMap((tier) => ["--candidate", tier]), env)).choice;
+
+  const recorded = await run([], env);
+  assert.deepEqual(Object.fromEntries(recorded.instances.map(({ id, states }) => [id, states])), {
+    spent: { "codex:spent": "unavailable" }, second: { "codex:second": "available" },
+    third: { "codex:third": "protected" },
+    cursor: { cursor_models: "unknown", other_models: "unknown" },
+  });
+
+  // A later tier with headroom beats an earlier one burning too fast.
+  assert.equal((await pick("third/m", "second/m")).instance, "second");
+  // With no headroom anywhere, a protected pool still takes work; a spent one never does.
+  assert.equal((await pick("spent/m", "third/m")).instance, "third");
+  assert.equal(await pick("spent/m"), null);
+
+  // Cursor's own models and every other model draw different pools.
+  const cursor = await run(["--candidate", "cursor/grok-4.7,cursor/composer-2.5,cursor/claude-opus-5-5"], env);
+  assert.deepEqual(cursor.candidates.map(({ pool }) => pool), ["cursor_models", "cursor_models", "other_models"]);
 });
