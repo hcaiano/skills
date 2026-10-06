@@ -107,7 +107,7 @@ Before claiming completion, have independent read-only reviewers, one per
 boundary group, compare deleted coverage against the keepers. They look for
 contracts that lost their only proof, and for new assertions that cannot fail,
 such as a rejection row the production code never reaches. Run each reviewer
-with `delegate_task`.
+with `delegate_task`, read-only, on a different model than the author's.
 
 For each restored contract, make one deliberate **mutation** of the production
 owner and confirm the keeper goes red. Copy the owner file before mutating it;
@@ -133,21 +133,23 @@ When the default branch changed a file the campaign deleted, keep the deletion,
 port the new contract into its keeper, and confirm every new regression test
 there still has a home. Rerun the whole subsystem suite on the merged head.
 
-Once the user authorizes delivery, open the subsystem PR through poteto-mode's
-[Opening a PR](../../poteto-mode/playbooks/opening-a-pr.md) playbook. Its
-[interrogate](../../interrogate/SKILL.md) review takes the step-6 preservation
-review as the spec source and grades the deleted coverage. The PR carries the
-[audit.md](audit.md) report, plus:
+Run interrogate on the subsystem diff. Its intent paragraph carries the step-6
+preservation review: each retired contract, the keeper that now proves it, and
+the gaps restored with their mutations. Once the user authorizes delivery, open
+the subsystem PR through poteto-mode's Opening a PR playbook. The PR carries
+the [audit.md](audit.md) report, plus:
 
 - baseline and final test and test-support line counts, production counted
   separately;
 - lanes, retired layers, and keepers;
 - preservation gaps found and their mutations;
-- product defects with control and candidate proof.
+- product defects with control and candidate proof;
+- interrogate's Act On findings and how each was resolved.
 
-Done when the PR is open, its interrogate review has graded the deleted
-coverage, and the report is saved as `result.md` in the subsystem's notes
-folder.
+Done when each Act On finding is fixed and verified (restored coverage gets
+step 6's mutation proof), rejected with source evidence in the PR, or reported
+to the user as blocking the handoff; the PR is open; and the report is saved as
+`result.md` in the subsystem's notes folder.
 
 ## 9. Close the app
 
