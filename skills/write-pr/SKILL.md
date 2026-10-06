@@ -67,4 +67,5 @@ of the body. Keep media out of git. Missing browser, login or upload access is
 a blocker to report.
 
 Done when every applicable section is present, the body reads in under a
-minute, and `gh pr view --json body` shows no `./` media paths left.
+minute, `gh pr view --json body` shows no `./` media paths left, and each
+image renders and each video plays on the PR page.
