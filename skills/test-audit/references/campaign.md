@@ -133,8 +133,8 @@ When the default branch changed a file the campaign deleted, keep the deletion,
 port the new contract into its keeper, and confirm every new regression test
 there still has a home. Rerun the whole subsystem suite on the merged head.
 
-Run interrogate on the subsystem diff. Its intent paragraph carries the step-6
-preservation review: each retired contract, the keeper that now proves it, and
+Run `review-it` at grade `dual` on the subsystem diff. Its intent carries the
+step-6 preservation review: each retired contract, the keeper that now proves it, and
 the gaps restored with their mutations. Once the user authorizes delivery, open
 the subsystem PR through poteto-mode's Opening a PR playbook. The PR carries
 the [audit.md](audit.md) report, plus:
@@ -144,10 +144,10 @@ the [audit.md](audit.md) report, plus:
 - lanes, retired layers, and keepers;
 - preservation gaps found and their mutations;
 - product defects with control and candidate proof;
-- interrogate's Act On findings and how each was resolved.
+- the review findings and how each was resolved.
 
 Done when the report is saved as `result.md` in the subsystem's notes folder
-and either the PR is open with each Act On finding fixed and verified
+and either the PR is open with each review finding fixed and verified
 (restored coverage gets step 6's mutation proof) or rejected with source
 evidence, or a blocking finding is reported to the user and the PR is held.
 

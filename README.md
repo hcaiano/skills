@@ -55,9 +55,9 @@ leaves the globally installed copy in place.
 
 ### Engineering
 
-- `review-it` — grade a finished change by risk, have another model review it
-  (or the full `interrogate` panel for risky changes), and fix the findings
-  before a PR opens.
+- `review-it` — pre-PR review: grade a change by risk, have another model
+  family review it (the full `interrogate` panel when risky), and fix the
+  findings.
 - `write-pr` — write a short, human-first PR description: what and why, merge
   danger, before/after screenshots, checks, and review.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious
@@ -121,9 +121,8 @@ under Install.
   panel).
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `delegate_task` to a Codex instance anywhere else.
-- `test-audit` campaigns open each subsystem PR through poteto-mode's Opening
-  a PR playbook with an `interrogate` review, and run reviewers with
-  `delegate_task`.
+- `test-audit` campaigns review each subsystem PR with `review-it` and run
+  reviewers with `delegate_task`.
 
 These dependencies are not bundled here and must be installed separately.
 

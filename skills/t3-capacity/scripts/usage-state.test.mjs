@@ -55,7 +55,7 @@ test("a one-record Codex session keeps its first JSONL record", () => {
 });
 
 test("Cursor native usage reports its two monthly pools", () => {
-  const home = mkdtempSync(join(tmpdir(), "orchestrate-cursor-usage-"));
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-cursor-usage-"));
   const bin = join(home, "cursor-agent");
   const next = new Date();
   next.setUTCDate(next.getUTCDate() + 20);
@@ -110,7 +110,7 @@ printf 'Usage • Ultra  Resets ${reset}\\n  Auto 5%% used\\n  API 95%% used\\n'
 });
 
 test("Codex homes have separate usage and stale headroom is not recommended", () => {
-  const taskHome = mkdtempSync(join(tmpdir(), "orchestrate-identities-"));
+  const taskHome = mkdtempSync(join(tmpdir(), "t3-capacity-identities-"));
   const snapshot = (home, used, ageMinutes) => {
     const sessions = join(home, "sessions");
     mkdirSync(sessions, { recursive: true });
@@ -138,7 +138,7 @@ test("Codex homes have separate usage and stale headroom is not recommended", ()
 });
 
 test("live quota stays bound to each Codex home and a failed read is unknown", () => {
-  const taskHome = mkdtempSync(join(tmpdir(), "orchestrate-live-identities-"));
+  const taskHome = mkdtempSync(join(tmpdir(), "t3-capacity-live-identities-"));
   for (const dir of [join(taskHome, ".codex"), join(taskHome, ".codex-profiles", "second")]) {
     mkdirSync(join(dir, "sessions"), { recursive: true });
     writeFileSync(join(dir, "sessions", "recent.jsonl"), JSON.stringify({

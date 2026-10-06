@@ -1,14 +1,14 @@
 # Review brief
 
-Review the pinned range read-only: no edits, no commits, no state-changing git
-commands, no subagents. Report material findings on the changed code and its
-consumers; leave style nits and automated checks to their tools.
+Review the pinned range read-only: inspect, then report. Report material
+findings on the changed code and its consumers; style and automated checks
+belong to their tools.
 
 ## Standards
 
 Check correctness, security, data integrity, repository conventions and test
-value. Assess changed tests with `test-audit` when it is installed. Report
-exposed credentials by location only, never value.
+value, assessing changed tests with `test-audit`. Report exposed credentials by
+location only.
 
 Look for structural simplifications: misplaced logic, needless indirection,
 duplicated behavior, special cases, speculative defenses, and types or
@@ -18,9 +18,8 @@ Documented repo standards win over general taste.
 
 ## Spec
 
-Check the issue, spec or stated intent for missing requirements, wrong
-behavior and scope creep, quoting the requirement. Without a spec, say so and
-use the stated intent.
+Check the intent and acceptance criteria for missing requirements, wrong
+behavior and scope creep, quoting the requirement.
 
 ## Output
 
