@@ -5,6 +5,7 @@ description: "Write or update a pull request title and description for a human r
 
 # Write PR
 
+Use this instead of other PR description templates, including poteto-mode's.
 A repo's own contributing or PR rules win where they conflict.
 
 **Title.** Conventional Commits, `type(scope): subject`, imperative, no
@@ -20,17 +21,18 @@ real complexity. In this order:
    migrations, deletions, schema or public API changes, external side
    effects), otherwise `two-way`. `Blast radius:` one word, plus one line only
    for a material ramification.
-3. **Screenshots**, for any visible change: before and after from the real
-   app, each pair in one Markdown table row with the same route, viewport,
-   theme, role and data. Label the state and name the baseline and final
-   commits. Capture only the affected states, with test data.
+3. **Screenshots**, for any visible change: one `| State | Before | After |`
+   table with a row per affected state, never images stacked below the text.
+   Each pair uses the same route, viewport, theme, role, locale and data from
+   the real app, cropped to the changed area, with test data. Name the
+   baseline and final commits.
 4. **Video**, only when movement, timing or a complex interaction cannot be
    read from stills.
 5. **Checks.** The checks actually run, their results and the verified commit,
    local and CI apart.
-6. **Review.** Who reviewed (models), findings fixed or rejected, and the
-   reviewed commit.
+6. **Review.** The `review-it` receipt line.
 
+No code snippets, diffs, diagrams or file lists: the reviewer has the diff.
 Put logs, research and long output behind links or in collapsed `<details>`.
 
 **Media.** Attach with `gh pr create|edit|comment --attach <file>` and keep it
