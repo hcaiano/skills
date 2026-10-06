@@ -7,7 +7,7 @@
 //              cursor_models, other_models, grok, with the instances proved
 //              to bill it (an empty list is a reading no instance claimed)
 //   available  mapped pools in the available state, lower pace first
-//   alerts     usage-state's early-empty alerts, unchanged
+//   alerts     the usage reader's early-empty alerts, unchanged
 //   candidates with --candidate: each <instance>/<model> with the pool it
 //              bills and that pool's state, pace and use
 //   choice     the candidate to delegate to, or null when none can take work
@@ -32,14 +32,15 @@
 // settings name each instance's binary and home, but a custom launcher can
 // switch the account, and a shared history home is not an account, so a
 // mapping needs one of:
-//   default-login  a native CLI with no home override: the login usage-state reads
+//   default-login  a native CLI with no home override: the login the usage
+//                  reader reads
 //   same-file      the instance's login file is the reader's (device + inode)
 //   user-declared  --declare, from an explicit user statement; it names a
 //                  pool of the instance's own driver
-// On macOS, usage-state's Claude read takes whichever of the credentials file and
-// the login Keychain expires last, and the Cursor CLI keeps its login in the
-// Keychain, so neither file says which account was read: Claude maps there
-// only by declaration, and Cursor only by default-login or declaration.
+// On macOS, the usage reader's Claude read takes whichever of the credentials
+// file and the login Keychain expires last, and the Cursor CLI keeps its login
+// in the Keychain, so neither file says which account was read: Claude maps
+// there only by declaration, and Cursor only by default-login or declaration.
 // Nothing here writes a file, prints a credential, or runs a launcher.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
