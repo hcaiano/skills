@@ -26,11 +26,9 @@
 // "declare"?}}}. With neither --instance nor --mapping, the file
 // ~/.agents/t3-capacity.json is read when present. Flags add to the file.
 //
-// Usage comes from the sibling usage-state.mjs; this script adds the Grok
-// reading and the proof that a T3 instance bills a pool. Nothing
-// maps without --settings, the settings file of the T3 server this shell runs
-// under: the caller confirms that server, since no file proves it. An
-// instance must appear there under the driver the capabilities report. The
+// Nothing maps without --settings, the settings file of the T3 server this
+// shell runs under: the caller confirms that server, since no file proves it.
+// An instance must appear there under the driver the capabilities report. The
 // settings name each instance's binary and home, but a custom launcher can
 // switch the account, and a shared history home is not an account, so a
 // mapping needs one of:

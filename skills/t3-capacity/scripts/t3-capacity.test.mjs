@@ -19,9 +19,6 @@ const securityStub = (body) => {
 };
 const stubBin = securityStub("#!/bin/sh\nexit 44\n");
 
-// Answers usage-state's read-only rate-limit request per CODEX_HOME: the home whose
-// path ends in `second` has headroom, `third` burns faster than it can fund,
-// every other home is nearly spent.
 const fakeCodex = (dir) => {
   const bin = join(dir, "codex-fixture");
   writeFileSync(bin, `#!/usr/bin/env node
@@ -156,7 +153,6 @@ test("on macOS a Claude credentials file proves no account, since the quota read
     const t3Home = join(home, ".t3", "claude-home");
     mkdirSync(t3Home, { recursive: true });
     linkSync(join(home, ".claude", ".credentials.json"), join(t3Home, ".credentials.json"));
-    // A Keychain login that expires later than the file: usage-state takes it.
     const keychain = securityStub(`#!/bin/sh\nprintf '%s' '${JSON.stringify({
       claudeAiOauth: { accessToken: "keychain-token", expiresAt: now + 10 * 3600 * 1000 } })}'\n`);
     const seen = [];
