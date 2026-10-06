@@ -325,7 +325,7 @@ const available = Object.entries(accounts)
   .sort(([, a], [, b]) => byPace(a.reading, b.reading))
   .map(([key]) => key);
 
-const cursorOwn = /^(?:default|auto|composer|grok)(?:[-.]|$)/u;
+const cursorOwn = /^(?:default|auto|composer|grok)(?:[-.]|$)/iu;
 const ranked = tiers.map((tier, index) => tier.map(({ instance, model }) => {
   const { pools, driver } = mapped.find(({ id }) => id === instance);
   const billed = driver === 'cursor' && pools.length ? [cursorOwn.test(model) ? 'cursor_models' : 'other_models'] : pools;
