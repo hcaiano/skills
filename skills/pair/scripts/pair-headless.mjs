@@ -15,7 +15,7 @@
 //   node pair-headless.mjs status --repo <root>
 //   node pair-headless.mjs clear  --repo <root>
 //   node pair-headless.mjs end    --repo <root>
-//   [--idle-min 20] [--total-min 60] on init and send; writable task turns
+//   [--startup-min 5] [--idle-min 20] [--total-min 60] on init and send; writable task turns
 //   default to 45 idle and 120 total minutes
 //
 // Git worktree state lives in `<git-dir>/pair/session.json`. A plain directory
@@ -24,8 +24,9 @@
 // `in-flight.json` beside it for as long as it runs, because half-duplex means
 // one resume of the CLI session at a time; a send refuses over any existing
 // marker and `clear` is the only remover. The deadline mechanic (output-based
-// liveness — stock macOS has no `timeout` — and a kill of the PID itself, never
-// the group) follows review-it's headless wrappers; the receipt shape follows
+// liveness — stock macOS has no `timeout` — and a process-group kill for
+// startup stalls, otherwise a kill of the PID itself) follows review-it's
+// headless wrappers; the receipt shape follows
 // theirs too, so a caller reads one JSON object per command and never a
 // transcript to learn what happened.
 //
@@ -938,124 +939,185 @@ const codexRateLimits = async (state) => {
   }
 };
 
-// Detached so a signal aimed at this helper's process group cannot decapitate a
-// partner turn that is mid-edit; killed by PID, never by group.
+// Snapshot descendants before signalling their parent, including children that
+// started their own process groups. /proc is available on Linux; ps supplies
+// the same parent relationships on macOS.
+const descendantPids = (rootPid) => {
+  let table = readProcessTable();
+  if (!table) {
+    const listing = spawnSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8", timeout: 2000 });
+    table = new Map();
+    for (const line of (listing.stdout ?? "").trim().split("\n")) {
+      const [pid, ppid] = line.trim().split(/\s+/u).map(Number);
+      if (Number.isInteger(pid) && pid > 0 && Number.isInteger(ppid)) table.set(pid, { ppid });
+    }
+  }
+  const descendants = new Set();
+  let parents = new Set([rootPid]);
+  while (parents.size) {
+    const next = new Set();
+    for (const [pid, { ppid }] of table) {
+      if (parents.has(ppid) && !descendants.has(pid)) {
+        descendants.add(pid);
+        next.add(pid);
+      }
+    }
+    parents = next;
+  }
+  return descendants;
+};
+
+// Detached so a signal aimed at the helper's process group cannot stop the
+// partner. Startup stalls kill that detached group, including MCP children.
 const supervise = ({
-  bin, args, cwd, env = process.env, prompt, transcriptPath, idleMs, totalMs,
-  onSpawn, onExit, onHang, onQueue,
+  bin, args, cwd, env = process.env, prompt, transcriptPath, startupMs, idleMs, totalMs,
+  onSpawn, onExit, onHang, onStartupStall, onQueue,
   queueProbe = probeHeavyQueue, queueProbeMs = HEAVY_QUEUE_PROBE_MS,
 }) => {
   const startedAt = Date.now();
   const fd = openSync(transcriptPath, "w");
-  const child = spawn(bin, args, { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
-  onSpawn?.(child.pid);
   let text = "";
-  let lastGrowth = Date.now();
-  const mirror = (chunk) => {
-    writeSync(fd, chunk);
-    text += chunk.toString();
-    lastGrowth = Date.now();
-  };
-  child.stdout.on("data", mirror);
-  child.stderr.on("data", mirror);
-  child.stdin.on("error", () => {});
-  child.stdin.end(prompt);
-
-  let spawnError = null;
+  let outputBytes = 0;
+  let startupRetries = 0;
   let settled = false;
-  let killing = false;
-  let timer = null;
-  const done = (finish) => {
-    if (settled) return;
-    settled = true;
-    clearInterval(timer);
-    closeSync(fd);
-    finish();
-  };
-  // The exit is reported by the child, not discovered by the poll: a finished
-  // turn returns immediately and the interval only ever measures deadlines.
-  // Time spent queued behind the heavy slot is subtracted from the total
-  // budget and counts as activity for the idle one.
   let pausedMs = 0;
   let queuedSince = null;
   let queueEpisodes = 0;
-  let lastProbe = 0;
   const heavyQueue = (now) => {
     if (!queueEpisodes) return null;
     return { seconds: Math.round((pausedMs + (queuedSince == null ? 0 : now - queuedSince)) / 1000), episodes: queueEpisodes };
   };
-  const settle = (code) => {
-    if (killing) return; // a killed turn reports the hang, never the kill's exit
-    const now = Date.now();
-    done(() =>
-      onExit({
-        exit: code ?? -1,
-        transcript: text,
-        seconds: Math.round((now - startedAt) / 1000),
-        heavyQueue: heavyQueue(now),
-        spawnError,
-      }),
-    );
-  };
-  child.on("close", settle);
-  child.on("error", (error) => {
-    spawnError = error;
-    settle(-1);
+  const details = () => ({
+    transcript: text,
+    seconds: Math.round((Date.now() - startedAt) / 1000),
+    heavyQueue: heavyQueue(Date.now()),
+    startupRetries,
   });
+  const done = (finish) => {
+    if (settled) return;
+    settled = true;
+    closeSync(fd);
+    finish();
+  };
 
-  timer = setInterval(() => {
-    const now = Date.now();
-    if (queueProbe && now - lastProbe >= queueProbeMs) {
-      lastProbe = now;
-      let job = null;
-      try {
-        job = queueProbe(child.pid);
-      } catch {
-        job = null; // a probe failure never touches the deadlines
+  const attempt = () => {
+    // The clock starts at spawn, never while the launcher or a heavy slot is
+    // queued. Only a zero-byte attempt may reach this function a second time.
+    const spawnedAt = Date.now();
+    const pausedAtSpawn = pausedMs;
+    const child = spawn(bin, args, { cwd, env, detached: true, stdio: ["pipe", "pipe", "pipe"] });
+    onSpawn?.(child.pid, startupRetries);
+    let lastGrowth = spawnedAt;
+    let spawnError = null;
+    let killing = false;
+    let lastProbe = 0;
+    let timer = null;
+    const mirror = (chunk) => {
+      writeSync(fd, chunk);
+      outputBytes += chunk.length;
+      text += chunk.toString();
+      lastGrowth = Date.now();
+    };
+    // Count every byte, including stderr warnings and incomplete JSON. Any
+    // output makes replay unsafe, regardless of whether it parses as an event.
+    child.stdout.on("data", mirror);
+    child.stderr.on("data", mirror);
+    child.stdin.on("error", () => {});
+    child.stdin.end(prompt);
+    const settle = (code) => {
+      if (killing || settled) return;
+      clearInterval(timer);
+      done(() => onExit({ exit: code ?? -1, spawnError, ...details() }));
+    };
+    child.on("close", settle);
+    child.on("error", (error) => {
+      spawnError = error;
+      settle(-1);
+    });
+
+    timer = setInterval(() => {
+      const now = Date.now();
+      if (queueProbe && now - lastProbe >= queueProbeMs) {
+        lastProbe = now;
+        let job = null;
+        try { job = queueProbe(child.pid); } catch { /* leave budgets running */ }
+        if (job && queuedSince == null) {
+          queuedSince = now;
+          queueEpisodes += 1;
+          onQueue?.({ queued: true, since: new Date(now).toISOString(), job, ...heavyQueue(now) });
+        } else if (!job && queuedSince != null) {
+          pausedMs += now - queuedSince;
+          queuedSince = null;
+          lastGrowth = now;
+          onQueue?.({ queued: false, since: null, job: null, ...heavyQueue(now) });
+        }
       }
-      if (job && queuedSince == null) {
-        queuedSince = now;
-        queueEpisodes += 1;
-        onQueue?.({ queued: true, since: new Date(now).toISOString(), job, ...heavyQueue(now) });
-      } else if (!job && queuedSince != null) {
-        pausedMs += now - queuedSince;
-        queuedSince = null;
-        lastGrowth = now; // the idle clock restarts when the slot is granted
-        onQueue?.({ queued: false, since: null, job: null, ...heavyQueue(now) });
-      }
-    }
-    const queuedNow = queuedSince == null ? 0 : now - queuedSince;
-    const idle = queuedSince == null ? now - lastGrowth : 0;
-    const elapsed = now - startedAt - pausedMs - queuedNow;
-    if (idle > idleMs || elapsed > totalMs) {
+      const queuedNow = queuedSince == null ? 0 : now - queuedSince;
+      const idle = queuedSince == null ? now - lastGrowth : 0;
+      const elapsed = now - startedAt - pausedMs - queuedNow;
+      const startupElapsed = now - spawnedAt - (pausedMs - pausedAtSpawn) - queuedNow;
+      const startupStalled = outputBytes === 0 && startupElapsed > startupMs;
+      if (!startupStalled && idle <= idleMs && elapsed <= totalMs) return;
       killing = true;
       clearInterval(timer);
-      // The receipt is read mid-incident, so the reason names the flag that
-      // raises the budget it just enforced.
       const excluded = heavyQueue(now);
-      const why =
-        elapsed > totalMs
+      const why = startupStalled
+        ? `no output within startup budget ${startupMs / 60000}m`
+        : elapsed > totalMs
           ? `total budget ${Math.round(totalMs / 60000)}m exceeded — raise it with send --total-min${excluded ? ` (${Math.round(excluded.seconds / 60)}m queued behind the devbox heavy slot was excluded)` : ""}`
           : `no output for ${Math.round(idleMs / 60000)}m — raise it with send --idle-min`;
-      child.kill("SIGTERM"); // the PID itself, never the group
-      setTimeout(() => {
-        try {
-          process.kill(child.pid, 0);
-          child.kill("SIGKILL");
-        } catch {
-          /* already gone */
+      const descendants = new Set();
+      const signal = (name) => {
+        if (!startupStalled) { child.kill(name); return; }
+        // Every partner is detached, so its pid is also its process group id.
+        // Signal the group again even if the parent exited on SIGTERM: an MCP
+        // child may ignore it and keep the credential lookup blocked.
+        for (const pid of descendantPids(child.pid)) descendants.add(pid);
+        for (const pid of [...descendants].reverse()) {
+          try { process.kill(pid, name); } catch (error) {
+            if (error?.code !== "ESRCH") throw error;
+          }
         }
-        setTimeout(
-          () =>
-            done(() =>
-              onHang({ why, transcript: text, seconds: Math.round((Date.now() - startedAt) / 1000), heavyQueue: heavyQueue(Date.now()) }),
-            ),
-          500,
-        );
+        try { process.kill(-child.pid, name); } catch (error) {
+          if (error?.code !== "ESRCH") throw error;
+        }
+      };
+      signal("SIGTERM");
+      setTimeout(() => {
+        signal("SIGKILL");
+        setTimeout(() => {
+          // Drain output during termination before deciding whether replay is
+          // safe. A late byte permanently disables the automatic retry.
+          if (startupStalled && outputBytes === 0) {
+            if (queuedSince != null) {
+              pausedMs += Date.now() - queuedSince;
+              queuedSince = null;
+            }
+            if (startupRetries === 0) {
+              startupRetries += 1;
+              attempt();
+            } else {
+              done(() => onStartupStall({ why, ...details() }));
+            }
+          } else {
+            done(() => onHang({ why, ...details() }));
+          }
+        }, 500);
       }, 2000);
-    }
-  }, POLL_MS);
+    }, POLL_MS);
+  };
+  attempt();
 };
+
+const startupRecovery = (partner) => partner === "codex"
+  ? "Run codex mcp list under the recorded CODEX_HOME and inspect the MCP OAuth credential store for a blocked or locked keyring, then resend."
+  : "Inspect the partner CLI startup configuration and authentication, then resend.";
+
+const budgetFields = ({ startupMs, idleMs, totalMs }) => ({
+  startup_min: startupMs / 60000,
+  idle_min: idleMs / 60000,
+  total_min: totalMs / 60000,
+});
 
 // --- model resolution -------------------------------------------------------
 //
@@ -1375,9 +1437,11 @@ const deadlines = ({ kind, write } = {}) => {
     opt("total-min", String(defaultTotalMinutes({ kind, write }))),
     "total-min",
   );
+  const startup = minutesToMs(opt("startup-min", "5"), "startup-min");
+  if (startup.error) fail(startup.error, 2);
   if (idle.error) fail(idle.error, 2);
   if (total.error) fail(total.error, 2);
-  return { idleMs: idle.ms, totalMs: total.ms };
+  return { startupMs: startup.ms, idleMs: idle.ms, totalMs: total.ms };
 };
 
 // The fields a receipt and `status` report about the recorded staffing.
@@ -1453,6 +1517,7 @@ const runInit = async () => {
     );
   }
 
+  const { startupMs, idleMs, totalMs } = deadlines();
   const { partner, self, identity, identity_home: identityHome, error } = resolvePartner(requestedPartner, process.env, {
     identity: requestedIdentity ?? "default",
   });
@@ -1488,7 +1553,6 @@ const runInit = async () => {
     effort: resolved.command.effort,
     bin: codexBin,
   });
-  const { idleMs, totalMs } = deadlines();
   const prompt = bootstrapPrompt({ self, partner, root: place.root, role });
   if (promptVia === "file") writeFileSync(promptFile, `${prompt}\n`);
   const invocationArgs = promptVia === "argv" ? [...args, prompt] : args;
@@ -1500,16 +1564,22 @@ const runInit = async () => {
     env: partnerEnv({ partner, identity_home: identityHome }),
     prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath,
+    startupMs,
     idleMs,
     totalMs,
-    onExit: ({ exit, transcript, seconds, spawnError }) => {
-      if (spawnError) fail(`cannot run ${bin}: ${spawnError.message}`);
+    onExit: ({ exit, transcript, seconds, spawnError, startupRetries }) => {
+      const failInit = (reason) => emit({
+        ok: false, status: "failed", reason, transcript: transcriptPath, seconds,
+        ...budgetFields({ startupMs, idleMs, totalMs }),
+        startup_retries: startupRetries,
+      }, 1);
+      if (spawnError) failInit(`cannot run ${bin}: ${spawnError.message}`);
       if (exit !== 0) {
-        fail(`${bin} exited ${exit} during init — see ${transcriptPath}`);
+        failInit(`${bin} exited ${exit} during init — see ${transcriptPath}`);
       }
       const sid = presetSid ?? parseSessionId(partner, transcript);
       if (!sid) {
-        fail(`${bin} produced no session id — a pair needs a resumable session; see ${transcriptPath}`);
+        failInit(`${bin} produced no session id — a pair needs a resumable session; see ${transcriptPath}`);
       }
       // A bootstrap that the CLI itself marks as an error is not a pair, even
       // when it exited 0 and left a session id behind.
@@ -1517,7 +1587,7 @@ const runInit = async () => {
         (partner === "claude" && parseClaudeResult(transcript)?.is_error) ||
         (partner === "cursor" && parseCursorResult(transcript)?.is_error)
       ) {
-        fail(`${bin} reported is_error during init — the ${partner} session ${sid} exists in its store but no pair was recorded; see ${transcriptPath}`);
+        failInit(`${bin} reported is_error during init — the ${partner} session ${sid} exists in its store but no pair was recorded; see ${transcriptPath}`);
       }
       // Claude reports the exact model it resolved in its init event. That
       // report is the record; an alias that resolved outside its family is a
@@ -1528,7 +1598,7 @@ const runInit = async () => {
         const init = parseClaudeInit(transcript);
         modelResolved = typeof init?.model === "string" ? init.model : null;
         if (resolved.family && (!modelResolved || !modelResolved.includes(resolved.family))) {
-          fail(
+          failInit(
             `claude resolved alias ${resolved.family} to ${modelResolved ?? "no reported model"} — not a ${resolved.family} model; the bootstrap session ${sid} exists in Claude's store but no pair was recorded; see ${transcriptPath}`,
           );
         }
@@ -1559,6 +1629,8 @@ const runInit = async () => {
         {
           ok: true,
           status: "created",
+          ...budgetFields({ startupMs, idleMs, totalMs }),
+          startup_retries: startupRetries,
           sid,
           partner,
           role,
@@ -1572,8 +1644,19 @@ const runInit = async () => {
         0,
       );
     },
-    onHang: ({ why, seconds }) =>
-      emit({ ok: false, status: "hang-killed", reason: `hang: ${why}`, transcript: transcriptPath, seconds }, 1),
+    onStartupStall: ({ why, seconds, startupRetries }) => {
+      const receiptFile = join(place.transcripts, "0000-init-receipt.json");
+      const receipt = {
+        ok: false, status: "startup-stalled", reason: `${why} on both attempts`,
+        recovery: startupRecovery(partner), transcript: transcriptPath,
+        receipt_file: receiptFile, ...budgetFields({ startupMs, idleMs, totalMs }),
+        startup_retries: startupRetries, seconds,
+      };
+      atomicJson(receiptFile, receipt);
+      emit(receipt, 1);
+    },
+    onHang: ({ why, seconds, startupRetries }) =>
+      emit({ ok: false, status: "hang-killed", reason: `hang: ${why}`, transcript: transcriptPath, seconds, ...budgetFields({ startupMs, idleMs, totalMs }), startup_retries: startupRetries }, 1),
   });
 };
 
@@ -1723,6 +1806,7 @@ const runWorker = () => {
   const seq = Number(opt("seq"));
   const kind = opt("kind");
   const token = opt("worker-token");
+  const startupMs = Number(opt("startup-ms", "300000"));
   const idleMs = Number(opt("idle-ms"));
   const totalMs = Number(opt("total-ms"));
   const write = opt("write-value") === "true";
@@ -1777,6 +1861,7 @@ const runWorker = () => {
     write,
     supervisor_pid: process.pid,
     command: [bin, ...args],
+    ...budgetFields({ startupMs, idleMs, totalMs }),
   };
 
   // The receipt carries what the transcript alone cannot show: time the turn
@@ -1785,7 +1870,7 @@ const runWorker = () => {
   const finish = async (
     extra,
     code,
-    { cancelled = false, forkSessionId = null, replied = false, transcript = "", heavyQueue = null } = {},
+    { cancelled = false, forkSessionId = null, replied = false, transcript = "", heavyQueue = null, startupRetries = 0 } = {},
   ) => {
     const terminalState = updateTerminalState(place, state, { cancelled, forkSessionId, replied });
     const advice = cancelled && terminalState.capability_miss
@@ -1798,6 +1883,7 @@ const runWorker = () => {
     let record = {
       ...base,
       ...extra,
+      startup_retries: startupRetries,
       ...(heavyQueue ? { heavy_queue: heavyQueue } : {}),
       ...(throttled ? { throttle_signals: throttled } : {}),
       ...(rateLimits ? { rate_limits: rateLimits } : {}),
@@ -1819,17 +1905,20 @@ const runWorker = () => {
     env: partnerEnv(state),
     prompt: promptVia === "stdin" ? prompt : "",
     transcriptPath: paths.transcriptPath,
+    startupMs,
     idleMs,
     totalMs,
-    onSpawn: (partnerPid) => {
+    onSpawn: (partnerPid, startupRetries) => {
       if (!Number.isInteger(partnerPid)) return;
       const updated = replaceOwnedMarker(place.lockPath, marker, {
         launcher_pid: null,
         supervisor_pid: process.pid,
         partner_pid: Number.isInteger(partnerPid) ? partnerPid : null,
+        startup_retries: startupRetries,
+        ...budgetFields({ startupMs, idleMs, totalMs }),
       });
       if (!updated) process.exit(2);
-      atomicJson(paths.startedFile, {
+      if (startupRetries === 0) atomicJson(paths.startedFile, {
         ok: true,
         status: "running",
         seq,
@@ -1848,11 +1937,11 @@ const runWorker = () => {
         heavy_queue: { queued, since, job, seconds, episodes },
       });
     },
-    onExit: ({ exit, transcript, seconds, spawnError, heavyQueue }) => {
+    onExit: ({ exit, transcript, seconds, spawnError, heavyQueue, startupRetries }) => {
       const grok = state.partner === "grok" ? parseGrokStream(transcript) : null;
       const forkSessionId = pendingFork ? grok?.sessionId ?? null : null;
       const cancelled = grok?.stopReason === "cancelled";
-      const context = { forkSessionId, transcript, heavyQueue };
+      const context = { forkSessionId, transcript, heavyQueue, startupRetries };
       if (spawnError) {
         finish({ ok: false, status: "failed", reason: `cannot run ${bin}: ${spawnError.message}`, seconds }, 1, context);
         return;
@@ -1880,7 +1969,13 @@ const runWorker = () => {
       }
       finish({ ok: true, status: "replied", exit_code: exit, seconds, reply }, 0, { ...context, replied: true });
     },
-    onHang: ({ why, transcript, seconds, heavyQueue }) => {
+    onStartupStall: ({ why, transcript, seconds, heavyQueue, startupRetries }) => {
+      finish({
+        ok: false, status: "startup-stalled", reason: `${why} on both attempts`,
+        recovery: startupRecovery(state.partner), seconds,
+      }, 1, { transcript, heavyQueue, startupRetries });
+    },
+    onHang: ({ why, transcript, seconds, heavyQueue, startupRetries }) => {
       const partial = writeReply(state.partner, paths.replyFile, transcript);
       finish(
         {
@@ -1891,7 +1986,7 @@ const runWorker = () => {
           ...(partial ? { partial_reply: true } : {}),
         },
         1,
-        { transcript, heavyQueue },
+        { transcript, heavyQueue, startupRetries },
       );
     },
   });
@@ -1923,7 +2018,7 @@ const runSend = () => {
   const body = readFileSync(bodyFile, "utf8");
   if (!body.trim()) fail("the body file is empty — a partner turn needs a message", 2);
   // Read before the marker is written, so a usage error never leaves one behind.
-  const { idleMs, totalMs } = deadlines({ kind, write });
+  const { startupMs, idleMs, totalMs } = deadlines({ kind, write });
 
   // Half-duplex means one turn at a time: a second send would resume one CLI
   // session twice at once. The lock is taken before anything is spawned or the
@@ -1993,6 +2088,8 @@ const runSend = () => {
       marker.owner_token,
       "--write-value",
       String(write),
+      "--startup-ms",
+      String(startupMs),
       "--idle-ms",
       String(idleMs),
       "--total-ms",
@@ -2289,7 +2386,7 @@ if (invokedAsMain) {
   const run = COMMANDS[command];
   if (!run) {
     fail(
-      `usage: pair-headless.mjs <init|send|wait|fork|status|clear|end> --repo <root> | resolve --partner <cli> --model <id|latest:family> [--effort <level>] [--identity <name>]; [--partner ${kindList}] [--identity <name>] [--model <id|latest:family>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--background] [--seq N] [--timeout-min N] [--idle-min N] [--total-min N]`,
+      `usage: pair-headless.mjs <init|send|wait|fork|status|clear|end> --repo <root> | resolve --partner <cli> --model <id|latest:family> [--effort <level>] [--identity <name>]; [--partner ${kindList}] [--identity <name>] [--model <id|latest:family>] [--effort <level>] [--role peer|executor] [--kind <kind>] [--body-file <path>] [--write|--read-only] [--background] [--seq N] [--timeout-min N] [--startup-min N] [--idle-min N] [--total-min N]`,
       2,
     );
   }
