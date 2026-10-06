@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains four active skills under `skills/` and small maintenance
+The repository contains five active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -55,6 +55,8 @@ leaves the globally installed copy in place.
 
 ### Engineering
 
+- `write-pr` — write a short, human-first PR description: what and why, merge
+  danger, before/after screenshots, checks, and review.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious
   package, or supply-chain advisory and leave a written report.
 - `test-audit` — gate new tests against a value bar, and prune low-value
