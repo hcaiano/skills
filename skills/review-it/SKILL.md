@@ -60,4 +60,4 @@ to the user.
 Return this line for `write-pr`'s Review section, plus any blocker and its next
 step:
 
-`Review: <skip | single | dual> by <models>; <n> fixed, <n> rejected; reviewed <short SHA>`
+`**Review.** <skip | single | dual> by <models>; <n> fixed, <n> rejected; reviewed <short SHA>`

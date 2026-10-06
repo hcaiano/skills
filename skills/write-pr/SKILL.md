@@ -22,22 +22,49 @@ real complexity. In this order:
    effects), otherwise `two-way`. `Blast radius:` one word, plus one line only
    for a material ramification.
 3. **Screenshots**, for any visible change: one `| State | Before | After |`
-   table with a row per affected state, never images stacked below the text.
-   Each pair uses the same route, viewport, theme, role, locale and data from
-   the real app, cropped to the changed area, with test data. Name the
-   baseline and final commits.
+   table with a row per affected state. Each pair comes from the real app
+   with the same route, viewport, theme, role, locale and test data, cropped
+   to the changed area at the same pixel size so the two columns stay equal
+   and readable. Take a missing before from a worktree at the baseline commit.
+   Name the baseline and final commits.
 4. **Video**, only when movement, timing or a complex interaction cannot be
    read from stills.
 5. **Checks.** The checks actually run, their results and the verified commit,
    local and CI apart.
 6. **Review.** The `review-it` receipt line.
 
+Shape, with sections that do not apply dropped:
+
+```markdown
+<What and why paragraph.>
+
+**Merge danger.** Door: two-way. Blast radius: <word>.
+
+| State | Before | After |
+| --- | --- | --- |
+| <state> | ![Before: <state>](./before-<state>.png) | ![After: <state>](./after-<state>.png) |
+
+Baseline `<sha>`, final `<sha>`.
+
+**Video.** <What it shows.>
+
+![<what it shows>](./demo.mp4)
+
+**Checks.** <Local: check, result, commit. CI: result, commit.>
+
+**Review.** <grade> by <models>; <n> fixed, <n> rejected; reviewed <sha>
+```
+
 No code snippets, diffs, diagrams or file lists: the reviewer has the diff.
 Put logs, research and long output behind links or in collapsed `<details>`.
 
-**Media.** Attach with `gh pr create|edit|comment --attach <file>` and keep it
-out of git.
-Missing browser, login or upload access is a blocker to report.
+**Media.** Write each image and video into the body file as
+`![alt](./file.png)` at its place, then pass the same paths to
+`gh pr create|edit --body-file <body> --attach ./file.png`: gh swaps each
+reference for the uploaded asset, and a video reference becomes a player.
+Reference every attached file, since gh appends unreferenced ones to the end
+of the body. Keep media out of git. Missing browser, login or upload access is
+a blocker to report.
 
 Done when every applicable section is present, the body reads in under a
-minute, and each image and video renders on the PR page.
+minute, and `gh pr view --json body` shows no `./` media paths left.
