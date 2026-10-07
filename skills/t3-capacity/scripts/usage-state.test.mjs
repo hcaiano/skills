@@ -209,6 +209,50 @@ rl.on('line', line=>{
   assert.equal(unknown.recommended_codex_identity,null);
 });
 
+test("a codex on PATH that does not start is skipped, and its error reaches the account", () => {
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-codex-path-"));
+  mkdirSync(join(home, ".codex"), { recursive: true });
+  writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ tokens: { account_id: "only" } }));
+  const dir = (name, files) => {
+    const folder = join(home, name);
+    mkdirSync(folder);
+    for (const [file, body] of Object.entries(files)) {
+      writeFileSync(join(folder, file), body);
+      chmodSync(join(folder, file), 0o755);
+    }
+    return folder;
+  };
+  // A broken npm install, the real failure from 2026-10-07.
+  const broken = dir("broken", { codex: "#!/bin/sh\necho 'codex.js:107' >&2\necho '  throw new Error(' >&2\n"
+    + "echo 'Error: Missing optional dependency @openai/codex-linux-x64' >&2\necho '    at codex.js:107:9' >&2\nexit 1\n" });
+  const working = dir("working", { codex: `#!${process.execPath}
+if (process.argv[2] === "--version") { console.log("codex-cli 0.0.0"); process.exit(0); }
+require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
+  const m = JSON.parse(line);
+  if (m.method === "initialize") console.log(JSON.stringify({ id: m.id, result: {} }));
+  if (m.method === "account/rateLimits/read") console.log(JSON.stringify({ id: m.id, result: { rateLimitsByLimitId: { codex: {
+    limitId: "codex", secondary: { usedPercent: 30, windowDurationMins: 10080, resetsAt: Date.now() / 1000 + 72 * 3600 } } } } }));
+});
+` });
+  const nodeOnly = dir("node", {});
+  symlinkSync(process.execPath, join(nodeOnly, "node"));
+  const run = (path) => {
+    const env = { ...process.env, HOME: home, PATH: path, USAGE_STATE_SKIP_CURSOR: "1", CLAUDE_USAGE_URL: "http://127.0.0.1:9/" };
+    delete env.CODEX_BIN;
+    const result = spawnSync(process.execPath, [script, "--live"], { encoding: "utf8", env, timeout: 15000 });
+    assert.equal(result.status, 0, result.stderr);
+    endSpacing(home);
+    return JSON.parse(result.stdout).codex_identities.default;
+  };
+  const skipped = run([broken, working, nodeOnly, stubBin].join(":"));
+  assert.equal(skipped.state, "available");
+  assert.equal(skipped.pool.used_percent, 30);
+  const failed = run([broken, nodeOnly, stubBin].join(":"));
+  assert.equal(failed.state, "unknown");
+  assert.match(failed.error, /Missing optional dependency @openai\/codex-linux-x64/u);
+  assert.match(failed.error, /CODEX_BIN/u);
+});
+
 // A Claude home with a cool statusline snapshot and a login token, plus a
 // usage endpoint that answers each request from `answers` (the last repeats).
 const claudeFixture = async () => {

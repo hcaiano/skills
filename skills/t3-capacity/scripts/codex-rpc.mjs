@@ -12,10 +12,10 @@
 // JSON result of the request. The server's stderr is never surfaced: it can
 // carry account diagnostics, and an error here only needs to say which step
 // failed.
-import { spawn } from "node:child_process";
-import { readdirSync, realpathSync, statSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { accessSync, constants, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 
 const CODEX_READ_METHODS = new Set(["account/rateLimits/read"]);
 
@@ -23,7 +23,44 @@ const CLIENT_INFO = { name: "t3-capacity-codex-rpc", title: "t3-capacity codex r
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 const KILL_GRACE_MS = 1000;
 
-const codexBinary = (env = process.env) => (env.CODEX_BIN?.trim() ? env.CODEX_BIN.trim() : "codex");
+const VERSION_TIMEOUT_MS = 5000;
+
+// The Codex CLI to run: CODEX_BIN when set, else the first `codex` on PATH
+// whose `--version` exits 0. A broken install earlier on PATH, such as an npm
+// package missing its platform binary, would otherwise fail every read as an
+// account that never answered. `--version` touches no account, so the first
+// line of its stderr is safe to report. Resolved once per CODEX_BIN and PATH.
+const resolved = new Map();
+export const resolveCodexBinary = (env = process.env) => {
+  if (env.CODEX_BIN?.trim()) return { binary: env.CODEX_BIN.trim() };
+  const key = env.PATH ?? "";
+  if (resolved.has(key)) return resolved.get(key);
+  const failures = [];
+  let result = null;
+  for (const dir of key.split(delimiter)) {
+    const candidate = dir && join(dir, "codex");
+    try {
+      accessSync(candidate, constants.X_OK);
+    } catch {
+      continue;
+    }
+    const probe = spawnSync(candidate, ["--version"], { env, encoding: "utf8", timeout: VERSION_TIMEOUT_MS });
+    if (probe.status === 0) {
+      result = { binary: candidate };
+      break;
+    }
+    const lines = (probe.stderr ?? "").split("\n").map((line) => line.trim()).filter(Boolean);
+    const reason = probe.error?.message ?? (lines.find((line) => /^\w*Error\b/u.test(line)) ?? lines[0] ?? `exit ${probe.status}`);
+    failures.push(`${candidate}: ${reason.slice(0, 200)}`);
+  }
+  result ??= {
+    error: failures.length
+      ? `no codex on PATH starts; set CODEX_BIN to a working codex (${failures.join("; ")})`
+      : "codex is not on PATH; set CODEX_BIN",
+  };
+  resolved.set(key, result);
+  return result;
+};
 
 // The home that identifies a Codex account. `default` is `~/.codex`; a named
 // identity is `~/.codex-profiles/<name>`. Only simple names are accepted. A
@@ -82,7 +119,12 @@ export const codexRead = (
       rejectPromise(new Error(`codexRead needs a positive finite timeoutMs, got ${timeoutMs}`));
       return;
     }
-    const binary = bin ?? codexBinary(env);
+    const found = bin ? { binary: bin } : resolveCodexBinary(env);
+    if (found.error) {
+      rejectPromise(Object.assign(new Error(found.error), { startup: true }));
+      return;
+    }
+    const { binary } = found;
     const home = codexHome ?? env.CODEX_HOME ?? join(homedir(), ".codex");
     let child;
     try {

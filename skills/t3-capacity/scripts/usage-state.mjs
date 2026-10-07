@@ -572,15 +572,16 @@ const main = async () => {
       const account = codexAccount(canonical);
       let homeMissing = true;
       try { homeMissing = !fs.statSync(canonical).isDirectory(); } catch {}
-      // An RPC error is not classified, so every one counts as transient.
+      // A CLI that does not start fails before the request; every RPC error
+      // after that is not classified, so it counts as transient.
       const read = homeMissing ? { error: new Error('home missing') } : await liveRead(account, async () => {
         let raw;
         try { raw = measuredRaw(await codexRead('account/rateLimits/read', {}, { codexHome: canonical })); }
-        catch (error) { throw transient(error.message); }
+        catch (error) { throw error.startup ? error : transient(error.message); }
         if (!raw) throw transient('live read carried no weekly Codex window');
         return raw;
       }, { snapshot: pool });
-      if (read.error) liveError = 'live quota unavailable; snapshot is not current account proof';
+      if (read.error) liveError = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
       else [pool, note, source, liveError] = [read.pool, read.note ?? null,
         read.note ? 'account/rateLimits/read, cached' : 'account/rateLimits/read', null];
     }
