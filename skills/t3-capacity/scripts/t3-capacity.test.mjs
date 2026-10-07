@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, linkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,8 +57,10 @@ const listen = async (handler) => {
 
 const testEnv = (env) => ({
   ...process.env, PATH: `${stubBin}:${process.env.PATH}`, USAGE_STATE_SKIP_CURSOR: "1",
-  CLAUDE_USAGE_URL: "http://127.0.0.1:9/", GROK_USAGE_URL: "http://127.0.0.1:9/", ...env,
+  CLAUDE_USAGE_URL: "http://127.0.0.1:9/", GROK_USAGE_URL: "http://127.0.0.1:9/", USAGE_STATE_RETRY_BASE_MS: "1", ...env,
 });
+// Ends usage-state's two-minute spacing, so the next run reads live again.
+const endSpacing = (home) => rmSync(join(home, ".cache", "t3-capacity", "live-attempts.json"), { force: true });
 const run = (args, env) => new Promise((resolve, reject) => {
   const child = spawn(process.execPath, [script, ...args], { env: testEnv(env) });
   let out = "";
@@ -195,9 +197,10 @@ test("Grok reads only the grok.com login, paced like usage-state's pools", async
   const period = (end) => ({ config: { creditUsagePercent: 80,
     currentPeriod: { type: "USAGE_PERIOD_TYPE_MONTHLY", end: new Date(end).toISOString() } } });
   let body = period(Date.now() + 10 * 24 * 3600 * 1000);
+  let status = 200;
   const server = await listen((request, response) => {
     seen.push(request.headers.authorization);
-    response.writeHead(200, { "content-type": "application/json" });
+    response.writeHead(status, { "content-type": "application/json" });
     response.end(JSON.stringify(body));
   });
   const env = { HOME: home, CODEX_BIN: join(home, "no-codex"),
@@ -211,19 +214,38 @@ test("Grok reads only the grok.com login, paced like usage-state's pools", async
     const remote = await run(["--instance", "grok:grok", "--declare", "grok=grok"], env);
     assert.deepEqual(remote.instances[0].pools, []);
     assert.equal(remote.accounts.grok.reading.used_percent, 80);
+    endSpacing(home);
     const read = await run(["--instance", "grok:grok", "--settings", settings], env);
     assert.equal(seen[1], "Bearer fixture-login");
     assert.equal(read.instances[0].proof, "default-login");
+    assert.equal(read.accounts.grok.source, "billing");
     // 80% spent with a third of the month left burns faster than it can fund.
     assert.equal(read.accounts.grok.state, "protected");
+
+    // Inside the spacing the endpoint is not asked again; after it, a 429
+    // retries and then reuses the reading, like usage-state's pools.
+    const spaced = await run(["--instance", "grok:grok"], env);
+    assert.equal(seen.length, 2);
+    assert.equal(spaced.accounts.grok.source, "billing, cached");
+    assert.match(spaced.accounts.grok.note, /skipped/u);
+    assert.equal(spaced.accounts.grok.reading.period, "monthly");
+    endSpacing(home);
+    status = 429;
+    const limited = await run(["--instance", "grok:grok"], env);
+    assert.equal(seen.length, 5);
+    assert.match(limited.accounts.grok.note, /429/u);
+    assert.equal(limited.accounts.grok.state, "protected");
+    status = 200;
 
     // A period ending on March 31 began on February's last day, not March 3.
     const year = new Date().getUTCFullYear() + (Date.now() < Date.UTC(new Date().getUTCFullYear(), 2, 31) ? 0 : 1);
     body = period(Date.UTC(year, 2, 31));
+    endSpacing(home);
     const monthEnd = await run(["--instance", "grok:grok"], env);
     assert.equal(monthEnd.accounts.grok.reading.estimated_start, new Date(Date.UTC(year, 2, 0)).toISOString());
 
     body = { config: {} };
+    endSpacing(home);
     const unmetered = await run(["--instance", "grok:grok"], env);
     assert.equal(unmetered.accounts.grok.state, "unknown");
 

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,13 +17,18 @@ const stubBin = mkdtempSync(join(tmpdir(), "t3-capacity-usage-stub-"));
 writeFileSync(join(stubBin, "security"), "#!/bin/sh\nexit 44\n");
 chmodSync(join(stubBin, "security"), 0o755);
 process.env.PATH = `${stubBin}:${process.env.PATH}`;
+// Retries of a refused fixture connection wait milliseconds, not seconds.
+process.env.USAGE_STATE_RETRY_BASE_MS = "1";
 
+// Ends the two-minute spacing, so the next run reads live again.
+const endSpacing = (home) => rmSync(join(home, ".cache", "t3-capacity", "live-attempts.json"), { force: true });
 // Backdates every cached live reading past the 10-minute reuse window.
 const ageCache = (home) => {
   const file = join(home, ".cache", "t3-capacity", "live-usage.json");
   const cache = JSON.parse(readFileSync(file, "utf8"));
   for (const entry of Object.values(cache)) entry.at -= 11 * 60000;
   writeFileSync(file, JSON.stringify(cache));
+  endSpacing(home);
 };
 
 test("rejects conflicting live and offline flags", () => {
@@ -182,6 +188,7 @@ rl.on('line', line=>{
   assert.equal(output.codex_identities.second.pool.used_percent,35);
   assert.equal(output.codex_identities.second.source,"account/rateLimits/read");
   assert.equal(output.recommended_codex_identity,"second");
+  endSpacing(taskHome);
   const failed=spawnSync(process.execPath,[script,"--live"],{
     encoding:"utf8",env:{...env,FAKE_RPC_ERROR:"1"},timeout:10000,
   });
@@ -202,7 +209,9 @@ rl.on('line', line=>{
   assert.equal(unknown.recommended_codex_identity,null);
 });
 
-test("live Claude usage outranks the statusline snapshot, and a failed read reuses it for 10 minutes", async () => {
+// A Claude home with a cool statusline snapshot and a login token, plus a
+// usage endpoint that answers each request from `answers` (the last repeats).
+const claudeFixture = async () => {
   const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-live-"));
   mkdirSync(join(home, ".claude"), { recursive: true });
   const now = Date.now() / 1000;
@@ -214,36 +223,52 @@ test("live Claude usage outranks the statusline snapshot, and a failed read reus
   writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({
     claudeAiOauth: { accessToken: "fixture-token" },
   }));
-  let status = 200;
-  const seen = [];
+  const fixture = { home, answers: [{ status: 200 }], seen: [], delayMs: 0 };
   const server = createServer((request, response) => {
-    seen.push(request.headers.authorization);
-    response.writeHead(status, { "content-type": "application/json" });
-    response.end(JSON.stringify({
-      five_hour: { utilization: 31, resets_at: new Date((now + 2 * 3600) * 1000).toISOString() },
-      seven_day: { utilization: 64, resets_at: new Date((now + 134 * 3600) * 1000).toISOString() },
-    }));
+    fixture.seen.push({ at: Date.now(), authorization: request.headers.authorization });
+    const { status, headers = {}, drop } = fixture.answers.length > 1 ? fixture.answers.shift() : fixture.answers[0];
+    // A connection dropped after the headers, halfway through the body.
+    if (drop) {
+      response.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+      response.write("{\"seven_day\":");
+      return setTimeout(() => response.socket.destroy(), 50);
+    }
+    setTimeout(() => {
+      response.writeHead(status, { "content-type": "application/json", ...headers });
+      response.end(JSON.stringify({
+        five_hour: { utilization: 31, resets_at: new Date((now + 2 * 3600) * 1000).toISOString() },
+        seven_day: { utilization: 64, resets_at: new Date((now + 134 * 3600) * 1000).toISOString() },
+      }));
+    }, fixture.delayMs);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const run = (mode = "--live") => new Promise((resolve, reject) => {
+  fixture.close = () => server.close();
+  fixture.run = (mode = "--live", env = {}) => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [script, mode], { env: {
-      ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1",
-      CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/`,
+      ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1", CODEX_BIN: join(home, "no-codex"),
+      CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/`, ...env,
     } });
     let out = "";
     child.stdout.on("data", (chunk) => { out += chunk; });
     child.on("error", reject);
     child.on("close", (code) => (code === 0 ? resolve(JSON.parse(out)) : reject(new Error(`exit ${code}`))));
   });
+  return fixture;
+};
+
+test("live Claude usage outranks the statusline snapshot, and a failed read reuses it for 10 minutes", async () => {
+  const claude = await claudeFixture();
+  const { home, run } = claude;
   try {
     const fresh = await run();
-    assert.equal(seen[0], "Bearer fixture-token");
+    assert.equal(claude.seen[0].authorization, "Bearer fixture-token");
     assert.equal(fresh.claude_source, "oauth/usage");
     assert.equal(fresh.claude.used_percent, 64);
     assert.equal(fresh.claude.short_window.used_percent, 31);
     // 64% after 34 of 168 hours burns far faster than the rest can fund.
     assert.equal(fresh.states.claude, "protected");
-    status = 429;
+    endSpacing(home);
+    claude.answers = [{ status: 429 }];
     const limited = await run();
     assert.equal(limited.claude_source, "oauth/usage, cached");
     assert.equal(limited.claude.used_percent, 64);
@@ -252,19 +277,125 @@ test("live Claude usage outranks the statusline snapshot, and a failed read reus
     assert.equal(limited.claude_error, undefined);
     assert.equal(limited.states.claude, "protected");
     // A refused token says nothing about load, and offline never reads the cache.
-    status = 401;
+    endSpacing(home);
+    claude.answers = [{ status: 401 }];
     const refused = await run();
     assert.equal(refused.claude_source, "statusline");
     assert.match(refused.claude_error, /401/u);
     assert.equal(refused.states.claude, "unknown");
     assert.equal((await run("--offline")).claude_note, undefined);
     ageCache(home);
-    status = 429;
+    claude.answers = [{ status: 429 }];
     const expired = await run();
     assert.equal(expired.claude_source, "statusline");
     assert.equal(expired.states.claude, "unknown");
   } finally {
-    server.close();
+    claude.close();
+  }
+});
+
+test("concurrent runs share one live read per account every two minutes", async () => {
+  const claude = await claudeFixture();
+  claude.delayMs = 500;
+  try {
+    const runs = await Promise.all(Array.from({ length: 5 }, () => claude.run()));
+    assert.equal(claude.seen.length, 1);
+    assert.deepEqual(runs.map((output) => output.claude.used_percent), [64, 64, 64, 64, 64]);
+    assert.deepEqual(runs.map((output) => output.states.claude), Array(5).fill("protected"));
+    // The others waited for the one read and reused it, marked as such.
+    const reused = runs.filter((output) => output.claude_note);
+    assert.equal(reused.length, 4);
+    for (const output of reused) {
+      assert.equal(output.claude_source, "oauth/usage, cached");
+      assert.match(output.claude_note, /skipped/u);
+    }
+    // A later run inside the spacing never reaches the endpoint either.
+    claude.answers = [{ status: 429 }];
+    assert.equal((await claude.run()).states.claude, "protected");
+    assert.equal(claude.seen.length, 1);
+  } finally {
+    claude.close();
+  }
+});
+
+test("a read left unfinished by a dead process, or its lock, does not block the next run", async () => {
+  const claude = await claudeFixture();
+  const dir = join(claude.home, ".cache", "t3-capacity");
+  mkdirSync(dir, { recursive: true });
+  // The dead process claimed the read 25 s ago and kept the lock directory.
+  const key = `claude:${createHash("sha256").update("fixture-token").digest("hex").slice(0, 16)}`;
+  writeFileSync(join(dir, "live-attempts.json"), JSON.stringify({ [key]: { started: Date.now() - 25000 } }));
+  mkdirSync(join(dir, "lock"));
+  utimesSync(join(dir, "lock"), new Date(Date.now() - 5000), new Date(Date.now() - 5000));
+  try {
+    const output = await claude.run();
+    assert.equal(claude.seen.length, 1);
+    assert.equal(output.claude_source, "oauth/usage");
+  } finally {
+    claude.close();
+  }
+});
+
+test("a run inside the spacing after a refused token stays unknown", async () => {
+  const claude = await claudeFixture();
+  claude.answers = [{ status: 401 }];
+  try {
+    assert.equal((await claude.run()).states.claude, "unknown");
+    const spaced = await claude.run();
+    assert.equal(claude.seen.length, 1);
+    assert.match(spaced.claude_error, /401/u);
+    assert.equal(spaced.states.claude, "unknown");
+  } finally {
+    claude.close();
+  }
+});
+
+test("a 429 retries once Retry-After has passed, and a run without a recent reading stays unknown", async () => {
+  const claude = await claudeFixture();
+  // Backoff alone would wait past the retry budget, so only Retry-After retries.
+  const env = { USAGE_STATE_RETRY_BASE_MS: "60000" };
+  claude.answers = [{ status: 429, headers: { "retry-after": "1" } }, { status: 200 }];
+  try {
+    const retried = await claude.run("--live", env);
+    assert.equal(claude.seen.length, 2);
+    assert.ok(claude.seen[1].at - claude.seen[0].at >= 1000);
+    assert.equal(retried.claude_source, "oauth/usage");
+    assert.equal(retried.claude.used_percent, 64);
+    ageCache(claude.home);
+    claude.answers = [{ status: 503, headers: { "retry-after": "0" } }];
+    const failed = await claude.run("--live", { USAGE_STATE_RETRY_BASE_MS: "1" });
+    // The first try and two retries, then the snapshot rule.
+    assert.equal(claude.seen.length, 5);
+    assert.match(failed.claude_error, /503/u);
+    assert.equal(failed.states.claude, "unknown");
+  } finally {
+    claude.close();
+  }
+});
+
+test("a body cut off mid-read retries, and a long Retry-After holds every run off", async () => {
+  const claude = await claudeFixture();
+  claude.answers = [{ drop: true }, { status: 200 }];
+  try {
+    const retried = await claude.run();
+    assert.equal(claude.seen.length, 2);
+    assert.equal(retried.claude_source, "oauth/usage");
+    ageCache(claude.home);
+    claude.answers = [{ status: 429, headers: { "retry-after": "300" } }];
+    const limited = await claude.run();
+    // Too long to wait for here: one request, then the cache rule.
+    assert.equal(claude.seen.length, 3);
+    assert.equal(limited.states.claude, "unknown");
+    // Past the two-minute spacing, the endpoint's five minutes still hold.
+    const file = join(claude.home, ".cache", "t3-capacity", "live-attempts.json");
+    const attempts = JSON.parse(readFileSync(file, "utf8"));
+    for (const attempt of Object.values(attempts)) attempt.started -= 3 * 60000;
+    writeFileSync(file, JSON.stringify(attempts));
+    const held = await claude.run();
+    assert.equal(claude.seen.length, 3);
+    assert.match(held.claude_error, /skipped.*429/u);
+  } finally {
+    claude.close();
   }
 });
 

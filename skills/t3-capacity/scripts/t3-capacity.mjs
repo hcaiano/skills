@@ -42,14 +42,15 @@
 // file and the login Keychain expires last, and the Cursor CLI keeps its login
 // in the Keychain, so neither file says which account was read: Claude maps
 // there only by declaration, and Cursor only by default-login or declaration.
-// Nothing here prints a credential or runs a launcher; the only file written
-// is usage-state's cache of its last good live readings.
+// Nothing here prints a credential or runs a launcher; the only files written
+// are usage-state's cache of its last good live readings and its record of
+// live read attempts, shared with the Grok read here.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pace, poolState } from './usage-state.mjs';
+import { accountKey, fetchUsage, liveRead, poolFromRaw, poolState } from './usage-state.mjs';
 
 const usage = 'usage: t3-capacity.mjs --instance <id>:<driverKind>... [--auth-home <id>=<dir>]... '
   + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
@@ -156,11 +157,19 @@ const readGrok = async () => {
   if (login.expires_at && Date.parse(login.expires_at) < Date.now()) {
     throw new Error('the stored Grok login expired; any Grok CLI session refreshes it');
   }
-  const response = await fetch(process.env.GROK_USAGE_URL || 'https://cli-chat-proxy.grok.com/v1/billing?format=credits', {
-    headers: { authorization: `Bearer ${login.key}` }, signal: AbortSignal.timeout(10000),
-  });
-  if (!response.ok) throw new Error(`billing endpoint answered ${response.status}`);
-  const config = (await response.json())?.config;
+  // The billing read shares usage-state's spacing, retries and cache, under
+  // its own account key.
+  return liveRead(accountKey('grok', login.key), readGrokBilling(login), { toPool: grokPool });
+};
+const grokPool = (raw) => {
+  const pool = poolFromRaw(raw);
+  return pool && { ...pool, period: raw.period, estimated_start: raw.estimated_start };
+};
+const readGrokBilling = (login) => async () => {
+  const { status, ok, body } = await fetchUsage(process.env.GROK_USAGE_URL
+    || 'https://cli-chat-proxy.grok.com/v1/billing?format=credits', { authorization: `Bearer ${login.key}` }, 'billing endpoint');
+  if (!ok) throw new Error(`billing endpoint answered ${status}`);
+  const config = body?.config;
   const used = config?.creditUsagePercent;
   // xAI omits the percentage until usage registers: no number proves no headroom.
   if (!Number.isFinite(used)) throw new Error('billing read carried no usage percentage');
@@ -178,16 +187,16 @@ const readGrok = async () => {
     const day = Math.min(e.getUTCDate(), new Date(Date.UTC(year, month + 1, 0)).getUTCDate());
     start = Date.UTC(year, month, day, e.getUTCHours(), e.getUTCMinutes(), e.getUTCSeconds(), e.getUTCMilliseconds());
   }
-  const hoursLeft = (end - Date.now()) / 3600000;
-  const reading = start ? pace(Math.min(Math.max(used, 0), 100), hoursLeft, (end - start) / 3600000) : null;
-  if (!reading) throw new Error(`billing period ${type ?? 'unknown'} cannot be paced`);
-  return { ...reading, short_window: null, stale_minutes: 0, period: type.toLowerCase(),
-    estimated_start: new Date(start).toISOString() };
+  const raw = start && { at: Date.now(), burst: null, period: type.toLowerCase(), estimated_start: new Date(start).toISOString(),
+    week: { used: Math.min(Math.max(used, 0), 100), resets_at: end / 1000, window_hours: (end - start) / 3600000 } };
+  if (!raw || !poolFromRaw(raw)) throw new Error(`billing period ${type ?? 'unknown'} cannot be paced`);
+  return raw;
 };
 
 const [usageState, grok] = await Promise.all([
   readUsageState(),
-  readGrok().then((reading) => ({ reading }), (error) => ({ error: error.message })),
+  readGrok().then((read) => (read.pool ? { reading: read.pool, note: read.note }
+    : { error: read.error?.message ?? 'billing read gave no reading' }), (error) => ({ error: error.message })),
 ]);
 
 const accounts = {};
@@ -209,7 +218,8 @@ if (usageState.error) {
   }
 }
 account('grok', grok.reading
-  ? { state: poolState(grok.reading), reading: grok.reading, source: 'billing' }
+  ? { state: poolState(grok.reading), reading: grok.reading, source: grok.note ? 'billing, cached' : 'billing',
+    ...(grok.note ? { note: grok.note } : {}) }
   : { error: grok.error });
 
 const fileId = (file) => { try { const s = fs.statSync(file); return `${s.dev}:${s.ino}`; } catch { return null; } };

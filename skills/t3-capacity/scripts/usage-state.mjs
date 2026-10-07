@@ -22,11 +22,14 @@
 // Every read is live by default; --offline reads only local snapshots. Many
 // threads read at once and the endpoints answer 429, so each good live reading
 // is cached in ~/.cache/t3-capacity/live-usage.json under a hash of its account
-// (the Claude token, the Codex account_id). A live read that fails in transit
-// (timeout, 429, 5xx, a Codex RPC error) reuses that account's cached reading
-// when it is younger than 10 minutes and newer than the local snapshot, re-paced
-// to now, with its age as stale_minutes and a `note`. Otherwise the failed-read
-// rule above holds. The reused reading never raises an alert.
+// (the Claude token, the Codex account_id), and each account is read live at
+// most once per two minutes across processes, or less often when an endpoint
+// sends a longer Retry-After. A 429, 5xx or dropped connection retries briefly
+// first. A read skipped by that spacing, or one that fails in
+// transit (timeout, 429, 5xx, a Codex RPC error), reuses that account's cached
+// reading when it is younger than 10 minutes and newer than the local snapshot,
+// re-paced to now, with its age as stale_minutes and a `note`. Otherwise the
+// failed-read rule above holds. The reused reading never raises an alert.
 // Claude source: the subscription's usage endpoint with Claude Code's own
 // token; offline, ~/.claude/usage-state.json (written by the user's statusline).
 // Codex source: read-only account RPC per home; offline, session snapshots.
@@ -175,41 +178,206 @@ export const poolState = (pool) => {
   return 'available';
 };
 
-// A live reading is kept raw: { at, week: { used, resets_at }, burst }, with
-// epoch-second resets, so a reused one is paced against the current time.
-const poolFromRaw = ({ at, week, burst }) => {
-  const weekly = pace(week.used, hoursUntil(week.resets_at));
+// A live reading is kept raw: { at, week: { used, resets_at, window_hours? },
+// burst }, with epoch-second resets, so a reused one is paced against the
+// current time. window_hours defaults to the 168 h week.
+export const poolFromRaw = ({ at, week, burst }) => {
+  const weekly = pace(week.used, hoursUntil(week.resets_at), week.window_hours ?? WEEK_HOURS);
   return weekly && { ...weekly, stale_minutes: Math.round((Date.now() - at) / 60000),
     short_window: burst ? burstWindow(burst.used, burst.resets_at) : null };
 };
 const CACHE_MAX_MINUTES = 10;
-const accountKey = (prefix, secret) =>
+// Claude's usage endpoint grants about one read per account every two minutes
+// and answers 429 with Retry-After: 0 in between (measured 2026-10-07), so one
+// live read per account per two minutes, success or failure, serves every
+// thread on the machine.
+const SPACING_MS = 120000;
+// A caller inside the spacing waits this long from the other read's start for
+// its result: Codex's RPC times out at 15 s, an HTTP read with retries sooner.
+const IN_FLIGHT_MS = 20000;
+// One HTTP read, retries and body included, ends within READ_BUDGET_MS. A 429,
+// 5xx or dropped connection retries inside it: after Retry-After when it is
+// positive, else after RETRY_BASE_MS doubled per retry. A longer Retry-After
+// holds every process off that account until it passes, up to an hour.
+const READ_BUDGET_MS = 10000;
+const RETRY_LIMIT = 2;
+const HOLD_OFF_MAX_MS = 3600000;
+const RETRY_BASE_MS = Number(process.env.USAGE_STATE_RETRY_BASE_MS) || 1000;
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+export const accountKey = (prefix, secret) =>
   (secret ? `${prefix}:${crypto.createHash('sha256').update(secret).digest('hex').slice(0, 16)}` : null);
-const cacheFile = () => path.join(os.homedir(), '.cache', 't3-capacity', 'live-usage.json');
-const readCache = () => { try { return JSON.parse(fs.readFileSync(cacheFile(), 'utf8')); } catch { return {}; } };
-const fresh = (entry) => Date.now() - entry?.at <= CACHE_MAX_MINUTES * 60000;
-// Each writer renames a whole file, so a reader never sees half of one, and
-// keeps the newer reading per account. Two writers racing can still drop one
-// entry, which only costs the next failed read its fallback.
-const writeCache = (entries) => {
-  if (!Object.keys(entries).length) return;
-  try {
-    const file = cacheFile();
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    const merged = Object.fromEntries(Object.entries(readCache()).filter(([, entry]) => fresh(entry)));
-    for (const [key, entry] of Object.entries(entries)) if (!(merged[key]?.at >= entry.at)) merged[key] = entry;
-    const temp = `${file}.${process.pid}`;
-    fs.writeFileSync(temp, JSON.stringify(merged));
-    fs.renameSync(temp, file);
-  } catch {}
+const cacheDir = () => path.join(os.homedir(), '.cache', 't3-capacity');
+const cacheFile = () => path.join(cacheDir(), 'live-usage.json');
+const attemptsFile = () => path.join(cacheDir(), 'live-attempts.json');
+const readJson = (file) => {
+  try { const value = JSON.parse(fs.readFileSync(file, 'utf8')); return value && typeof value === 'object' ? value : {}; }
+  catch { return {}; }
 };
-const reuseCached = (cache, key, failure, snapshot) => {
-  const entry = key ? cache[key] : null;
+// A rename swaps in a whole file, so a reader never sees half of one.
+const writeJson = (file, value) => {
+  const temp = `${file}.${process.pid}`;
+  fs.writeFileSync(temp, JSON.stringify(value));
+  fs.renameSync(temp, file);
+};
+const fresh = (entry) => Date.now() - entry?.at <= CACHE_MAX_MINUTES * 60000;
+// Every read-modify-write of the cache files runs under one lock directory, so
+// two processes cannot both claim a read or drop each other's reading. It is
+// held for milliseconds: a lock older than 1 s belongs to a dead process and is
+// taken over. Past 3 s of contention the caller gets BUSY and must not read
+// live; a filesystem that refuses the lock runs the caller unlocked. Node has
+// no lock the OS frees on exit, so a holder paused past 1 s can lose its lock:
+// fn gets `owns` to check just before a write that must not race.
+const BUSY = Symbol('busy');
+const locked = (fn) => {
+  const lock = path.join(cacheDir(), 'lock');
+  let owned = null;
+  try {
+    fs.mkdirSync(cacheDir(), { recursive: true });
+    for (const giveUp = Date.now() + 3000; !owned;) {
+      try { fs.mkdirSync(lock); owned = fs.statSync(lock).ino; } catch (error) {
+        if (error.code !== 'EEXIST') break;
+        if (Date.now() > giveUp) return BUSY;
+        try { if (Date.now() - fs.statSync(lock).mtimeMs > 1000) fs.rmdirSync(lock); } catch {}
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+      }
+    }
+    const owns = () => {
+      if (!owned) return true;
+      try { return fs.statSync(lock).ino === owned; } catch { return false; }
+    };
+    return fn(owns);
+  } catch { return null; }
+  // A holder taken over as dead must not remove its successor's lock.
+  finally { if (owned) try { if (fs.statSync(lock).ino === owned) fs.rmdirSync(lock); } catch {} }
+};
+// Takes the account's next live read, or returns the read another process
+// started inside the spacing or before the endpoint's Retry-After. A read that
+// never finished holds only IN_FLIGHT_MS: its process died.
+const claim = (key) => {
+  const slot = locked((owns) => {
+    const attempts = readJson(attemptsFile());
+    const now = Date.now();
+    const holds = (attempt) => (now - attempt?.started >= 0
+        && now - attempt.started < (attempt.finished ? SPACING_MS : IN_FLIGHT_MS))
+      || (now < attempt?.not_before && attempt.not_before - now <= HOLD_OFF_MAX_MS);
+    if (holds(attempts[key])) return { other: attempts[key] };
+    for (const [name, attempt] of Object.entries(attempts)) if (!holds(attempt)) delete attempts[name];
+    attempts[key] = { started: now };
+    if (!owns()) return BUSY;
+    writeJson(attemptsFile(), attempts);
+    return { started: now };
+  });
+  if (slot === BUSY) return { busy: true };
+  // The cache folder cannot be written: read live, as before any spacing.
+  return slot ?? { started: Date.now() };
+};
+// Waits for another process's read to finish, up to IN_FLIGHT_MS from its
+// start, and returns its latest record.
+const awaitRead = async (key, other) => {
+  while (!other.finished && Date.now() - other.started < IN_FLIGHT_MS) {
+    await pause(200);
+    const latest = readJson(attemptsFile())[key];
+    if (latest?.started !== other.started) return latest ?? other;
+    other = latest;
+  }
+  return other;
+};
+// Keeps the newer good reading, then records how the claimed read ended: a
+// waiter that sees the read finished finds its reading already cached.
+const settle = (key, started, { raw, error }) => locked(() => {
+  if (raw) {
+    const cache = Object.fromEntries(Object.entries(readJson(cacheFile())).filter(([, entry]) => fresh(entry)));
+    if (!(cache[key]?.at >= raw.at)) cache[key] = raw;
+    writeJson(cacheFile(), cache);
+  }
+  const attempts = readJson(attemptsFile());
+  if (attempts[key]?.started !== started) return;
+  attempts[key] = { started, finished: Date.now(),
+    ...(error ? { failure: error.message, transient: Boolean(error.transient) } : {}),
+    ...(error?.notBefore ? { not_before: Math.min(error.notBefore, Date.now() + HOLD_OFF_MAX_MS) } : {}) };
+  writeJson(attemptsFile(), attempts);
+});
+const reuseCached = (key, why, snapshot, toPool) => {
+  const entry = readJson(cacheFile())[key];
   if (!fresh(entry) || !(entry.at <= Date.now()) || typeof entry.week?.used !== 'number') return null;
-  const pool = poolFromRaw(entry);
+  const pool = toPool(entry);
   // Ages are whole minutes, so a tie goes to the live reading, which is account proof.
   if (!pool || (snapshot?.stale_minutes != null && snapshot.stale_minutes < pool.stale_minutes)) return null;
-  return { pool, note: `live read failed (${failure}); reused the live reading from ${pool.stale_minutes} minutes ago` };
+  return { pool, note: `live read ${why}; reused the live reading from ${pool.stale_minutes} minutes ago` };
+};
+// A failure before the request, or a refusal of the token, says nothing
+// about load: only a failure in transit may reuse a cached reading.
+const transient = (message) => Object.assign(new Error(message), { transient: true });
+
+// Reads one account live at most once per SPACING_MS across processes. Returns
+// { pool } for a live reading, { pool, note } for a reused one, or { error }.
+// A caller inside the spacing waits for the other read, then reuses its
+// reading; when that read failed in transit, or found nothing, it reuses an
+// older one under the 10-minute rule. A refused token is never papered over.
+export const liveRead = async (key, read, { snapshot = null, toPool = poolFromRaw } = {}) => {
+  if (!key) {
+    try { const raw = await read(); return { pool: raw && toPool(raw) }; } catch (error) { return { error }; }
+  }
+  let slot = claim(key);
+  let other = slot.other && await awaitRead(key, slot.other);
+  if (other && !other.finished) {
+    slot = claim(key);
+    other = slot.other && await awaitRead(key, slot.other);
+  }
+  if (slot.busy || other) {
+    if (other?.failure && !other.transient) return { error: new Error(other.failure) };
+    const seconds = other && Math.round((Date.now() - other.started) / 1000);
+    const why = slot.busy ? 'skipped (the cache lock stayed busy)'
+      : `skipped (another process read this account ${seconds} s ago${other.failure ? `: ${other.failure}` : ''})`;
+    return reuseCached(key, why, snapshot, toPool) ?? { error: transient(`live read ${why}, and no reading from the last 10 minutes is cached`) };
+  }
+  try {
+    const raw = await read();
+    settle(key, slot.started, { raw });
+    return { pool: raw && toPool(raw) };
+  } catch (error) {
+    settle(key, slot.started, { error });
+    const reused = error.transient ? reuseCached(key, `failed (${error.message})`, snapshot, toPool) : null;
+    return reused ?? { error };
+  }
+};
+
+// Seconds or an HTTP date; 0, past or unreadable values give no hint.
+const retryAfterMs = (value) => {
+  if (value == null || value.trim() === '') return null;
+  const ms = /^\d+$/u.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();
+  return ms > 0 ? ms : null;
+};
+// GETs a usage endpoint and parses its JSON within READ_BUDGET_MS. A 429, a
+// 5xx or a connection dropped before the body is in retries, then throws a
+// transient error; any other answer returns as { status, ok, body }, with the
+// body parsed only when ok. Malformed JSON is no transit failure: it throws.
+export const fetchUsage = async (url, headers, what) => {
+  const deadline = Date.now() + READ_BUDGET_MS;
+  for (let retry = 0; ; retry++) {
+    let failure;
+    let wait = null;
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(Math.max(deadline - Date.now(), 1)) });
+      if (response.status !== 429 && response.status < 500) {
+        if (!response.ok) return { status: response.status, ok: false, body: null };
+        const text = await response.text();
+        return { status: response.status, ok: true, body: JSON.parse(text) };
+      }
+      failure = `${what} answered ${response.status}`;
+      wait = retryAfterMs(response.headers.get('retry-after'));
+    } catch (error) {
+      if (error.name === 'SyntaxError') throw error;
+      failure = `${what} request failed: ${error.message}`;
+    }
+    const hinted = wait != null;
+    wait ??= RETRY_BASE_MS * 2 ** retry * (0.75 + Math.random() / 2);
+    // A retry needs time left for its own request after the wait.
+    if (retry >= RETRY_LIMIT || Date.now() + wait + 1000 > deadline) {
+      throw Object.assign(transient(failure), hinted ? { notBefore: Date.now() + wait } : {});
+    }
+    await pause(wait);
+  }
 };
 
 // Session files grow past Node's string limit — read only the tail.
@@ -333,23 +501,18 @@ const main = async () => {
     }
     return found.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0] ?? null;
   };
-  // A failure before the request, or a refusal of the token, says nothing
-  // about load: only a failure in transit may reuse a cached reading.
-  const transient = (message) => Object.assign(new Error(message), { transient: true });
-  const readClaudeLive = async (credential) => {
-    if (!credential) throw new Error('no Claude Code login token');
+  // A missing or expired login fails before it claims a read or costs a request.
+  const claudeRefusal = (credential) => {
+    if (!credential) return 'no Claude Code login token';
     if (credential.expiresAt && credential.expiresAt < Date.now()) {
-      throw new Error('the stored Claude Code login expired; any Claude Code session refreshes it');
+      return 'the stored Claude Code login expired; any Claude Code session refreshes it';
     }
-    const token = credential.accessToken;
-    const response = await fetch(process.env.CLAUDE_USAGE_URL || 'https://api.anthropic.com/api/oauth/usage', {
-      headers: { authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
-      signal: AbortSignal.timeout(10000),
-    }).catch((error) => { throw transient(`usage request failed: ${error.message}`); });
-    if (response.status === 429 || response.status >= 500) throw transient(`usage endpoint answered ${response.status}`);
-    if (!response.ok) throw new Error(`usage endpoint answered ${response.status}`);
-    const body = await response.json()
-      .catch((error) => { throw error.name === 'SyntaxError' ? error : transient(`usage response failed: ${error.message}`); });
+    return null;
+  };
+  const readClaudeLive = async (credential) => {
+    const { status, ok, body } = await fetchUsage(process.env.CLAUDE_USAGE_URL || 'https://api.anthropic.com/api/oauth/usage',
+      { authorization: `Bearer ${credential.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' }, 'usage endpoint');
+    if (!ok) throw new Error(`usage endpoint answered ${status}`);
     const epoch = (iso) => (iso ? Date.parse(iso) / 1000 : null);
     const week = body.seven_day;
     if (!Number.isFinite(week?.utilization)) throw new Error('usage endpoint sent no weekly window');
@@ -361,10 +524,10 @@ const main = async () => {
   };
   // Each account is independent: start the Claude read now, join it below.
   const credential = live ? claudeCredential() : null;
-  const claudeLive = live ? readClaudeLive(credential).then((raw) => ({ raw }), (error) => ({ error })) : null;
+  const refusal = live ? claudeRefusal(credential) : null;
+  const claudeLive = !live ? null : refusal ? Promise.resolve({ error: new Error(refusal) })
+    : liveRead(accountKey('claude', credential.accessToken), () => readClaudeLive(credential), { snapshot: claude });
   const homes = listCodexHomes();
-  const cache = live ? readCache() : {};
-  const readings = {};
 
   const measuredRaw = (reading) => {
     const limits = reading.rateLimitsByLimitId?.codex ?? reading.rateLimits;
@@ -409,19 +572,17 @@ const main = async () => {
       const account = codexAccount(canonical);
       let homeMissing = true;
       try { homeMissing = !fs.statSync(canonical).isDirectory(); } catch {}
-      try {
-        if (homeMissing) throw new Error('home missing');
-        const raw = measuredRaw(await codexRead('account/rateLimits/read', {}, { codexHome: canonical }));
-        pool = raw && poolFromRaw(raw);
-        source = 'account/rateLimits/read';
-        liveError = null;
-        if (raw && account) readings[account] = raw;
-      } catch (error) {
-        // An RPC error is not classified, so every one but a missing home counts as transient.
-        const reused = homeMissing ? null : reuseCached(cache, account, error.message, pool);
-        if (reused) [pool, note, source] = [reused.pool, reused.note, 'account/rateLimits/read, cached'];
-        else liveError = 'live quota unavailable; snapshot is not current account proof';
-      }
+      // An RPC error is not classified, so every one counts as transient.
+      const read = homeMissing ? { error: new Error('home missing') } : await liveRead(account, async () => {
+        let raw;
+        try { raw = measuredRaw(await codexRead('account/rateLimits/read', {}, { codexHome: canonical })); }
+        catch (error) { throw transient(error.message); }
+        if (!raw) throw transient('live read carried no weekly Codex window');
+        return raw;
+      }, { snapshot: pool });
+      if (read.error) liveError = 'live quota unavailable; snapshot is not current account proof';
+      else [pool, note, source, liveError] = [read.pool, read.note ?? null,
+        read.note ? 'account/rateLimits/read, cached' : 'account/rateLimits/read', null];
     }
     codexIdentities[identity] = { home: canonical, pool, source,
       state: liveError ? (['protected', 'unavailable'].includes(poolState(pool)) ? poolState(pool) : 'unknown') : poolState(pool),
@@ -437,19 +598,9 @@ const main = async () => {
   let claudeNote = null;
   if (claudeLive) {
     const read = await claudeLive;
-    const account = accountKey('claude', credential?.accessToken);
-    const reused = read.error?.transient ? reuseCached(cache, account, read.error.message, claude) : null;
-    if (read.raw) {
-      claude = poolFromRaw(read.raw);
-      claudeSource = 'oauth/usage';
-      readings[account] = read.raw;
-    } else if (reused) {
-      [claude, claudeNote, claudeSource] = [reused.pool, reused.note, 'oauth/usage, cached'];
-    } else {
-      claudeError = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
-    }
+    if (read.error) claudeError = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
+    else [claude, claudeNote, claudeSource] = [read.pool, read.note ?? null, read.note ? 'oauth/usage, cached' : 'oauth/usage'];
   }
-  writeCache(readings);
   // One state per pool, so a caller acts on `states` instead of re-deriving the
   // thresholds. Codex takes the default identity's state, which already keeps a
   // failed live read from reporting a snapshot as current headroom. Cursor's
