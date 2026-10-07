@@ -19,7 +19,11 @@
 // window is unavailable; pace > 1 is protected; a snapshot older than 15
 // minutes is unknown. The first two outrank staleness, so a stale reading can
 // only be as good as its worst proven state.
-// Every read is live by default; --offline reads only local snapshots.
+// Every read is live by default; --offline reads only local snapshots. Many
+// threads read at once and the endpoints answer 429, so each good live reading
+// is cached in ~/.cache/t3-capacity/live-usage.json. A failed live read reuses
+// a cached reading younger than 10 minutes, with its age as stale_minutes and a
+// `note`; with none, the pool stays unknown.
 // Claude source: the subscription's usage endpoint with Claude Code's own
 // token; offline, ~/.claude/usage-state.json (written by the user's statusline).
 // Codex source: read-only account RPC per home; offline, session snapshots.
@@ -165,6 +169,29 @@ export const poolState = (pool) => {
   if (pool.pace > 1) return 'protected';
   if (pool.stale_minutes == null || pool.stale_minutes > 15) return 'unknown';
   return 'available';
+};
+
+const CACHE_MAX_MINUTES = 10;
+const cacheFile = () => path.join(os.homedir(), '.cache', 't3-capacity', 'live-usage.json');
+const readCache = () => { try { return JSON.parse(fs.readFileSync(cacheFile(), 'utf8')); } catch { return {}; } };
+// Concurrent writers each rename a whole file, so a reader never sees half of
+// one; a lost entry only costs the next failed read its fallback.
+const writeCache = (entries) => {
+  if (!Object.keys(entries).length) return;
+  try {
+    const file = cacheFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}`;
+    fs.writeFileSync(temp, JSON.stringify({ ...readCache(), ...entries }));
+    fs.renameSync(temp, file);
+  } catch {}
+};
+const cachedReading = (cache, key, failure) => {
+  const entry = cache[key];
+  const minutes = entry?.pool ? (Date.now() - entry.at) / 60000 : null;
+  if (minutes == null || minutes < 0 || minutes > CACHE_MAX_MINUTES) return null;
+  return { pool: { ...entry.pool, stale_minutes: Math.round(minutes) },
+    note: `live read failed (${failure}); reused the live reading from ${Math.round(minutes)} minutes ago` };
 };
 
 // Session files grow past Node's string limit — read only the tail.
@@ -313,6 +340,8 @@ const main = async () => {
   // Each account is independent: start the Claude read now, join it below.
   const claudeLive = live ? readClaudeLive().then((pool) => ({ pool }), (error) => ({ error })) : null;
   const homes = listCodexHomes();
+  const cache = live ? readCache() : {};
+  const fresh = {};
 
   const measuredPool = (reading) => {
     const limits = reading.rateLimitsByLimitId?.codex ?? reading.rateLimits;
@@ -349,19 +378,23 @@ const main = async () => {
     let pool = shared ? null : readCodexSnapshot(canonical);
     let source = shared ? 'shared-session-snapshot' : 'session-snapshot';
     let liveError = shared && !live ? 'sessions folder shared with another home; only --live proves this account' : null;
+    let note = null;
     if (live) {
       try {
         if (!fs.statSync(canonical).isDirectory()) throw new Error('home missing');
         pool = measuredPool(await codexRead('account/rateLimits/read', {}, { codexHome: canonical }));
         source = 'account/rateLimits/read';
         liveError = null;
-      } catch {
-        liveError = 'live quota unavailable; snapshot is not current account proof';
+        if (pool) fresh[`codex:${canonical}`] = { at: Date.now(), pool };
+      } catch (error) {
+        const reused = cachedReading(cache, `codex:${canonical}`, error.message);
+        if (reused) [pool, note, source] = [reused.pool, reused.note, 'account/rateLimits/read, cached'];
+        else liveError = 'live quota unavailable; snapshot is not current account proof';
       }
     }
     codexIdentities[identity] = { home: canonical, pool, source,
       state: liveError ? (['protected', 'unavailable'].includes(poolState(pool)) ? poolState(pool) : 'unknown') : poolState(pool),
-      ...(liveError ? { error: liveError } : {}) };
+      ...(liveError ? { error: liveError } : {}), ...(note ? { note } : {}) };
   }
   const eligible = Object.entries(codexIdentities).filter(([, entry]) => entry.state === 'available');
   eligible.sort(([, a], [, b]) => (a.pool.pace ?? 1) - (b.pool.pace ?? 1) || a.pool.used_percent - b.pool.used_percent);
@@ -370,15 +403,21 @@ const main = async () => {
   const cursor = await readCursorUsage(live);
   let claudeSource = claude ? 'statusline' : null;
   let claudeError = null;
+  let claudeNote = null;
   if (claudeLive) {
     const read = await claudeLive;
+    const reused = read.pool ? null : cachedReading(cache, 'claude', read.error.message);
     if (read.pool) {
       claude = read.pool;
       claudeSource = 'oauth/usage';
+      fresh.claude = { at: Date.now(), pool: read.pool };
+    } else if (reused) {
+      [claude, claudeNote, claudeSource] = [reused.pool, reused.note, 'oauth/usage, cached'];
     } else {
       claudeError = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
     }
   }
+  writeCache(fresh);
   // One state per pool, so a caller acts on `states` instead of re-deriving the
   // thresholds. Codex takes the default identity's state, which already keeps a
   // failed live read from reporting a snapshot as current headroom. Cursor's
@@ -409,7 +448,7 @@ const main = async () => {
   earlyEmpty('cursor_models', cursorPool(cursor?.cursor_models), false);
   earlyEmpty('other_models', cursorPool(cursor?.other_models), false);
   console.log(JSON.stringify({ alerts, claude, claude_source: claudeSource,
-    ...(claudeError ? { claude_error: claudeError } : {}), codex, cursor, codex_identities: codexIdentities,
+    ...(claudeError ? { claude_error: claudeError } : {}), ...(claudeNote ? { claude_note: claudeNote } : {}), codex, cursor, codex_identities: codexIdentities,
     recommended_codex_identity: eligible[0]?.[0] ?? null, states }));
 };
 

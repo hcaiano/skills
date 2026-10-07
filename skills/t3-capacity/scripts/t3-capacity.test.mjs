@@ -240,7 +240,7 @@ test("Grok reads only the grok.com login, paced like usage-state's pools", async
   }
 });
 
-test("a recorded mapping maps every run, and the choice walks preference tiers by pool state", async () => {
+test("a recorded mapping maps every run, and the choice takes the first tier with capacity", async () => {
   const home = mkdtempSync(join(tmpdir(), "t3-capacity-candidates-"));
   const homes = {};
   for (const name of ["spent", "second", "third"]) {
@@ -267,8 +267,10 @@ test("a recorded mapping maps every run, and the choice walks preference tiers b
     cursor: { cursor_models: "unknown", other_models: "unknown" },
   });
 
-  // A later tier with headroom beats an earlier one burning too fast.
-  assert.equal((await pick("third/m", "second/m")).instance, "second");
+  // Preference order outranks pace: an earlier tier burning too fast beats a
+  // later one with headroom, and within a tier headroom wins.
+  assert.equal((await pick("third/m", "second/m")).instance, "third");
+  assert.equal((await pick("third/m,second/m")).instance, "second");
   // With no headroom anywhere, a protected pool still takes work; a spent one never does.
   assert.equal((await pick("spent/m", "third/m")).instance, "third");
   assert.equal(await pick("spent/m"), null);

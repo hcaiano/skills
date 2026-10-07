@@ -13,9 +13,10 @@
 //   choice     the candidate to delegate to, or null when none can take work
 //
 // Each --candidate flag is one preference tier of comma-separated
-// <instance>/<model> entries. The choice is the first tier holding an
-// available candidate, then the first holding a protected one; within a tier
-// the lowest pace wins. Unknown and unavailable pools are never chosen.
+// <instance>/<model> entries. Preference order comes first: the choice is
+// taken from the first tier holding an available or protected candidate,
+// preferring available over protected, then the lowest pace. Unknown and
+// unavailable pools are never chosen.
 // Cursor bills its own models (Auto, Composer, Cursor Grok) to cursor_models
 // and every other model to other_models, which overflows into on-demand
 // spend, so a Cursor candidate takes the state of the pool its model bills.
@@ -41,7 +42,8 @@
 // file and the login Keychain expires last, and the Cursor CLI keeps its login
 // in the Keychain, so neither file says which account was read: Claude maps
 // there only by declaration, and Cursor only by default-login or declaration.
-// Nothing here writes a file, prints a credential, or runs a launcher.
+// Nothing here prints a credential or runs a launcher; the only file written
+// is usage-state's cache of its last good live readings.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -194,7 +196,8 @@ if (usageState.error) {
   for (const key of ['claude', 'cursor_models', 'other_models']) account(key, { error: usageState.error });
 } else {
   account('claude', { state: usageState.states.claude, reading: usageState.claude, source: usageState.claude_source,
-    ...(usageState.claude_error ? { error: usageState.claude_error } : {}) });
+    ...(usageState.claude_error ? { error: usageState.claude_error } : {}),
+    ...(usageState.claude_note ? { note: usageState.claude_note } : {}) });
   for (const key of ['cursor_models', 'other_models']) {
     const reading = usageState.cursor?.[key] ?? null;
     account(key, { state: usageState.states[key], reading: reading && { ...reading, resets_on: usageState.cursor.resets_on },
@@ -202,7 +205,7 @@ if (usageState.error) {
   }
   for (const [name, entry] of Object.entries(usageState.codex_identities)) {
     account(`codex:${name}`, { state: entry.state, reading: entry.pool, source: entry.source, home: entry.home,
-      ...(entry.error ? { error: entry.error } : {}) });
+      ...(entry.error ? { error: entry.error } : {}), ...(entry.note ? { note: entry.note } : {}) });
   }
 }
 account('grok', grok.reading
@@ -310,14 +313,9 @@ const ranked = tiers.map((tier, index) => tier.map(({ instance, model }) => {
   return { tier: index, instance, model, pool, state: pool ? accounts[pool].state : 'unknown',
     pace: reading?.pace ?? null, used_percent: reading?.used_percent ?? null };
 }));
-let choice = null;
-for (const state of ['available', 'protected']) {
-  for (const tier of ranked) {
-    choice = tier.filter((candidate) => candidate.state === state).sort(byPace)[0] ?? null;
-    if (choice) break;
-  }
-  if (choice) break;
-}
+const byState = (a, b) => (a.state === 'available' ? 0 : 1) - (b.state === 'available' ? 0 : 1) || byPace(a, b);
+const choice = ranked.map((tier) => tier.filter(({ state }) => state === 'available' || state === 'protected')
+  .sort(byState)[0]).find(Boolean) ?? null;
 
 console.log(JSON.stringify({
   instances: mapped, accounts, available, alerts: usageState.alerts ?? [],

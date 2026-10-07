@@ -19,7 +19,9 @@ user-stated mapping.
 
 To pick a delegate, pass each preference tier as one `--candidate` flag,
 listing every instance that serves each model in that tier. Delegate to
-`choice`. A null `choice` is a capacity blocker: report it, never guess.
+`choice`: it comes from the first tier with an available or protected
+candidate, so preference outranks pace. A null `choice` is a capacity blocker:
+report it, never guess.
 
 Summarize usage, pace, resets and account states. Pace above 1 risks
 exhaustion before reset. Unknown capacity proves no headroom.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,14 @@ const stubBin = mkdtempSync(join(tmpdir(), "t3-capacity-usage-stub-"));
 writeFileSync(join(stubBin, "security"), "#!/bin/sh\nexit 44\n");
 chmodSync(join(stubBin, "security"), 0o755);
 process.env.PATH = `${stubBin}:${process.env.PATH}`;
+
+// Backdates every cached live reading past the 10-minute reuse window.
+const ageCache = (home) => {
+  const file = join(home, ".cache", "t3-capacity", "live-usage.json");
+  const cache = JSON.parse(readFileSync(file, "utf8"));
+  for (const entry of Object.values(cache)) entry.at -= 11 * 60000;
+  writeFileSync(file, JSON.stringify(cache));
+};
 
 test("rejects conflicting live and offline flags", () => {
   const result = spawnSync(process.execPath, [script, "--live", "--offline"], {
@@ -137,7 +145,7 @@ test("Codex homes have separate usage and stale headroom is not recommended", ()
   assert.equal(output.recommended_codex_identity, "second");
 });
 
-test("live quota stays bound to each Codex home and a failed read is unknown", () => {
+test("live quota stays bound to each Codex home, and a failed read reuses it for 10 minutes", () => {
   const taskHome = mkdtempSync(join(tmpdir(), "t3-capacity-live-identities-"));
   for (const dir of [join(taskHome, ".codex"), join(taskHome, ".codex-profiles", "second")]) {
     mkdirSync(join(dir, "sessions"), { recursive: true });
@@ -177,12 +185,21 @@ rl.on('line', line=>{
     encoding:"utf8",env:{...env,FAKE_RPC_ERROR:"1"},timeout:10000,
   });
   assert.equal(failed.status,0,failed.stderr);
-  const unknown=JSON.parse(failed.stdout);
+  const reused=JSON.parse(failed.stdout);
+  assert.equal(reused.codex_identities.second.state,"available");
+  assert.equal(reused.codex_identities.second.source,"account/rateLimits/read, cached");
+  assert.match(reused.codex_identities.second.note,/reused/u);
+  ageCache(taskHome);
+  const expired=spawnSync(process.execPath,[script,"--live"],{
+    encoding:"utf8",env:{...env,FAKE_RPC_ERROR:"1"},timeout:10000,
+  });
+  assert.equal(expired.status,0,expired.stderr);
+  const unknown=JSON.parse(expired.stdout);
   assert.equal(unknown.codex_identities.second.state,"unknown");
   assert.equal(unknown.recommended_codex_identity,null);
 });
 
-test("live Claude usage outranks the statusline snapshot, and a failed read is unknown", async () => {
+test("live Claude usage outranks the statusline snapshot, and a failed read reuses it for 10 minutes", async () => {
   const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-live-"));
   mkdirSync(join(home, ".claude"), { recursive: true });
   const now = Date.now() / 1000;
@@ -223,6 +240,14 @@ test("live Claude usage outranks the statusline snapshot, and a failed read is u
     assert.equal(fresh.claude.short_window.used_percent, 31);
     // 64% after 34 of 168 hours burns far faster than the rest can fund.
     assert.equal(fresh.states.claude, "protected");
+    status = 429;
+    const limited = await run();
+    assert.equal(limited.claude_source, "oauth/usage, cached");
+    assert.equal(limited.claude.used_percent, 64);
+    assert.match(limited.claude_note, /429/u);
+    assert.equal(limited.claude_error, undefined);
+    assert.equal(limited.states.claude, "protected");
+    ageCache(home);
     status = 401;
     const failed = await run();
     assert.equal(failed.claude_source, "statusline");
