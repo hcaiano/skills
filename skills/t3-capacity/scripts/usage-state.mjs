@@ -207,7 +207,8 @@ const reuseCached = (cache, key, failure, snapshot) => {
   const entry = key ? cache[key] : null;
   if (!fresh(entry) || !(entry.at <= Date.now()) || typeof entry.week?.used !== 'number') return null;
   const pool = poolFromRaw(entry);
-  if (!pool || (snapshot?.stale_minutes != null && snapshot.stale_minutes <= pool.stale_minutes)) return null;
+  // Ages are whole minutes, so a tie goes to the live reading, which is account proof.
+  if (!pool || (snapshot?.stale_minutes != null && snapshot.stale_minutes < pool.stale_minutes)) return null;
   return { pool, note: `live read failed (${failure}); reused the live reading from ${pool.stale_minutes} minutes ago` };
 };
 
@@ -347,7 +348,8 @@ const main = async () => {
     }).catch((error) => { throw transient(`usage request failed: ${error.message}`); });
     if (response.status === 429 || response.status >= 500) throw transient(`usage endpoint answered ${response.status}`);
     if (!response.ok) throw new Error(`usage endpoint answered ${response.status}`);
-    const body = await response.json();
+    const body = await response.json()
+      .catch((error) => { throw error.name === 'SyntaxError' ? error : transient(`usage response failed: ${error.message}`); });
     const epoch = (iso) => (iso ? Date.parse(iso) / 1000 : null);
     const week = body.seven_day;
     if (!Number.isFinite(week?.utilization)) throw new Error('usage endpoint sent no weekly window');
