@@ -224,7 +224,8 @@ test("a codex on PATH that does not start is skipped, and its error reaches the 
   };
   // A broken npm install, the real failure from 2026-10-07.
   const broken = dir("broken", { codex: "#!/bin/sh\necho 'codex.js:107' >&2\necho '  throw new Error(' >&2\n"
-    + "echo 'Error: Missing optional dependency @openai/codex-linux-x64' >&2\necho '    at codex.js:107:9' >&2\nexit 1\n" });
+    + "printf '\\033[31mError: Missing optional dependency @openai/codex-linux-x64\\033[0m\\r\\n' >&2\n"
+    + "echo '    at codex.js:107:9' >&2\nexit 1\n" });
   const working = dir("working", { codex: `#!${process.execPath}
 if (process.argv[2] === "--version") { console.log("codex-cli 0.0.0"); process.exit(0); }
 require("node:readline").createInterface({ input: process.stdin }).on("line", (line) => {
@@ -236,9 +237,10 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
 ` });
   const nodeOnly = dir("node", {});
   symlinkSync(process.execPath, join(nodeOnly, "node"));
-  const run = (path) => {
+  const run = (path, codexBin) => {
     const env = { ...process.env, HOME: home, PATH: path, USAGE_STATE_SKIP_CURSOR: "1", CLAUDE_USAGE_URL: "http://127.0.0.1:9/" };
     delete env.CODEX_BIN;
+    if (codexBin) env.CODEX_BIN = codexBin;
     const result = spawnSync(process.execPath, [script, "--live"], { encoding: "utf8", env, timeout: 15000 });
     assert.equal(result.status, 0, result.stderr);
     endSpacing(home);
@@ -247,10 +249,15 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   const skipped = run([broken, working, nodeOnly, stubBin].join(":"));
   assert.equal(skipped.state, "available");
   assert.equal(skipped.pool.used_percent, 30);
+  // A CLI that does not start says nothing about the account, so the cached
+  // reading from the run above is not reused.
   const failed = run([broken, nodeOnly, stubBin].join(":"));
   assert.equal(failed.state, "unknown");
-  assert.match(failed.error, /Missing optional dependency @openai\/codex-linux-x64/u);
+  assert.match(failed.error, /: Error: Missing optional dependency @openai\/codex-linux-x64\)/u);
   assert.match(failed.error, /CODEX_BIN/u);
+  const missing = run([nodeOnly, stubBin].join(":"), join(home, "no-codex"));
+  assert.equal(missing.state, "unknown");
+  assert.match(missing.error, /cannot run .*no-codex/u);
 });
 
 // A Claude home with a cool statusline snapshot and a login token, plus a
