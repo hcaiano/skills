@@ -25,8 +25,8 @@ Select logs by modification time against a reference file
 events stamped inside the window. Grok sessions live in
 `sessions/<encoded cwd>/<id>/chat_history.jsonl`. Claude transcripts under
 `subagents/` and T3 threads with a `parentThreadId` belong to their parent
-session. An `updatedAt` shared by many threads marks a T3 restart, not
-activity.
+session. Judge thread activity by its message and event timestamps: a T3
+restart stamps many threads with the same `updatedAt`.
 
 Skip earlier `workflow-retro` runs. Done when every other session and PR in the
 window is listed with its machine.
