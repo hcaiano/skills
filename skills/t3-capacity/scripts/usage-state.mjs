@@ -224,7 +224,9 @@ const fresh = (entry) => Date.now() - entry?.at <= CACHE_MAX_MINUTES * 60000;
 // two processes cannot both claim a read or drop each other's reading. It is
 // held for milliseconds: a lock older than 1 s belongs to a dead process and is
 // taken over. Past 3 s of contention the caller gets BUSY and must not read
-// live; a filesystem that refuses the lock runs the caller unlocked.
+// live; a filesystem that refuses the lock runs the caller unlocked. Node has
+// no lock the OS frees on exit, so a holder paused past 1 s can lose its lock:
+// fn gets `owns` to check just before a write that must not race.
 const BUSY = Symbol('busy');
 const locked = (fn) => {
   const lock = path.join(cacheDir(), 'lock');
@@ -239,7 +241,11 @@ const locked = (fn) => {
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
     }
-    return fn();
+    const owns = () => {
+      if (!owned) return true;
+      try { return fs.statSync(lock).ino === owned; } catch { return false; }
+    };
+    return fn(owns);
   } catch { return null; }
   // A holder taken over as dead must not remove its successor's lock.
   finally { if (owned) try { if (fs.statSync(lock).ino === owned) fs.rmdirSync(lock); } catch {} }
@@ -248,7 +254,7 @@ const locked = (fn) => {
 // started inside the spacing or before the endpoint's Retry-After. A read that
 // never finished holds only IN_FLIGHT_MS: its process died.
 const claim = (key) => {
-  const slot = locked(() => {
+  const slot = locked((owns) => {
     const attempts = readJson(attemptsFile());
     const now = Date.now();
     const holds = (attempt) => (now - attempt?.started >= 0
@@ -257,6 +263,7 @@ const claim = (key) => {
     if (holds(attempts[key])) return { other: attempts[key] };
     for (const [name, attempt] of Object.entries(attempts)) if (!holds(attempt)) delete attempts[name];
     attempts[key] = { started: now };
+    if (!owns()) return BUSY;
     writeJson(attemptsFile(), attempts);
     return { started: now };
   });
