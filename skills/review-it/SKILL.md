@@ -1,6 +1,6 @@
 ---
 name: review-it
-description: "Pre-PR review: grade a finished change by risk, have another model family review it, and fix the findings. Use before opening or updating a PR."
+description: "Pre-PR review: grade a finished change by risk, have configured models review it, and fix the findings. Use before opening or updating a PR."
 ---
 
 # Review it
@@ -28,24 +28,25 @@ to the receipt.
 
 ## 3. Review
 
-`single`: one reviewer from a family that did not write the change. Take the
-first such seat in the `interrogate reviewers` line of `pstack-models.md` and
-resolve it with `t3-capacity`. The brief carries the absolute path of the
-[review brief](references/review-brief.md), the worktree, the pinned range, the
-intent and acceptance criteria, and the paths of any spec, issue and repo
-instruction files.
+`single`: one reviewer from the `interrogate reviewers` line of
+`pstack-models.md`, resolved with `t3-capacity`. Prefer the first seat from a
+family that did not write the change (Opus wrote it, Astra or Sol reviews it); a
+same-family seat is fine when it is the best one with capacity. The brief
+carries the absolute path of the [review brief](references/review-brief.md), the
+worktree, the pinned range, the intent and acceptance criteria, and the paths of
+any spec, issue and repo instruction files.
 
 `dual`: run `interrogate` on the pinned range with the same intent; its Act On
 findings are the findings.
 
 Staff every reviewer, `dual` seats and the final review included, through
 `delegate_task` in runtime mode `full-access` with the read-only brief: a
-headless run has nobody to approve it. A capacity fallback never lands on the
-author's family; when no other family has capacity, report a blocker. Only the
-user can waive the family rule, and the receipt then names the waiver; an
-earlier model choice in the session waives nothing. Where `delegate_task` is
-unavailable, as in a subagent (`parent_not_active`), hand the pinned range back
-to the parent as a blocker.
+headless run has nobody to approve it. Every seat comes from a
+`pstack-models.md` line: those are the models the user pays for and trusts, so
+family diversity is a preference among them and never a reason to reach past
+them. When every configured seat is out of capacity, report a blocker. Where
+`delegate_task` is unavailable, as in a subagent (`parent_not_active`), hand the
+pinned range back to the parent as a blocker.
 
 A review counts once it returns a substantive verdict on the pinned HEAD; restaff
 refusals, quota errors and empty results. A material finding or a `dual` risk
@@ -59,9 +60,10 @@ follow-ups. New contracts, architecture changes or fixes that roughly double
 the diff go to the user. Rerun the affected checks and commit.
 
 When the fixes change behavior, scope, security or architecture, run one final
-review: a new reviewer on the new HEAD with the prior findings, from a family
-that wrote none of the reviewed code, fixes included. Apply, check and commit
-its valid findings; anything needing another such change goes to the user.
+review: a new configured reviewer on the new HEAD with the prior findings,
+preferring a family that wrote none of the reviewed code, fixes included. Apply,
+check and commit its valid findings; anything needing another such change goes
+to the user.
 
 ## 5. Receipt
 
