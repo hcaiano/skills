@@ -12,10 +12,10 @@
 // JSON result of the request. The server's stderr is never surfaced: it can
 // carry account diagnostics, and an error here only needs to say which step
 // failed.
-import { spawn } from "node:child_process";
-import { readdirSync, realpathSync, statSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { accessSync, constants, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 
 const CODEX_READ_METHODS = new Set(["account/rateLimits/read"]);
 
@@ -23,7 +23,49 @@ const CLIENT_INFO = { name: "t3-capacity-codex-rpc", title: "t3-capacity codex r
 const DEFAULT_MAX_BYTES = 4 * 1024 * 1024;
 const KILL_GRACE_MS = 1000;
 
-const codexBinary = (env = process.env) => (env.CODEX_BIN?.trim() ? env.CODEX_BIN.trim() : "codex");
+const VERSION_TIMEOUT_MS = 5000;
+
+// The Codex CLI to run: CODEX_BIN when set, else the first `codex` on PATH
+// whose `--version` exits 0. A broken install earlier on PATH, such as an npm
+// package missing its platform binary, would otherwise fail every read as an
+// account that never answered. `--version` touches no account, so its error
+// line, stripped of control characters, is safe to report. PATH entries
+// resolve against the working directory, an empty one meaning that directory,
+// and the result is kept per PATH and working directory.
+const resolved = new Map();
+// Terminal escape sequences, then any remaining control character.
+const printable = (text) =>
+  text.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)?|[@-_])/gu, "").replace(/[\p{Cc}]/gu, " ");
+export const resolveCodexBinary = (env = process.env) => {
+  if (env.CODEX_BIN?.trim()) return { binary: env.CODEX_BIN.trim() };
+  const key = `${process.cwd()}\0${env.PATH ?? ""}`;
+  if (resolved.has(key)) return resolved.get(key);
+  const failures = [];
+  let result = null;
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    const candidate = join(resolve(dir || "."), "codex");
+    try {
+      accessSync(candidate, constants.X_OK);
+    } catch {
+      continue;
+    }
+    const probe = spawnSync(candidate, ["--version"], { env, encoding: "utf8", timeout: VERSION_TIMEOUT_MS });
+    if (probe.status === 0) {
+      result = { binary: candidate };
+      break;
+    }
+    const lines = (probe.stderr ?? "").split("\n").map((line) => printable(line).trim()).filter(Boolean);
+    const reason = probe.error?.message ?? (lines.find((line) => /^\w*Error\b/u.test(line)) ?? lines[0] ?? `exit ${probe.status}`);
+    failures.push(`${candidate}: ${reason.slice(0, 200)}`);
+  }
+  result ??= {
+    error: failures.length
+      ? `no codex on PATH starts; set CODEX_BIN to a working codex (${failures.join("; ")})`
+      : "codex is not on PATH; set CODEX_BIN",
+  };
+  resolved.set(key, result);
+  return result;
+};
 
 // The home that identifies a Codex account. `default` is `~/.codex`; a named
 // identity is `~/.codex-profiles/<name>`. Only simple names are accepted. A
@@ -82,7 +124,12 @@ export const codexRead = (
       rejectPromise(new Error(`codexRead needs a positive finite timeoutMs, got ${timeoutMs}`));
       return;
     }
-    const binary = bin ?? codexBinary(env);
+    const found = bin ? { binary: bin } : resolveCodexBinary(env);
+    if (found.error) {
+      rejectPromise(Object.assign(new Error(found.error), { startup: true }));
+      return;
+    }
+    const { binary } = found;
     const home = codexHome ?? env.CODEX_HOME ?? join(homedir(), ".codex");
     let child;
     try {
@@ -92,10 +139,14 @@ export const codexRead = (
         stdio: ["pipe", "pipe", "pipe"],
       });
     } catch (error) {
-      rejectPromise(new Error(`cannot run ${binary} app-server: ${error.message}`));
+      rejectPromise(Object.assign(new Error(`cannot run ${binary} app-server: ${error.message}`), { startup: true }));
       return;
     }
     let settled = false;
+    // Until the server answers initialize, a failure means the CLI did not
+    // start, which says nothing about the account.
+    let started = false;
+    const startupError = (message) => Object.assign(new Error(message), { startup: !started });
     let buffered = "";
     let bytes = 0;
     let timer = null;
@@ -141,9 +192,9 @@ export const codexRead = (
       }
     };
     timer = setTimeout(() => finish(new Error(`${binary} app-server did not answer ${method} within ${timeoutMs}ms`)), timeoutMs);
-    child.on("error", (error) => finish(new Error(`cannot run ${binary} app-server: ${error.message}`)));
+    child.on("error", (error) => finish(startupError(`cannot run ${binary} app-server: ${error.message}`)));
     child.on("close", (code) => {
-      if (!settled) finish(new Error(`${binary} app-server exited ${code ?? -1} before answering ${method}`));
+      if (!settled) finish(startupError(`${binary} app-server exited ${code ?? -1} before answering ${method}`));
       clearTimeout(killTimer);
     });
     child.stdin.on("error", () => {});
@@ -168,6 +219,7 @@ export const codexRead = (
           continue;
         }
         if (message.id === 1) {
+          started = true;
           if (message.error) {
             finish(new Error(`${binary} app-server initialize failed: ${message.error.message ?? "unknown error"}`));
             return;
