@@ -19,6 +19,15 @@ the last 24 hours on a first run. Gather, from both machines:
 - Every PR those sessions opened or touched: body, review threads and checks,
   through `gh`.
 
+Select logs by modification time against a reference file
+(`TZ=UTC touch -t <CCYYMMDDhhmm.ss> <ref>`, then `find … -newer <ref>`): macOS
+`find -newermt` rejects ISO times and reads other forms as local time. Keep only
+events stamped inside the window. Grok sessions live in
+`sessions/<encoded cwd>/<id>/chat_history.jsonl`. Claude transcripts under
+`subagents/` and T3 threads with a `parentThreadId` belong to their parent
+session. Judge thread activity by its message and event timestamps: a T3
+restart stamps many threads with the same `updatedAt`.
+
 Skip earlier `workflow-retro` runs. Done when every other session and PR in the
 window is listed with its machine.
 
