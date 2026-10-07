@@ -24,4 +24,6 @@ candidate, so preference outranks pace. A null `choice` is a capacity blocker:
 report it, never guess.
 
 Summarize usage, pace, resets and account states. Pace above 1 risks
-exhaustion before reset. Unknown capacity proves no headroom.
+exhaustion before reset. Unknown capacity proves no headroom. An account
+`note` marks a reading reused, up to 10 minutes old, after a failed live read;
+name it in the summary.

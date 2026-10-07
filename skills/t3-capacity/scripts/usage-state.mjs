@@ -21,15 +21,19 @@
 // only be as good as its worst proven state.
 // Every read is live by default; --offline reads only local snapshots. Many
 // threads read at once and the endpoints answer 429, so each good live reading
-// is cached in ~/.cache/t3-capacity/live-usage.json. A failed live read reuses
-// a cached reading younger than 10 minutes, with its age as stale_minutes and a
-// `note`; with none, the pool stays unknown.
+// is cached in ~/.cache/t3-capacity/live-usage.json under a hash of its account
+// (the Claude token, the Codex account_id). A live read that fails in transit
+// (timeout, 429, 5xx, a Codex RPC error) reuses that account's cached reading
+// when it is younger than 10 minutes and newer than the local snapshot, re-paced
+// to now, with its age as stale_minutes and a `note`. Otherwise the failed-read
+// rule above holds. The reused reading never raises an alert.
 // Claude source: the subscription's usage endpoint with Claude Code's own
 // token; offline, ~/.claude/usage-state.json (written by the user's statusline).
 // Codex source: read-only account RPC per home; offline, session snapshots.
 // Cursor source: the logged-in CLI's native /usage command. In its current UI,
 // "Auto" is the Cursor Models pool and "API" is the Other Models pool.
 import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -171,27 +175,40 @@ export const poolState = (pool) => {
   return 'available';
 };
 
+// A live reading is kept raw: { at, week: { used, resets_at }, burst }, with
+// epoch-second resets, so a reused one is paced against the current time.
+const poolFromRaw = ({ at, week, burst }) => {
+  const weekly = pace(week.used, hoursUntil(week.resets_at));
+  return weekly && { ...weekly, stale_minutes: Math.round((Date.now() - at) / 60000),
+    short_window: burst ? burstWindow(burst.used, burst.resets_at) : null };
+};
 const CACHE_MAX_MINUTES = 10;
+const accountKey = (prefix, secret) =>
+  (secret ? `${prefix}:${crypto.createHash('sha256').update(secret).digest('hex').slice(0, 16)}` : null);
 const cacheFile = () => path.join(os.homedir(), '.cache', 't3-capacity', 'live-usage.json');
 const readCache = () => { try { return JSON.parse(fs.readFileSync(cacheFile(), 'utf8')); } catch { return {}; } };
-// Concurrent writers each rename a whole file, so a reader never sees half of
-// one; a lost entry only costs the next failed read its fallback.
+const fresh = (entry) => Date.now() - entry?.at <= CACHE_MAX_MINUTES * 60000;
+// Each writer renames a whole file, so a reader never sees half of one, and
+// keeps the newer reading per account. Two writers racing can still drop one
+// entry, which only costs the next failed read its fallback.
 const writeCache = (entries) => {
   if (!Object.keys(entries).length) return;
   try {
     const file = cacheFile();
     fs.mkdirSync(path.dirname(file), { recursive: true });
+    const merged = Object.fromEntries(Object.entries(readCache()).filter(([, entry]) => fresh(entry)));
+    for (const [key, entry] of Object.entries(entries)) if (!(merged[key]?.at >= entry.at)) merged[key] = entry;
     const temp = `${file}.${process.pid}`;
-    fs.writeFileSync(temp, JSON.stringify({ ...readCache(), ...entries }));
+    fs.writeFileSync(temp, JSON.stringify(merged));
     fs.renameSync(temp, file);
   } catch {}
 };
-const cachedReading = (cache, key, failure) => {
-  const entry = cache[key];
-  const minutes = entry?.pool ? (Date.now() - entry.at) / 60000 : null;
-  if (minutes == null || minutes < 0 || minutes > CACHE_MAX_MINUTES) return null;
-  return { pool: { ...entry.pool, stale_minutes: Math.round(minutes) },
-    note: `live read failed (${failure}); reused the live reading from ${Math.round(minutes)} minutes ago` };
+const reuseCached = (cache, key, failure, snapshot) => {
+  const entry = key ? cache[key] : null;
+  if (!fresh(entry) || !(entry.at <= Date.now()) || typeof entry.week?.used !== 'number') return null;
+  const pool = poolFromRaw(entry);
+  if (!pool || (snapshot?.stale_minutes != null && snapshot.stale_minutes <= pool.stale_minutes)) return null;
+  return { pool, note: `live read failed (${failure}); reused the live reading from ${pool.stale_minutes} minutes ago` };
 };
 
 // Session files grow past Node's string limit — read only the tail.
@@ -315,8 +332,10 @@ const main = async () => {
     }
     return found.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0] ?? null;
   };
-  const readClaudeLive = async () => {
-    const credential = claudeCredential();
+  // A failure before the request, or a refusal of the token, says nothing
+  // about load: only a failure in transit may reuse a cached reading.
+  const transient = (message) => Object.assign(new Error(message), { transient: true });
+  const readClaudeLive = async (credential) => {
     if (!credential) throw new Error('no Claude Code login token');
     if (credential.expiresAt && credential.expiresAt < Date.now()) {
       throw new Error('the stored Claude Code login expired; any Claude Code session refreshes it');
@@ -325,35 +344,40 @@ const main = async () => {
     const response = await fetch(process.env.CLAUDE_USAGE_URL || 'https://api.anthropic.com/api/oauth/usage', {
       headers: { authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
       signal: AbortSignal.timeout(10000),
-    });
+    }).catch((error) => { throw transient(`usage request failed: ${error.message}`); });
+    if (response.status === 429 || response.status >= 500) throw transient(`usage endpoint answered ${response.status}`);
     if (!response.ok) throw new Error(`usage endpoint answered ${response.status}`);
     const body = await response.json();
     const epoch = (iso) => (iso ? Date.parse(iso) / 1000 : null);
     const week = body.seven_day;
     if (!Number.isFinite(week?.utilization)) throw new Error('usage endpoint sent no weekly window');
-    const weekly = pace(week.utilization, hoursUntil(epoch(week.resets_at)));
-    if (!weekly) throw new Error('usage endpoint sent an expired weekly window');
     const burst = body.five_hour;
-    return { ...weekly, stale_minutes: 0,
-      short_window: Number.isFinite(burst?.utilization) ? burstWindow(burst.utilization, epoch(burst.resets_at)) : null };
+    const raw = { at: Date.now(), week: { used: week.utilization, resets_at: epoch(week.resets_at) },
+      burst: Number.isFinite(burst?.utilization) ? { used: burst.utilization, resets_at: epoch(burst.resets_at) } : null };
+    if (!poolFromRaw(raw)) throw new Error('usage endpoint sent an expired weekly window');
+    return raw;
   };
   // Each account is independent: start the Claude read now, join it below.
-  const claudeLive = live ? readClaudeLive().then((pool) => ({ pool }), (error) => ({ error })) : null;
+  const credential = live ? claudeCredential() : null;
+  const claudeLive = live ? readClaudeLive(credential).then((raw) => ({ raw }), (error) => ({ error })) : null;
   const homes = listCodexHomes();
   const cache = live ? readCache() : {};
-  const fresh = {};
+  const readings = {};
 
-  const measuredPool = (reading) => {
+  const measuredRaw = (reading) => {
     const limits = reading.rateLimitsByLimitId?.codex ?? reading.rateLimits;
     if (!limits || (limits.limitId && limits.limitId !== 'codex')) return null;
     const windows = [limits.primary, limits.secondary].filter(Boolean);
     const week = windows.find((w) => w.windowDurationMins === WEEK_MINUTES);
     if (!week || !Number.isFinite(week.usedPercent) || week.usedPercent < 0 || week.usedPercent > 100) return null;
-    const weekly = pace(week.usedPercent, hoursUntil(week.resetsAt));
-    if (!weekly) return null;
     const burst = windows.find((w) => w.windowDurationMins < WEEK_MINUTES);
-    return { ...weekly, stale_minutes: 0,
-      short_window: burst ? burstWindow(burst.usedPercent, burst.resetsAt) : null };
+    const raw = { at: Date.now(), week: { used: week.usedPercent, resets_at: week.resetsAt },
+      burst: burst ? { used: burst.usedPercent, resets_at: burst.resetsAt } : null };
+    return poolFromRaw(raw) ? raw : null;
+  };
+  const codexAccount = (home) => {
+    try { return accountKey('codex', JSON.parse(fs.readFileSync(path.join(home, 'auth.json'), 'utf8')).tokens?.account_id); }
+    catch { return null; }
   };
   const codexIdentities = {};
   const seenHomes = new Set();
@@ -380,14 +404,19 @@ const main = async () => {
     let liveError = shared && !live ? 'sessions folder shared with another home; only --live proves this account' : null;
     let note = null;
     if (live) {
+      const account = codexAccount(canonical);
+      let homeMissing = true;
+      try { homeMissing = !fs.statSync(canonical).isDirectory(); } catch {}
       try {
-        if (!fs.statSync(canonical).isDirectory()) throw new Error('home missing');
-        pool = measuredPool(await codexRead('account/rateLimits/read', {}, { codexHome: canonical }));
+        if (homeMissing) throw new Error('home missing');
+        const raw = measuredRaw(await codexRead('account/rateLimits/read', {}, { codexHome: canonical }));
+        pool = raw && poolFromRaw(raw);
         source = 'account/rateLimits/read';
         liveError = null;
-        if (pool) fresh[`codex:${canonical}`] = { at: Date.now(), pool };
+        if (raw && account) readings[account] = raw;
       } catch (error) {
-        const reused = cachedReading(cache, `codex:${canonical}`, error.message);
+        // An RPC error is not classified, so every one but a missing home counts as transient.
+        const reused = homeMissing ? null : reuseCached(cache, account, error.message, pool);
         if (reused) [pool, note, source] = [reused.pool, reused.note, 'account/rateLimits/read, cached'];
         else liveError = 'live quota unavailable; snapshot is not current account proof';
       }
@@ -406,18 +435,19 @@ const main = async () => {
   let claudeNote = null;
   if (claudeLive) {
     const read = await claudeLive;
-    const reused = read.pool ? null : cachedReading(cache, 'claude', read.error.message);
-    if (read.pool) {
-      claude = read.pool;
+    const account = accountKey('claude', credential?.accessToken);
+    const reused = read.error?.transient ? reuseCached(cache, account, read.error.message, claude) : null;
+    if (read.raw) {
+      claude = poolFromRaw(read.raw);
       claudeSource = 'oauth/usage';
-      fresh.claude = { at: Date.now(), pool: read.pool };
+      readings[account] = read.raw;
     } else if (reused) {
       [claude, claudeNote, claudeSource] = [reused.pool, reused.note, 'oauth/usage, cached'];
     } else {
       claudeError = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
     }
   }
-  writeCache(fresh);
+  writeCache(readings);
   // One state per pool, so a caller acts on `states` instead of re-deriving the
   // thresholds. Codex takes the default identity's state, which already keeps a
   // failed live read from reporting a snapshot as current headroom. Cursor's
@@ -443,12 +473,16 @@ const main = async () => {
       alerts.push({ pool: name, days_to_empty: pool.days_to_empty, days_left: pool.days_left });
     }
   };
-  earlyEmpty('claude', claude, Boolean(claudeError));
-  for (const [name, entry] of Object.entries(codexIdentities)) earlyEmpty(`codex:${name}`, entry.pool, Boolean(entry.error));
+  earlyEmpty('claude', claude, Boolean(claudeError || claudeNote));
+  for (const [name, entry] of Object.entries(codexIdentities)) {
+    earlyEmpty(`codex:${name}`, entry.pool, Boolean(entry.error || entry.note));
+  }
   earlyEmpty('cursor_models', cursorPool(cursor?.cursor_models), false);
   earlyEmpty('other_models', cursorPool(cursor?.other_models), false);
   console.log(JSON.stringify({ alerts, claude, claude_source: claudeSource,
-    ...(claudeError ? { claude_error: claudeError } : {}), ...(claudeNote ? { claude_note: claudeNote } : {}), codex, cursor, codex_identities: codexIdentities,
+    ...(claudeError ? { claude_error: claudeError } : {}),
+    ...(claudeNote ? { claude_note: claudeNote } : {}),
+    codex, cursor, codex_identities: codexIdentities,
     recommended_codex_identity: eligible[0]?.[0] ?? null, states }));
 };
 
