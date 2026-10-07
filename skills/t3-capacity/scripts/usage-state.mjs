@@ -23,8 +23,9 @@
 // threads read at once and the endpoints answer 429, so each good live reading
 // is cached in ~/.cache/t3-capacity/live-usage.json under a hash of its account
 // (the Claude token, the Codex account_id), and each account is read live at
-// most once per two minutes across processes. A 429, 5xx or dropped connection
-// retries briefly first. A read skipped by that spacing, or one that fails in
+// most once per two minutes across processes, or less often when an endpoint
+// sends a longer Retry-After. A 429, 5xx or dropped connection retries briefly
+// first. A read skipped by that spacing, or one that fails in
 // transit (timeout, 429, 5xx, a Codex RPC error), reuses that account's cached
 // reading when it is younger than 10 minutes and newer than the local snapshot,
 // re-paced to now, with its age as stale_minutes and a `note`. Otherwise the
@@ -194,10 +195,13 @@ const SPACING_MS = 120000;
 // A caller inside the spacing waits this long from the other read's start for
 // its result: Codex's RPC times out at 15 s, an HTTP read with retries sooner.
 const IN_FLIGHT_MS = 20000;
-// 429, 5xx and dropped connections retry inside this budget, keeping the script
-// fast: Retry-After when it is positive, else RETRY_BASE_MS doubled per retry.
-const RETRY_BUDGET_MS = 5000;
+// One HTTP read, retries and body included, ends within READ_BUDGET_MS. A 429,
+// 5xx or dropped connection retries inside it: after Retry-After when it is
+// positive, else after RETRY_BASE_MS doubled per retry. A longer Retry-After
+// holds every process off that account until it passes, up to an hour.
+const READ_BUDGET_MS = 10000;
 const RETRY_LIMIT = 2;
+const HOLD_OFF_MAX_MS = 3600000;
 const RETRY_BASE_MS = Number(process.env.USAGE_STATE_RETRY_BASE_MS) || 1000;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const accountKey = (prefix, secret) =>
@@ -238,28 +242,32 @@ const locked = (fn) => {
   finally { if (held) try { fs.rmdirSync(lock); } catch {} }
 };
 // Takes the account's next live read, or returns the read another process
-// started inside the spacing.
+// started inside the spacing or before the endpoint's Retry-After.
 const claim = (key) => locked(() => {
   const attempts = readJson(attemptsFile());
   const now = Date.now();
-  const age = (attempt) => now - attempt?.started;
-  if (age(attempts[key]) >= 0 && age(attempts[key]) < SPACING_MS) return { other: attempts[key] };
-  for (const [name, attempt] of Object.entries(attempts)) if (!(age(attempt) >= 0 && age(attempt) < SPACING_MS)) delete attempts[name];
+  const holds = (attempt) => (now - attempt?.started >= 0 && now - attempt?.started < SPACING_MS)
+    || (now < attempt?.not_before && attempt.not_before - now <= HOLD_OFF_MAX_MS);
+  if (holds(attempts[key])) return { other: attempts[key] };
+  for (const [name, attempt] of Object.entries(attempts)) if (!holds(attempt)) delete attempts[name];
   attempts[key] = { started: now };
   writeJson(attemptsFile(), attempts);
   return { started: now };
 }) ?? { started: Date.now() };
-// Records how the claimed read ended, and keeps the newer good reading.
-const settle = (key, started, { raw, failure, transient }) => locked(() => {
-  const attempts = readJson(attemptsFile());
-  if (attempts[key]?.started === started) {
-    attempts[key] = { started, finished: Date.now(), ...(failure ? { failure, transient: Boolean(transient) } : {}) };
-    writeJson(attemptsFile(), attempts);
+// Keeps the newer good reading, then records how the claimed read ended: a
+// waiter that sees the read finished finds its reading already cached.
+const settle = (key, started, { raw, error }) => locked(() => {
+  if (raw) {
+    const cache = Object.fromEntries(Object.entries(readJson(cacheFile())).filter(([, entry]) => fresh(entry)));
+    if (!(cache[key]?.at >= raw.at)) cache[key] = raw;
+    writeJson(cacheFile(), cache);
   }
-  if (!raw) return;
-  const cache = Object.fromEntries(Object.entries(readJson(cacheFile())).filter(([, entry]) => fresh(entry)));
-  if (!(cache[key]?.at >= raw.at)) cache[key] = raw;
-  writeJson(cacheFile(), cache);
+  const attempts = readJson(attemptsFile());
+  if (attempts[key]?.started !== started) return;
+  attempts[key] = { started, finished: Date.now(),
+    ...(error ? { failure: error.message, transient: Boolean(error.transient) } : {}),
+    ...(error?.notBefore ? { not_before: Math.min(error.notBefore, Date.now() + HOLD_OFF_MAX_MS) } : {}) };
+  writeJson(attemptsFile(), attempts);
 });
 const reuseCached = (key, why, snapshot, toPool) => {
   const entry = readJson(cacheFile())[key];
@@ -271,7 +279,7 @@ const reuseCached = (key, why, snapshot, toPool) => {
 };
 // A failure before the request, or a refusal of the token, says nothing
 // about load: only a failure in transit may reuse a cached reading.
-export const transient = (message) => Object.assign(new Error(message), { transient: true });
+const transient = (message) => Object.assign(new Error(message), { transient: true });
 
 // Reads one account live at most once per SPACING_MS across processes. Returns
 // { pool } for a live reading, { pool, note } for a reused one, or { error }.
@@ -301,7 +309,7 @@ export const liveRead = async (key, read, { snapshot = null, toPool = poolFromRa
     settle(key, slot.started, { raw });
     return { pool: raw && toPool(raw) };
   } catch (error) {
-    settle(key, slot.started, { failure: error.message, transient: error.transient });
+    settle(key, slot.started, { error });
     const reused = error.transient ? reuseCached(key, `failed (${error.message})`, snapshot, toPool) : null;
     return reused ?? { error };
   }
@@ -313,21 +321,34 @@ const retryAfterMs = (value) => {
   const ms = /^\d+$/u.test(value.trim()) ? Number(value) * 1000 : Date.parse(value) - Date.now();
   return ms > 0 ? ms : null;
 };
-// GETs a usage endpoint. A 429, a 5xx or a dropped connection retries inside
-// RETRY_BUDGET_MS, then throws a transient error; any other answer returns.
+// GETs a usage endpoint and parses its JSON within READ_BUDGET_MS. A 429, a
+// 5xx or a connection dropped before the body is in retries, then throws a
+// transient error; any other answer returns as { status, ok, body }, with the
+// body parsed only when ok. Malformed JSON is no transit failure: it throws.
 export const fetchUsage = async (url, headers, what) => {
-  const started = Date.now();
+  const deadline = Date.now() + READ_BUDGET_MS;
   for (let retry = 0; ; retry++) {
     let failure;
     let wait = null;
     try {
-      const response = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
-      if (response.status !== 429 && response.status < 500) return response;
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(Math.max(deadline - Date.now(), 1)) });
+      if (response.status !== 429 && response.status < 500) {
+        if (!response.ok) return { status: response.status, ok: false, body: null };
+        const text = await response.text();
+        return { status: response.status, ok: true, body: JSON.parse(text) };
+      }
       failure = `${what} answered ${response.status}`;
       wait = retryAfterMs(response.headers.get('retry-after'));
-    } catch (error) { failure = `${what} request failed: ${error.message}`; }
+    } catch (error) {
+      if (error.name === 'SyntaxError') throw error;
+      failure = `${what} request failed: ${error.message}`;
+    }
+    const hinted = wait != null;
     wait ??= RETRY_BASE_MS * 2 ** retry * (0.75 + Math.random() / 2);
-    if (retry >= RETRY_LIMIT || Date.now() - started + wait > RETRY_BUDGET_MS) throw transient(failure);
+    // A retry needs time left for its own request after the wait.
+    if (retry >= RETRY_LIMIT || Date.now() + wait + 1000 > deadline) {
+      throw Object.assign(transient(failure), hinted ? { notBefore: Date.now() + wait } : {});
+    }
     await pause(wait);
   }
 };
@@ -462,11 +483,9 @@ const main = async () => {
     return null;
   };
   const readClaudeLive = async (credential) => {
-    const response = await fetchUsage(process.env.CLAUDE_USAGE_URL || 'https://api.anthropic.com/api/oauth/usage',
+    const { status, ok, body } = await fetchUsage(process.env.CLAUDE_USAGE_URL || 'https://api.anthropic.com/api/oauth/usage',
       { authorization: `Bearer ${credential.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20' }, 'usage endpoint');
-    if (!response.ok) throw new Error(`usage endpoint answered ${response.status}`);
-    const body = await response.json()
-      .catch((error) => { throw error.name === 'SyntaxError' ? error : transient(`usage response failed: ${error.message}`); });
+    if (!ok) throw new Error(`usage endpoint answered ${status}`);
     const epoch = (iso) => (iso ? Date.parse(iso) / 1000 : null);
     const week = body.seven_day;
     if (!Number.isFinite(week?.utilization)) throw new Error('usage endpoint sent no weekly window');

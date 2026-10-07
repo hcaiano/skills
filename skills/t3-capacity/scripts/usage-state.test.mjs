@@ -225,7 +225,13 @@ const claudeFixture = async () => {
   const fixture = { home, answers: [{ status: 200 }], seen: [], delayMs: 0 };
   const server = createServer((request, response) => {
     fixture.seen.push({ at: Date.now(), authorization: request.headers.authorization });
-    const { status, headers = {} } = fixture.answers.length > 1 ? fixture.answers.shift() : fixture.answers[0];
+    const { status, headers = {}, drop } = fixture.answers.length > 1 ? fixture.answers.shift() : fixture.answers[0];
+    // A connection dropped after the headers, halfway through the body.
+    if (drop) {
+      response.writeHead(200, { "content-type": "application/json", "content-length": "1000" });
+      response.write("{\"seven_day\":");
+      return setTimeout(() => response.socket.destroy(), 50);
+    }
     setTimeout(() => {
       response.writeHead(status, { "content-type": "application/json", ...headers });
       response.end(JSON.stringify({
@@ -343,6 +349,32 @@ test("a 429 retries once Retry-After has passed, and a run without a recent read
     assert.equal(claude.seen.length, 5);
     assert.match(failed.claude_error, /503/u);
     assert.equal(failed.states.claude, "unknown");
+  } finally {
+    claude.close();
+  }
+});
+
+test("a body cut off mid-read retries, and a long Retry-After holds every run off", async () => {
+  const claude = await claudeFixture();
+  claude.answers = [{ drop: true }, { status: 200 }];
+  try {
+    const retried = await claude.run();
+    assert.equal(claude.seen.length, 2);
+    assert.equal(retried.claude_source, "oauth/usage");
+    ageCache(claude.home);
+    claude.answers = [{ status: 429, headers: { "retry-after": "300" } }];
+    const limited = await claude.run();
+    // Too long to wait for here: one request, then the cache rule.
+    assert.equal(claude.seen.length, 3);
+    assert.equal(limited.states.claude, "unknown");
+    // Past the two-minute spacing, the endpoint's five minutes still hold.
+    const file = join(claude.home, ".cache", "t3-capacity", "live-attempts.json");
+    const attempts = JSON.parse(readFileSync(file, "utf8"));
+    for (const attempt of Object.values(attempts)) attempt.started -= 3 * 60000;
+    writeFileSync(file, JSON.stringify(attempts));
+    const held = await claude.run();
+    assert.equal(claude.seen.length, 3);
+    assert.match(held.claude_error, /skipped.*429/u);
   } finally {
     claude.close();
   }

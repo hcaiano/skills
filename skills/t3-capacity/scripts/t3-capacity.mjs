@@ -50,7 +50,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { accountKey, fetchUsage, liveRead, poolFromRaw, poolState, transient } from './usage-state.mjs';
+import { accountKey, fetchUsage, liveRead, poolFromRaw, poolState } from './usage-state.mjs';
 
 const usage = 'usage: t3-capacity.mjs --instance <id>:<driverKind>... [--auth-home <id>=<dir>]... '
   + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
@@ -166,11 +166,9 @@ const grokPool = (raw) => {
   return pool && { ...pool, period: raw.period, estimated_start: raw.estimated_start };
 };
 const readGrokBilling = (login) => async () => {
-  const response = await fetchUsage(process.env.GROK_USAGE_URL || 'https://cli-chat-proxy.grok.com/v1/billing?format=credits',
-    { authorization: `Bearer ${login.key}` }, 'billing endpoint');
-  if (!response.ok) throw new Error(`billing endpoint answered ${response.status}`);
-  const body = await response.json()
-    .catch((error) => { throw error.name === 'SyntaxError' ? error : transient(`billing response failed: ${error.message}`); });
+  const { status, ok, body } = await fetchUsage(process.env.GROK_USAGE_URL
+    || 'https://cli-chat-proxy.grok.com/v1/billing?format=credits', { authorization: `Bearer ${login.key}` }, 'billing endpoint');
+  if (!ok) throw new Error(`billing endpoint answered ${status}`);
   const config = body?.config;
   const used = config?.creditUsagePercent;
   // xAI omits the percentage until usage registers: no number proves no headroom.
