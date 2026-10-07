@@ -68,6 +68,12 @@ Reference every attached file, since gh appends unreferenced ones to the end
 of the body. Keep media out of git. Missing browser, login or upload access is
 a blocker to report.
 
+**Updates.** Update the body when a push or a later review makes any line of
+it wrong. Rewrite it from the full `<base>..HEAD` diff rather than the last
+commit, carry the latest `review-it` receipt, and drop state that no longer
+holds, such as draft, pending CI or blocked. Link issues with `Refs #<n>`
+unless the PR completes the issue.
+
 Done when every applicable section is present, the body reads in under a
 minute, `gh pr view --json body` shows no `./` media paths left, and each
 image renders and each video plays on the PR page.
