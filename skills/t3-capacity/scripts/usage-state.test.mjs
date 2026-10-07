@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,14 @@ const stubBin = mkdtempSync(join(tmpdir(), "t3-capacity-usage-stub-"));
 writeFileSync(join(stubBin, "security"), "#!/bin/sh\nexit 44\n");
 chmodSync(join(stubBin, "security"), 0o755);
 process.env.PATH = `${stubBin}:${process.env.PATH}`;
+
+// Backdates every cached live reading past the 10-minute reuse window.
+const ageCache = (home) => {
+  const file = join(home, ".cache", "t3-capacity", "live-usage.json");
+  const cache = JSON.parse(readFileSync(file, "utf8"));
+  for (const entry of Object.values(cache)) entry.at -= 11 * 60000;
+  writeFileSync(file, JSON.stringify(cache));
+};
 
 test("rejects conflicting live and offline flags", () => {
   const result = spawnSync(process.execPath, [script, "--live", "--offline"], {
@@ -137,12 +145,13 @@ test("Codex homes have separate usage and stale headroom is not recommended", ()
   assert.equal(output.recommended_codex_identity, "second");
 });
 
-test("live quota stays bound to each Codex home and a failed read is unknown", () => {
+test("live quota stays bound to each Codex home, and a failed read reuses it for 10 minutes", () => {
   const taskHome = mkdtempSync(join(tmpdir(), "t3-capacity-live-identities-"));
   for (const dir of [join(taskHome, ".codex"), join(taskHome, ".codex-profiles", "second")]) {
     mkdirSync(join(dir, "sessions"), { recursive: true });
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({ tokens: { account_id: dir } }));
     writeFileSync(join(dir, "sessions", "recent.jsonl"), JSON.stringify({
-      timestamp: new Date().toISOString(), payload: {rate_limits: {limit_id:"codex",primary:{
+      timestamp: new Date(Date.now() - 30 * 60000).toISOString(), payload: {rate_limits: {limit_id:"codex",primary:{
         used_percent:5,window_minutes:10080,resets_at:Date.now()/1000+72*3600,
       }}},
     }) + "\n");
@@ -177,18 +186,29 @@ rl.on('line', line=>{
     encoding:"utf8",env:{...env,FAKE_RPC_ERROR:"1"},timeout:10000,
   });
   assert.equal(failed.status,0,failed.stderr);
-  const unknown=JSON.parse(failed.stdout);
+  const reused=JSON.parse(failed.stdout);
+  assert.equal(reused.codex_identities.second.state,"available");
+  assert.equal(reused.codex_identities.second.source,"account/rateLimits/read, cached");
+  assert.match(reused.codex_identities.second.note,/reused/u);
+  assert.equal(reused.codex_identities.second.pool.stale_minutes,0);
+  assert.equal(reused.codex_identities.default.state,"unavailable");
+  ageCache(taskHome);
+  const expired=spawnSync(process.execPath,[script,"--live"],{
+    encoding:"utf8",env:{...env,FAKE_RPC_ERROR:"1"},timeout:10000,
+  });
+  assert.equal(expired.status,0,expired.stderr);
+  const unknown=JSON.parse(expired.stdout);
   assert.equal(unknown.codex_identities.second.state,"unknown");
   assert.equal(unknown.recommended_codex_identity,null);
 });
 
-test("live Claude usage outranks the statusline snapshot, and a failed read is unknown", async () => {
+test("live Claude usage outranks the statusline snapshot, and a failed read reuses it for 10 minutes", async () => {
   const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-live-"));
   mkdirSync(join(home, ".claude"), { recursive: true });
   const now = Date.now() / 1000;
-  // A fresh snapshot of a cool pool: alone it would read available.
+  // A cool pool, older than any cached live reading below.
   writeFileSync(join(home, ".claude", "usage-state.json"), JSON.stringify({
-    written_at: now,
+    written_at: now - 1800,
     rate_limits: { seven_day: { used_percentage: 10, resets_at: now + 100 * 3600 } },
   }));
   writeFileSync(join(home, ".claude", ".credentials.json"), JSON.stringify({
@@ -205,8 +225,8 @@ test("live Claude usage outranks the statusline snapshot, and a failed read is u
     }));
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const run = () => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, "--live"], { env: {
+  const run = (mode = "--live") => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [script, mode], { env: {
       ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1",
       CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/`,
     } });
@@ -223,11 +243,26 @@ test("live Claude usage outranks the statusline snapshot, and a failed read is u
     assert.equal(fresh.claude.short_window.used_percent, 31);
     // 64% after 34 of 168 hours burns far faster than the rest can fund.
     assert.equal(fresh.states.claude, "protected");
+    status = 429;
+    const limited = await run();
+    assert.equal(limited.claude_source, "oauth/usage, cached");
+    assert.equal(limited.claude.used_percent, 64);
+    assert.equal(limited.claude.stale_minutes, 0);
+    assert.match(limited.claude_note, /429/u);
+    assert.equal(limited.claude_error, undefined);
+    assert.equal(limited.states.claude, "protected");
+    // A refused token says nothing about load, and offline never reads the cache.
     status = 401;
-    const failed = await run();
-    assert.equal(failed.claude_source, "statusline");
-    assert.match(failed.claude_error, /401/u);
-    assert.equal(failed.states.claude, "unknown");
+    const refused = await run();
+    assert.equal(refused.claude_source, "statusline");
+    assert.match(refused.claude_error, /401/u);
+    assert.equal(refused.states.claude, "unknown");
+    assert.equal((await run("--offline")).claude_note, undefined);
+    ageCache(home);
+    status = 429;
+    const expired = await run();
+    assert.equal(expired.claude_source, "statusline");
+    assert.equal(expired.states.claude, "unknown");
   } finally {
     server.close();
   }
