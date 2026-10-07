@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://storage.googleapis.com/coderabbit_public_assets/schema.v2.json
+# Reviews run only on request (@coderabbitai review): automatic reviews on
+# every push spend the account's allowance.
+reviews:
+  auto_review:
+    enabled: false
+  review_status: false

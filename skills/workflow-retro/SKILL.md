@@ -50,10 +50,15 @@ Drop findings already open in a PR or proposed in an earlier retro thread.
 
 A defect inside a skill in `hcaiano/skills` gets fixed: branch, edit in the
 `writing-for-agents` style, run `review-it`, open the PR with `write-pr`, merge
-once the review is clean and checks pass, then reinstall with
-`env -u CLAUDE_CONFIG_DIR -u GROK_HOME -u CURSOR_CONFIG_DIR -u CODEX_HOME npx skills@latest add hcaiano/skills --skill <name> -g -a claude-code codex cursor grok -y`
-and confirm `~/.agents/skills/<name>/SKILL.md` matches the merged file. At most
-three merged fixes per run; the rest become proposals.
+once the review is clean and checks pass, then reinstall on the Mac, the fleet
+source: fleet push overwrites the PC's `~/.agents/skills` within minutes.
+
+```bash
+ssh mbp 'PATH=/opt/homebrew/bin:$PATH env -u CLAUDE_CONFIG_DIR -u GROK_HOME -u CURSOR_CONFIG_DIR -u CODEX_HOME npx -y skills@latest add hcaiano/skills --skill <name> -g -a claude-code codex cursor grok -y'
+```
+
+Done when the Mac's `~/.agents/skills/<name>/SKILL.md` matches the merged
+file. At most three merged fixes per run; the rest become proposals.
 
 Everything else is a proposal for the user: `~/.agents/AGENTS.md`,
 `pstack-models.md`, pstack itself, work repositories, new skills, and any
