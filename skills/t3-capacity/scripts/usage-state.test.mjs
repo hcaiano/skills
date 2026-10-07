@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -312,6 +313,24 @@ test("concurrent runs share one live read per account every two minutes", async 
     claude.answers = [{ status: 429 }];
     assert.equal((await claude.run()).states.claude, "protected");
     assert.equal(claude.seen.length, 1);
+  } finally {
+    claude.close();
+  }
+});
+
+test("a read left unfinished by a dead process, or its lock, does not block the next run", async () => {
+  const claude = await claudeFixture();
+  const dir = join(claude.home, ".cache", "t3-capacity");
+  mkdirSync(dir, { recursive: true });
+  // The dead process claimed the read 25 s ago and kept the lock directory.
+  const key = `claude:${createHash("sha256").update("fixture-token").digest("hex").slice(0, 16)}`;
+  writeFileSync(join(dir, "live-attempts.json"), JSON.stringify({ [key]: { started: Date.now() - 25000 } }));
+  mkdirSync(join(dir, "lock"));
+  utimesSync(join(dir, "lock"), new Date(Date.now() - 5000), new Date(Date.now() - 5000));
+  try {
+    const output = await claude.run();
+    assert.equal(claude.seen.length, 1);
+    assert.equal(output.claude_source, "oauth/usage");
   } finally {
     claude.close();
   }

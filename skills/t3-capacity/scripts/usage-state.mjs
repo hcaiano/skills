@@ -222,38 +222,59 @@ const writeJson = (file, value) => {
 const fresh = (entry) => Date.now() - entry?.at <= CACHE_MAX_MINUTES * 60000;
 // Every read-modify-write of the cache files runs under one lock directory, so
 // two processes cannot both claim a read or drop each other's reading. It is
-// held for milliseconds: a lock older than 5 s belongs to a dead process. A
-// caller that cannot lock within 2 s goes ahead unlocked, which costs at worst
-// one extra live read.
+// held for milliseconds: a lock older than 1 s belongs to a dead process and is
+// taken over. Past 3 s of contention the caller gets BUSY and must not read
+// live; a filesystem that refuses the lock runs the caller unlocked.
+const BUSY = Symbol('busy');
 const locked = (fn) => {
   const lock = path.join(cacheDir(), 'lock');
-  let held = false;
+  let owned = null;
   try {
     fs.mkdirSync(cacheDir(), { recursive: true });
-    for (const giveUp = Date.now() + 2000; !held && Date.now() < giveUp;) {
-      try { fs.mkdirSync(lock); held = true; } catch (error) {
+    for (const giveUp = Date.now() + 3000; !owned;) {
+      try { fs.mkdirSync(lock); owned = fs.statSync(lock).ino; } catch (error) {
         if (error.code !== 'EEXIST') break;
-        try { if (Date.now() - fs.statSync(lock).mtimeMs > 5000) fs.rmdirSync(lock); } catch {}
+        if (Date.now() > giveUp) return BUSY;
+        try { if (Date.now() - fs.statSync(lock).mtimeMs > 1000) fs.rmdirSync(lock); } catch {}
         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
       }
     }
     return fn();
   } catch { return null; }
-  finally { if (held) try { fs.rmdirSync(lock); } catch {} }
+  // A holder taken over as dead must not remove its successor's lock.
+  finally { if (owned) try { if (fs.statSync(lock).ino === owned) fs.rmdirSync(lock); } catch {} }
 };
 // Takes the account's next live read, or returns the read another process
-// started inside the spacing or before the endpoint's Retry-After.
-const claim = (key) => locked(() => {
-  const attempts = readJson(attemptsFile());
-  const now = Date.now();
-  const holds = (attempt) => (now - attempt?.started >= 0 && now - attempt?.started < SPACING_MS)
-    || (now < attempt?.not_before && attempt.not_before - now <= HOLD_OFF_MAX_MS);
-  if (holds(attempts[key])) return { other: attempts[key] };
-  for (const [name, attempt] of Object.entries(attempts)) if (!holds(attempt)) delete attempts[name];
-  attempts[key] = { started: now };
-  writeJson(attemptsFile(), attempts);
-  return { started: now };
-}) ?? { started: Date.now() };
+// started inside the spacing or before the endpoint's Retry-After. A read that
+// never finished holds only IN_FLIGHT_MS: its process died.
+const claim = (key) => {
+  const slot = locked(() => {
+    const attempts = readJson(attemptsFile());
+    const now = Date.now();
+    const holds = (attempt) => (now - attempt?.started >= 0
+        && now - attempt.started < (attempt.finished ? SPACING_MS : IN_FLIGHT_MS))
+      || (now < attempt?.not_before && attempt.not_before - now <= HOLD_OFF_MAX_MS);
+    if (holds(attempts[key])) return { other: attempts[key] };
+    for (const [name, attempt] of Object.entries(attempts)) if (!holds(attempt)) delete attempts[name];
+    attempts[key] = { started: now };
+    writeJson(attemptsFile(), attempts);
+    return { started: now };
+  });
+  if (slot === BUSY) return { busy: true };
+  // The cache folder cannot be written: read live, as before any spacing.
+  return slot ?? { started: Date.now() };
+};
+// Waits for another process's read to finish, up to IN_FLIGHT_MS from its
+// start, and returns its latest record.
+const awaitRead = async (key, other) => {
+  while (!other.finished && Date.now() - other.started < IN_FLIGHT_MS) {
+    await pause(200);
+    const latest = readJson(attemptsFile())[key];
+    if (latest?.started !== other.started) return latest ?? other;
+    other = latest;
+  }
+  return other;
+};
 // Keeps the newer good reading, then records how the claimed read ended: a
 // waiter that sees the read finished finds its reading already cached.
 const settle = (key, started, { raw, error }) => locked(() => {
@@ -290,18 +311,17 @@ export const liveRead = async (key, read, { snapshot = null, toPool = poolFromRa
   if (!key) {
     try { const raw = await read(); return { pool: raw && toPool(raw) }; } catch (error) { return { error }; }
   }
-  const slot = claim(key);
-  if (slot.other) {
-    let other = slot.other;
-    while (!other.finished && Date.now() - slot.other.started < IN_FLIGHT_MS) {
-      await pause(200);
-      const latest = readJson(attemptsFile())[key];
-      if (latest?.started !== slot.other.started) break;
-      other = latest;
-    }
-    if (other.failure && !other.transient) return { error: new Error(other.failure) };
-    const seconds = Math.round((Date.now() - slot.other.started) / 1000);
-    const why = `skipped (another process read this account ${seconds} s ago${other.failure ? `: ${other.failure}` : ''})`;
+  let slot = claim(key);
+  let other = slot.other && await awaitRead(key, slot.other);
+  if (other && !other.finished) {
+    slot = claim(key);
+    other = slot.other && await awaitRead(key, slot.other);
+  }
+  if (slot.busy || other) {
+    if (other?.failure && !other.transient) return { error: new Error(other.failure) };
+    const seconds = other && Math.round((Date.now() - other.started) / 1000);
+    const why = slot.busy ? 'skipped (the cache lock stayed busy)'
+      : `skipped (another process read this account ${seconds} s ago${other.failure ? `: ${other.failure}` : ''})`;
     return reuseCached(key, why, snapshot, toPool) ?? { error: transient(`live read ${why}, and no reading from the last 10 minutes is cached`) };
   }
   try {
@@ -547,8 +567,11 @@ const main = async () => {
       try { homeMissing = !fs.statSync(canonical).isDirectory(); } catch {}
       // An RPC error is not classified, so every one counts as transient.
       const read = homeMissing ? { error: new Error('home missing') } : await liveRead(account, async () => {
-        try { return measuredRaw(await codexRead('account/rateLimits/read', {}, { codexHome: canonical })); }
+        let raw;
+        try { raw = measuredRaw(await codexRead('account/rateLimits/read', {}, { codexHome: canonical })); }
         catch (error) { throw transient(error.message); }
+        if (!raw) throw transient('live read carried no weekly Codex window');
+        return raw;
       }, { snapshot: pool });
       if (read.error) liveError = 'live quota unavailable; snapshot is not current account proof';
       else [pool, note, source, liveError] = [read.pool, read.note ?? null,
