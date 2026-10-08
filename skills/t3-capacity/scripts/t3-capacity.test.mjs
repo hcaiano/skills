@@ -296,8 +296,10 @@ test("a recorded mapping maps every run, and the choice takes the first tier wit
   // Between two tiers above pace, the next one takes work only if it burns slower.
   assert.equal((await pick("hot/m", "third/m")).instance, "third");
   assert.equal((await pick("third/m", "hot/m")).instance, "third");
-  // It never skips further: past a spent next tier, preference order holds.
+  // It never skips further: past a spent next tier, preference order holds,
+  // and a next tier that took the work keeps it even when the one after has headroom.
   assert.equal((await pick("third/m", "spent/m", "second/m")).instance, "third");
+  assert.equal((await pick("hot/m", "hot/m,third/m", "second/m")).instance, "third");
   // A tier with headroom keeps the work even when a later tier also has it.
   assert.equal((await pick("second/m", "third/m")).instance, "second");
   // With no headroom anywhere, a protected pool still takes work; a spent one never does.
