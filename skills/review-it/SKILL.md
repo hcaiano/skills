@@ -49,7 +49,9 @@ blocker. Where `delegate_task` is unavailable, as in a subagent
 (`parent_not_active`), hand the pinned range back to the parent as a blocker.
 
 A review counts once it returns a substantive verdict on the pinned HEAD; restaff
-refusals, quota errors and empty results. A material finding or a `dual` risk
+refusals, quota errors and empty results. Watch every seat for a _stalled_ run as
+`~/.agents/skills/poteto-mode/references/t3-execution.md` describes: a stalled
+seat's final verdict counts as its review. A material finding or a `dual` risk
 promotes `single` to `dual`.
 
 ## 4. Fix
