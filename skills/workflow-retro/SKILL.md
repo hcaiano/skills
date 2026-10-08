@@ -22,11 +22,16 @@ the last 24 hours on a first run. Gather, from both machines:
 Select logs by modification time against a reference file
 (`TZ=UTC touch -t <CCYYMMDDhhmm.ss> <ref>`, then `find … -newer <ref>`): macOS
 `find -newermt` rejects ISO times and reads other forms as local time. Keep only
-events stamped inside the window. Grok sessions live in
-`sessions/<encoded cwd>/<id>/chat_history.jsonl`. Claude transcripts under
-`subagents/` and T3 threads with a `parentThreadId` belong to their parent
-session. Judge thread activity by its message and event timestamps: a T3
-restart stamps many threads with the same `updatedAt`.
+events stamped inside the window. Grok sessions live under
+`sessions/<encoded cwd>/<id>/`: use the timestamped events in `updates.jsonl`
+to select activity, then read `chat_history.jsonl` for context. The chat history
+has no message timestamps. Cursor `chats/**/meta.json` with
+`hasConversation: false` records a probe, not a conversation. For conversations,
+read their timestamped transcript or T3 timeline; record missing evidence as a
+source gap. Claude transcripts under `subagents/` and T3 threads with a
+`parentThreadId` belong to their parent session. Judge thread activity by its
+message and event timestamps: a T3 restart stamps many threads with the same
+`updatedAt`.
 
 Skip earlier `workflow-retro` runs. Done when every other session and PR in the
 window is listed with its machine.
