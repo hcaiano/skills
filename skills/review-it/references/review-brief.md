@@ -1,8 +1,8 @@
 # Review brief
 
-Review the pinned range read-only: inspect, then report. Report material
-findings on the changed code and its consumers; style and automated checks
-belong to their tools.
+Review the pinned range read-only: inspect, then report. Run every shell command
+in the foreground and wait for it to finish. Report material findings on the
+changed code and its consumers; style and automated checks belong to their tools.
 
 ## Standards
 
