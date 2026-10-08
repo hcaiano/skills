@@ -15,7 +15,10 @@
 // Each --candidate flag is one preference tier of comma-separated
 // <instance>/<model> entries. Preference order comes first: the choice is
 // taken from the first tier holding an available or protected candidate,
-// preferring available over protected, then the lowest pace. Unknown and
+// preferring available over protected, then the lowest pace. When that best
+// candidate is protected and the very next tier's best is available or burns
+// at a lower pace, the next tier's candidate is chosen instead, so a pool
+// burning above pace hands work one step down and never further. Unknown and
 // unavailable pools are never chosen.
 // Cursor bills its own models (Auto, Composer, Cursor Grok) to cursor_models
 // and every other model to other_models, which overflows into on-demand
@@ -324,8 +327,12 @@ const ranked = tiers.map((tier, index) => tier.map(({ instance, model }) => {
     pace: reading?.pace ?? null, used_percent: reading?.used_percent ?? null };
 }));
 const byState = (a, b) => (a.state === 'available' ? 0 : 1) - (b.state === 'available' ? 0 : 1) || byPace(a, b);
-const choice = ranked.map((tier) => tier.filter(({ state }) => state === 'available' || state === 'protected')
-  .sort(byState)[0]).find(Boolean) ?? null;
+const best = ranked.map((tier) => tier.filter(({ state }) => state === 'available' || state === 'protected')
+  .sort(byState)[0]);
+const first = best.findIndex(Boolean);
+const yields = (protectedPick, next) => protectedPick.state === 'protected' && next != null
+  && (next.state === 'available' || (next.pace != null && protectedPick.pace != null && next.pace < protectedPick.pace));
+const choice = first < 0 ? null : yields(best[first], best[first + 1]) ? best[first + 1] : best[first];
 
 console.log(JSON.stringify({
   instances: mapped, accounts, available, alerts: usageState.alerts ?? [],
