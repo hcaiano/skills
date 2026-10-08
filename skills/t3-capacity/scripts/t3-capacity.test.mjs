@@ -21,7 +21,7 @@ const stubBin = securityStub("#!/bin/sh\nexit 44\n");
 
 // Answers usage-state's read-only rate-limit request per CODEX_HOME: the home whose
 // path ends in `second` has headroom, `third` burns faster than it can fund,
-// every other home is nearly spent.
+// `hot` burns faster still, every other home is nearly spent.
 const fakeCodex = (dir) => {
   const bin = join(dir, "codex-fixture");
   writeFileSync(bin, `#!/usr/bin/env node
@@ -30,7 +30,7 @@ rl.on('line', line=>{
  const m=JSON.parse(line);
  if(m.method==='initialize') console.log(JSON.stringify({id:m.id,result:{}}));
  if(m.method==='account/rateLimits/read') {
-  const used=process.env.CODEX_HOME.endsWith('second')?35:process.env.CODEX_HOME.endsWith('third')?70:95;
+  const used=process.env.CODEX_HOME.endsWith('second')?35:process.env.CODEX_HOME.endsWith('third')?70:process.env.CODEX_HOME.endsWith('hot')?85:95;
   console.log(JSON.stringify({id:m.id,result:{rateLimitsByLimitId:{codex:{limitId:'codex',
    primary:{usedPercent:used,windowDurationMins:10080,resetsAt:Date.now()/1000+72*3600}}}}}));
  }
@@ -265,7 +265,7 @@ test("Grok reads only the grok.com login, paced like usage-state's pools", async
 test("a recorded mapping maps every run, and the choice takes the first tier with capacity", async () => {
   const home = mkdtempSync(join(tmpdir(), "t3-capacity-candidates-"));
   const homes = {};
-  for (const name of ["spent", "second", "third"]) {
+  for (const name of ["spent", "second", "third", "hot"]) {
     homes[name] = join(home, ".codex-profiles", name);
     login(join(homes[name], "auth.json"));
   }
@@ -285,14 +285,21 @@ test("a recorded mapping maps every run, and the choice takes the first tier wit
   const recorded = await run([], env);
   assert.deepEqual(Object.fromEntries(recorded.instances.map(({ id, states }) => [id, states])), {
     spent: { "codex:spent": "unavailable" }, second: { "codex:second": "available" },
-    third: { "codex:third": "protected" },
+    third: { "codex:third": "protected" }, hot: { "codex:hot": "protected" },
     cursor: { cursor_models: "unknown", other_models: "unknown" },
   });
 
-  // Preference order outranks pace: an earlier tier burning too fast beats a
-  // later one with headroom, and within a tier headroom wins.
-  assert.equal((await pick("third/m", "second/m")).instance, "third");
+  // A tier burning above pace hands work to the very next tier when that one
+  // has headroom, and within a tier headroom wins.
+  assert.equal((await pick("third/m", "second/m")).instance, "second");
   assert.equal((await pick("third/m,second/m")).instance, "second");
+  // Between two tiers above pace, the next one takes work only if it burns slower.
+  assert.equal((await pick("hot/m", "third/m")).instance, "third");
+  assert.equal((await pick("third/m", "hot/m")).instance, "third");
+  // It never skips further: past a spent next tier, preference order holds.
+  assert.equal((await pick("third/m", "spent/m", "second/m")).instance, "third");
+  // A tier with headroom keeps the work even when a later tier also has it.
+  assert.equal((await pick("second/m", "third/m")).instance, "second");
   // With no headroom anywhere, a protected pool still takes work; a spent one never does.
   assert.equal((await pick("spent/m", "third/m")).instance, "third");
   assert.equal(await pick("spent/m"), null);
