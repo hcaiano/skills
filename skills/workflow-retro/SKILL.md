@@ -33,6 +33,11 @@ source gap. Claude transcripts under `subagents/` and T3 threads with a
 message and event timestamps: a T3 restart stamps many threads with the same
 `updatedAt`.
 
+Keep tool names, structured inputs and results in any session extract, with
+secrets redacted. If an extract omits an invocation or truncates a required read,
+recover the original record before judging that action. Record unrecoverable
+content as a source gap rather than treating it as compliant.
+
 Skip earlier `workflow-retro` runs. Done when every other session and PR in the
 window is listed with its machine.
 
