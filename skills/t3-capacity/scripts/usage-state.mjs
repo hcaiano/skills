@@ -162,7 +162,8 @@ export const pace = (usedPercent, hoursLeft, windowHours = WEEK_HOURS) => {
   const budget = left >= MIN_LEFT_HOURS ? (100 - used) / daysLeft : null;
   return {
     used_percent: used,
-    elapsed_hours: Math.round(elapsed),
+    // Whole hours already passed, so the 12 h alert gate never opens early.
+    elapsed_hours: Math.floor(elapsed),
     resets_in_hours: Math.round(left),
     days_left: round(daysLeft, 2),
     burn_per_day: round(burn),

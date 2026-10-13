@@ -552,4 +552,6 @@ test("a pool spending fast in its first hours already reads as protected", async
   const quiet = pace(3, 164);
   assert.equal(quiet.pace, 0.42);
   assert.equal(poolState({ ...quiet, stale_minutes: 0 }), "available");
+  // Early-empty alerts wait for 12 whole hours of history.
+  assert.equal(pace(19, 168 - 11.75).elapsed_hours, 11);
 });
