@@ -23,7 +23,7 @@ async function put(root, path, value) {
 async function run(script, root, more = [], expected = 0, nodeArgs = []) {
   const out = join(root, `out-${Math.random().toString(16).slice(2)}`);
   const args = [...nodeArgs, join(scripts, script), '--out', out, '--home', root, '--machine', 'fixture', '--from', from, '--to', to, ...more];
-  try { await exec(process.execPath, args); assert.equal(expected, 0); }
+  try { await exec(process.execPath, args, { timeout: 15000 }); assert.equal(expected, 0); }
   catch (e) { assert.equal(e.code, expected, e.stderr || e.message); }
   const index = JSON.parse(await readFile(join(out, 'index.json'), 'utf8'));
   const rows = [];
@@ -42,7 +42,7 @@ test('provider CLI filters exact window, groups children, separates Grok context
     { sessionId: 'parent', timestamp: to },
     { sessionId: 'parent', timestamp: '2026-10-13T13:00:00Z' },
   ]);
-  await utimes(path, new Date('2026-10-14Z'), new Date('2026-10-14Z'));
+  await utimes(path, new Date('2026-10-14T00:00:00Z'), new Date('2026-10-14T00:00:00Z'));
   await put(root, 'claude-home/projects/p/parent/subagents/child.jsonl', [{ sessionId: 'child', timestamp: from }]);
   await put(root, 'grok-home/sessions/p/g/updates.jsonl', [
     { timestamp: Date.parse(from) / 1000, method: 'tool', params: { name: 'shell' } },
@@ -63,10 +63,13 @@ test('provider CLI filters exact window, groups children, separates Grok context
 
 test('redaction precedes bounded UTF-8 fragmentation and restores structured tools', async t => {
   const root = await fixture(t);
-  const secrets = ['shortpw', 'shorttoken', 'sk-proj-abcdefghijk', 'ghp_abcdefghijkl', 'keycontents', 'urlpass'];
+  const secrets = ['shortpw', 'shorttoken', 'sk-proj-abcdefghijk', 'ghp_abcdefghijkl', 'keycontents', 'urlpass', 'jsonpassword', 'clipassword', 'YmFzaWMtc2VjcmV0', 'client-secret-value', 'dbpassword'];
   await put(root, 'codex-home/sessions/s.jsonl', [{ timestamp: from, tool: 'shell', input: {
-    password: secrets[0], nested: { access_token: secrets[1] },
+    password: secrets[0], clientSecret: 'client-secret-value', input_tokens: 123, nested: { access_token: secrets[1] },
     arguments: JSON.stringify({ private_key: '-----BEGIN PRIVATE KEY-----\nkeycontents\n-----END PRIVATE KEY-----', cmd: 'PASSWORD="shortpw"' }),
+    db: 'postgresql://user:dbpassword@database',
+    ordinary: 'basic checks pass',
+    embedded: `curl -d '{"password":"jsonpassword"}' --password clipassword -H 'Authorization: Basic YmFzaWMtc2VjcmV0'`,
     cmd: `curl -H 'Authorization: Bearer shorttoken' https://user:urlpass@example.com ${secrets[2]} ${secrets[3]}`,
   }, result: 'é'.repeat(7000) }]);
   const { index, rows, out } = await run('collect-sessions.mjs', root, ['--part-bytes', '2048']);
@@ -75,6 +78,8 @@ test('redaction precedes bounded UTF-8 fragmentation and restores structured too
   const restored = JSON.parse(Buffer.concat(rows.map(r => Buffer.from(r.data, 'base64'))).toString());
   assert.equal(restored.raw.tool, 'shell'); assert.equal(restored.raw.result, 'é'.repeat(7000));
   assert.equal(restored.raw.input.password, '[REDACTED]');
+  assert.equal(restored.raw.input.input_tokens, 123);
+  assert.equal(restored.raw.input.ordinary, 'basic checks pass');
   const text = JSON.stringify(restored) + await readFile(join(out, 'index.json'), 'utf8');
   for (const secret of secrets) assert.ok(!text.includes(secret), secret);
   assert.equal(new Set(rows.map(r => r.recordId)).size, 1);
@@ -106,9 +111,9 @@ test('read-only SQLite extracts activity, ancestor chains, failures and spanning
   const root = await fixture(t); const path = join(root, 'state.sqlite'); const db = new DatabaseSync(path);
   const specs = {
     threads: 'thread_id TEXT, payload_json TEXT', messages: 'thread_id TEXT, run_id TEXT, created_at TEXT, payload_json TEXT',
-    turn_items: 'thread_id TEXT, run_id TEXT, payload_json TEXT', runs: 'thread_id TEXT, run_id TEXT, requested_at TEXT, completed_at TEXT, status TEXT, payload_json TEXT',
+    turn_items: 'thread_id TEXT, run_id TEXT, payload_json TEXT', runs: 'thread_id TEXT, run_id TEXT, provider_thread_id TEXT, requested_at TEXT, completed_at TEXT, status TEXT, payload_json TEXT',
     run_attempts: 'thread_id TEXT, run_id TEXT, payload_json TEXT', nodes: 'thread_id TEXT, run_id TEXT, payload_json TEXT',
-    subagents: 'thread_id TEXT, child_thread_id TEXT, run_id TEXT, payload_json TEXT', provider_threads: 'thread_id TEXT, payload_json TEXT',
+    subagents: 'thread_id TEXT, child_thread_id TEXT, run_id TEXT, payload_json TEXT', provider_threads: 'thread_id TEXT, provider_thread_id TEXT, payload_json TEXT',
   };
   for (const [table, columns] of Object.entries(specs)) db.exec(`CREATE TABLE orchestration_v2_projection_${table} (${columns})`);
   function insert(table, row) {
@@ -120,25 +125,29 @@ test('read-only SQLite extracts activity, ancestor chains, failures and spanning
   insert('messages', { thread_id: 'child', run_id: 'failed', created_at: '2026-10-12T13:00:00+01:00', payload_json: '{"text":"inside"}' });
   insert('messages', { thread_id: 'restart', created_at: to, payload_json: '{"text":"outside"}' });
   insert('messages', { thread_id: 'fork', created_at: from, payload_json: '{"text":"fork"}' });
-  insert('runs', { thread_id: 'child', run_id: 'failed', requested_at: from, completed_at: '2026-10-12T14:00:00Z', status: 'failed', payload_json: '{"status":"failed"}' });
+  insert('runs', { thread_id: 'child', run_id: 'failed', provider_thread_id: 'pt-cursor', requested_at: from, completed_at: '2026-10-12T14:00:00Z', status: 'failed', payload_json: '{"status":"failed"}' });
   insert('runs', { thread_id: 'root', run_id: 'ongoing', requested_at: '2026-10-11T00:00:00Z', status: 'running', payload_json: '{"status":"running"}' });
+  insert('runs', { thread_id: 'child', run_id: 'lower-edge', requested_at: '2026-10-11T00:00:00Z', completed_at: from, status: 'completed', payload_json: '{"status":"completed"}' });
+  insert('runs', { thread_id: 'restart', run_id: 'upper-edge', requested_at: to, status: 'running', payload_json: '{"status":"running"}' });
   insert('run_attempts', { thread_id: 'child', run_id: 'failed', payload_json: '{"status":"failed","error":"provider failed"}' });
   insert('nodes', { thread_id: 'child', run_id: 'failed', payload_json: '{"status":"failed"}' });
   insert('turn_items', { thread_id: 'child', run_id: 'failed', payload_json: JSON.stringify({ type: 'error', startedAt: from, error: 'tool failed', token: 'dont-expose' }) });
-  insert('provider_threads', { thread_id: 'child', payload_json: '{"nativeThreadRef":{"nativeId":"native-child"},"driver":"cursor"}' });
+  insert('provider_threads', { thread_id: 'child', provider_thread_id: 'pt-cursor', payload_json: '{"nativeThreadRef":{"nativeId":"native-child"},"driver":"cursor"}' });
   const taskCols = ['task_id','title','prompt','enabled','schedule_json','project_id','thread_id','workspace_strategy_json','model_selection_json','runtime_mode','interaction_mode','created_at','updated_at','next_run_at','last_run_at','last_run_status','last_run_error','run_count','webhook_secret','webhook_token'];
   db.exec(`CREATE TABLE scheduled_tasks (${taskCols.map(c => c + ' TEXT').join(',')})`);
   db.exec("INSERT INTO scheduled_tasks (task_id, title, prompt, schedule_json, webhook_secret, webhook_token) VALUES ('task', '[A] keep', 'PASSWORD=hidden', '{\"type\":\"interval\"}', 'webhook-secret-value', 'webhook-token-value')");
   db.close(); const before = await readFile(path);
   const { index, rows } = await run('collect-t3.mjs', root, ['--db', path]);
   assert.equal(index.counts.activeThreads, 3); assert.equal(index.counts.ancestorThreads, 1);
-  assert.equal(index.counts.runs, 2); assert.equal(index.counts.attempts, 1);
+  assert.equal(index.counts.runs, 3); assert.equal(index.counts.attempts, 1);
   assert.ok(!rows.some(r => r.threadId === 'restart'));
   assert.equal(rows.find(r => r.raw.id === 'child').parentThreadId, 'middle');
   assert.equal(rows.find(r => r.raw.id === 'fork').parentThreadId, undefined);
   assert.equal(rows.find(r => r.runId === 'ongoing').kind, 'metadata');
+  assert.equal(rows.find(r => r.runId === 'lower-edge').timestamp, from);
   assert.ok(rows.some(r => r.raw.error === 'provider failed'));
   assert.equal(index.nativeMappings[0].nativeThreadRef.nativeId, 'native-child');
+  assert.equal(index.nativeMappings[0].activeInWindow, true);
   assert.ok(!JSON.stringify(rows).includes('dont-expose'));
   const tasks = await run('list-scheduled-tasks.mjs', root, ['--db', path]);
   assert.equal(tasks.rows[0].raw.title, '[A] keep');
@@ -192,4 +201,47 @@ console.log(JSON.stringify(result));
   assert.match(partial.gaps[0].message, /denied/);
   assert.deepEqual(partial.completedPrs, []);
   assert.ok(partial.records > 0);
+});
+
+
+test('Cursor sessions use matching complete T3 timelines even without recent chat metadata', async t => {
+  const root = await fixture(t);
+  await put(root, 'cursor-home/chats/p/conversation/meta.json', { hasConversation: true, updatedAtMs: Date.parse(from) });
+  const index = join(root, 't3.json');
+  await writeFile(index, JSON.stringify({ source: 't3', machine: 'fixture', from, to, complete: true,
+    nativeMappings: [{ driver: 'cursor', activeInWindow: true, threadId: 't1', nativeThreadRef: { nativeId: 'conversation' } }, { driver: 'cursor', activeInWindow: true, threadId: 't2', nativeThreadRef: { nativeId: 'acp' } }, { driver: 'cursor', activeInWindow: false, threadId: 't1', nativeThreadRef: { nativeId: 'old-handoff' } }],
+    sessions: { t1: { activity: 3 }, t2: { activity: 7 } },
+  }));
+  const result = await run('collect-sessions.mjs', root, ['--t3-index', index]);
+  assert.equal(result.index.sources.cursor.timelines, 2);
+  assert.equal(result.index.sessions.conversation.timelineActivity, 3);
+  assert.equal(result.index.sessions.acp.timelineActivity, 7);
+  assert.equal(result.index.sessions['old-handoff'], undefined);
+  const wrong = JSON.parse(await readFile(index, 'utf8')); wrong.machine = 'other';
+  await writeFile(index, JSON.stringify(wrong));
+  const failed = await run('collect-sessions.mjs', root, ['--t3-index', index], 1);
+  assert.match(failed.index.gaps[0].message, /match this machine and window/);
+});
+
+test('gap samples stay bounded and an existing output cannot acquire stale parts', async t => {
+  const root = await fixture(t);
+  await writeFile(join(root, '.t3/codex-home/sessions/missing.jsonl'), '{"timestamp":{}}\n'.repeat(501));
+  await put(root, 'claude-home/projects/p/prototype.jsonl', [{ sessionId: '__proto__', timestamp: from, text: 'selected' }]);
+  const { index, out } = await run('collect-sessions.mjs', root, [], 1);
+  assert.equal(index.sessions.__proto__.activity, 1);
+  assert.equal(index.gaps.length, 200);
+  assert.equal(index.gapCounts['missing-timestamp'], 501);
+  const before = await readFile(join(out, 'index.json'));
+  await assert.rejects(exec(process.execPath, [join(scripts, 'collect-sessions.mjs'), '--home', root, '--out', out, '--from', from, '--to', to]), e => e.code === 1);
+  assert.deepEqual(await readFile(join(out, 'index.json')), before);
+});
+
+
+test('large alphanumeric tool results finish without truncation or credential leakage', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/ascii.jsonl', [{ timestamp: from, result: 'a'.repeat(512 * 1024), database: 'postgresql://user:dbpassword@database', customUrl: 'a+'.repeat(100) + 'custom://user:longpassword@host' }]);
+  const { rows } = await run('collect-sessions.mjs', root);
+  assert.equal(rows[0].raw.result, 'a'.repeat(512 * 1024));
+  assert.equal(rows[0].raw.database, 'postgresql://user:[REDACTED]@database');
+  assert.equal(rows[0].raw.customUrl, 'a+'.repeat(100) + 'custom://user:[REDACTED]@host');
 });

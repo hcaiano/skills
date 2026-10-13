@@ -16,11 +16,11 @@ async function gh(args) {
   if (data.errors?.length) throw new Error('GitHub GraphQL errors: ' + data.errors.map(e => e.message).join('; '));
   return data;
 }
-async function connection(fetch, emit) {
-  let cursor; const seen = new Set();
+async function connection(fetch, emit, initialCursor) {
+  let cursor = initialCursor; const seen = new Set(initialCursor ? [initialCursor] : []);
   do {
     const page = await fetch(cursor);
-    if (!Array.isArray(page?.nodes) || !page.pageInfo) throw new Error('Missing GitHub connection');
+    if (!Array.isArray(page?.nodes) || typeof page.pageInfo?.hasNextPage !== 'boolean') throw new Error('Missing GitHub connection');
     await emit(page);
     if (!page.pageInfo.hasNextPage) return;
     cursor = page.pageInfo.endCursor;
@@ -77,9 +77,9 @@ await main('prs', false, async (opts, out) => {
           const first = thread.comments.pageInfo.endCursor;
           if (!first) throw new Error('Missing review comment cursor');
           await connection(async cursor => {
-            const data = await gh(['graphql', '-f', `query=${commentQuery}`, '-f', `id=${thread.id}`, '-f', `commentCursor=${cursor || first}`]);
+            const data = await gh(['graphql', '-f', `query=${commentQuery}`, '-f', `id=${thread.id}`, '-f', `commentCursor=${cursor}`]);
             return data.data?.node?.comments;
-          }, page => emit('review-comments', page, { reviewThreadId: thread.id }));
+          }, page => emit('review-comments', page, { reviewThreadId: thread.id }), first);
         }
       });
       await restPages(`${base}/commits/${body.head.sha}/check-runs`, 'checks', 'check_runs');

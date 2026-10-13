@@ -9,7 +9,7 @@ await main('t3', true, async (opts, out) => {
     subagents: ['thread_id', 'child_thread_id', 'payload_json'], provider_threads: ['thread_id', 'payload_json'],
   };
   const db = connect(opts, Object.fromEntries(Object.entries(required).map(([t, cols]) => [prefix + t, cols])));
-  const active = new Set(), runIds = new Set(), parents = new Map();
+  const active = new Set(), runIds = new Set(), activeProviders = new Set(), parents = new Map();
   const counts = out.index.counts = { messages: 0, items: 0, runs: 0, attempts: 0, activeThreads: 0, ancestorThreads: 0 };
   async function emit(table, row, raw, kind, timestamp) {
     await out.emit({ threadId: row.thread_id, runId: row.run_id, rowId: row.row_id, table: prefix + table, kind, timestamp, raw });
@@ -28,6 +28,7 @@ await main('t3', true, async (opts, out) => {
         const timestamp = times.find(v => inside(v, opts));
         if (!timestamp) continue;
         active.add(row.thread_id);
+        if (row.provider_thread_id || raw.providerThreadId) activeProviders.add(row.provider_thread_id || raw.providerThreadId);
         if (row.run_id) runIds.add(row.run_id);
         counts[table === 'messages' ? 'messages' : 'items']++;
         await emit(table, row, raw, 'activity', timestamp);
@@ -38,9 +39,10 @@ await main('t3', true, async (opts, out) => {
       const start = instant(row.requested_at), end = instant(row.completed_at);
       if (!Number.isFinite(start)) { out.gap('missing-run-timestamp', { runId: row.run_id }); continue; }
       const ongoing = !row.completed_at && !['completed', 'failed', 'cancelled', 'interrupted'].includes(row.status);
-      if (!(start < opts.end && (end > opts.start || ongoing)) && !runIds.has(row.run_id)) continue;
-      active.add(row.thread_id); runIds.add(row.run_id); counts.runs++;
       const timestamp = [row.requested_at, raw.startedAt, row.completed_at].find(v => inside(v, opts));
+      if (!timestamp && !(start < opts.end && (end > opts.start || ongoing)) && !runIds.has(row.run_id)) continue;
+      active.add(row.thread_id); runIds.add(row.run_id); counts.runs++;
+      if (row.provider_thread_id || raw.providerThreadId) activeProviders.add(row.provider_thread_id || raw.providerThreadId);
       await emit('runs', row, raw, timestamp ? 'activity' : 'metadata', timestamp);
     }
     counts.activeThreads = active.size;
@@ -66,7 +68,7 @@ await main('t3', true, async (opts, out) => {
     for (const row of rows(db, 'provider_threads')) {
       if (!selected.has(row.thread_id)) continue;
       const raw = payload(row, out, 'provider_threads'); if (!raw) continue;
-      out.index.nativeMappings.push({ threadId: row.thread_id, parentThreadId: parents.get(row.thread_id), nativeThreadRef: raw.nativeThreadRef, providerSessionId: raw.providerSessionId, driver: raw.driver });
+      out.index.nativeMappings.push({ threadId: row.thread_id, parentThreadId: parents.get(row.thread_id), nativeThreadRef: raw.nativeThreadRef, providerSessionId: raw.providerSessionId, driver: raw.driver, activeInWindow: activeProviders.has(row.provider_thread_id || raw.id) });
       await emit('provider_threads', row, raw, 'metadata');
     }
     for (const table of ['run_attempts', 'nodes', 'subagents', 'turn_items']) {

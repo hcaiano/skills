@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export function instant(value) {
-  if (value === null || value === undefined || value === '') return NaN;
+  if (!['string', 'number'].includes(typeof value) || value === '') return NaN;
   const n = typeof value === 'number' ? value : /^\d+(\.\d+)?$/.test(value) ? Number(value) : NaN;
   return Number.isFinite(n) ? (n < 1e11 ? n * 1000 : n) : Date.parse(value);
 }
@@ -14,7 +14,7 @@ export function instant(value) {
 export function options(window = true) {
   const opts = { home: homedir(), machine: process.platform === 'darwin' ? 'mbp' : 'pc', 'part-bytes': 50 * 1024 ** 2 };
   for (let i = 2; i < process.argv.length; i += 2) {
-    if (!/^--[a-z-]+$/.test(process.argv[i]) || !process.argv[i + 1]) throw new Error('Expected --name value arguments');
+    if (!/^--[a-z][a-z0-9-]*$/.test(process.argv[i]) || !process.argv[i + 1]) throw new Error('Expected --name value arguments');
     opts[process.argv[i].slice(2)] = process.argv[i + 1];
   }
   if (!opts.out) throw new Error('--out is required; use a new directory');
@@ -28,10 +28,10 @@ export function options(window = true) {
   return opts;
 }
 export const inside = (value, opts) => instant(value) >= opts.start && instant(value) < opts.end;
-const sensitive = /^(?:.*[_-])?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|authorization|private[_-]?key|credential)s?$/i;
+const sensitive = /^(?:.*[_-])?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|passwd|(?:client|webhook|signing)?[_-]?secret|authorization|private[_-]?key|credential)s?$/i;
 export function redact(value) {
   if (Array.isArray(value)) return value.map(redact);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sensitive.test(k) ? '[REDACTED]' : redact(v)]));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sensitive.test(k) && !(typeof v === 'number' && /tokens$/i.test(k)) ? '[REDACTED]' : redact(v)]));
   if (typeof value !== 'string') return value;
   if (/^[\[{]/.test(value.trim())) {
     try { return JSON.stringify(redact(JSON.parse(value))); } catch { /* Plain tool output can start with a brace. */ }
@@ -39,9 +39,12 @@ export function redact(value) {
   return value
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
     .replace(/\bBearer\s+[^\s"'\\,;]+/gi, 'Bearer [REDACTED]')
+    .replace(/(\bAuthorization["']?\s*:\s*["']?Basic\s+)[^\s"'\\,;]+/gi, '$1[REDACTED]')
+    .replace(/(["'](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|credential)["']\s*:\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s,;}]+)/gi, '$1"[REDACTED]"')
+    .replace(/(--(?:api-key|token|password|secret)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '$1[REDACTED]')
     .replace(/\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
     .replace(/(\b(?:[\w-]*[_-])?(?:api[_-]?key|token|password|passwd|secret|credential)s?\b\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
-    .replace(/(https?:\/\/[^\s/:]+:)[^@\s]+@/g, '$1[REDACTED]@');
+    .replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^@\s]+@/gi, '$1[REDACTED]@');
 }
 export async function* files(root, receipt) {
   let entries;
@@ -76,7 +79,7 @@ export async function candidate(path, opts, receipt) {
 export class Output {
   constructor(opts, source) {
     this.opts = opts; this.source = source; this.handle = null;
-    this.index = { version: 1, machine: opts.machine, source, from: opts.from, to: opts.to, complete: false, records: 0, parts: [], sessions: {}, prs: {}, sources: {}, gapCounts: {}, gaps: [] };
+    this.index = { version: 1, machine: opts.machine, source, from: opts.from, to: opts.to, complete: false, records: 0, parts: [], sessions: Object.create(null), prs: Object.create(null), sources: Object.create(null), gapCounts: Object.create(null), gaps: [] };
   }
   async start() { await mkdir(this.opts.out, { mode: 0o700 }); }
   gap(kind, detail = {}) {
@@ -101,6 +104,7 @@ export class Output {
     const safe = redact({ machine: this.opts.machine, source: this.source, ...record });
     const key = safe.sessionId || safe.threadId || safe.prUrl || this.source;
     const count = this.index.sessions[key] ||= { activity: 0, context: 0 };
+    if (safe.provider) count.provider = safe.provider;
     count[safe.kind === 'context' || safe.kind === 'metadata' ? 'context' : 'activity']++;
     if (safe.parentSessionId) count.parentSessionId = safe.parentSessionId;
     if (safe.parentThreadId) count.parentThreadId = safe.parentThreadId;
