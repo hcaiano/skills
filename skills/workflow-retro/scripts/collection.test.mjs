@@ -105,6 +105,50 @@ test('malformed lines and unavailable Cursor timelines produce partial receipts'
   assert.deepEqual(index.gaps.map(x => x.kind).sort(), ['cursor-timeline-required', 'malformed-jsonl', 'missing-timestamp']);
 });
 
+test('emitted records redact complete cookie and authorization headers', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/headers.jsonl', [{ timestamp: from, input: {
+    headers: { Cookie: 'theme=dark; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN',
+      'Set-Cookie': ['sessionid=FAKE_SET_TOKEN; Path=/; HttpOnly', 'auth=FAKE_SET_AUTH; Secure'],
+      Authorization: 'Digest username="FAKE_USER", nonce="FAKE_NONCE"; response="FAKE_RESPONSE"' },
+    raw: 'Cookie: theme="dark"; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN\r\nSet-Cookie: theme=dark; auth=FAKE_SET_AUTH; Expires=Wed, 21 Oct 2026 07:28:00 GMT\r\nAuthorization: Digest username="FAKE_USER", nonce="FAKE_NONCE"; response="FAKE_RESPONSE"\r\nX-Public: visible',
+    command: "curl -H 'Cookie: theme=dark; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN'",
+    json: '{"Cookie":"theme=dark; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN","public":"visible"}',
+    assigned: 'TOKEN="FAKE_SESSION_TOKEN;FAKE_AUTH_TOKEN" PASSWORD="FAKE_USER,FAKE_NONCE"',
+  } }]);
+  const { rows, out } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw.input.headers, { Cookie: '[REDACTED]', 'Set-Cookie': '[REDACTED]', Authorization: '[REDACTED]' });
+  assert.equal(rows[0].raw.input.raw, 'Cookie: [REDACTED]\r\nSet-Cookie: [REDACTED]\r\nAuthorization: [REDACTED]\r\nX-Public: visible');
+  assert.deepEqual(JSON.parse(rows[0].raw.input.json), { Cookie: '[REDACTED]', public: 'visible' });
+  const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
+  for (const secret of ['FAKE_SESSION_TOKEN', 'FAKE_AUTH_TOKEN', 'FAKE_SET_TOKEN', 'FAKE_SET_AUTH', 'FAKE_USER', 'FAKE_NONCE', 'FAKE_RESPONSE']) assert.ok(!emitted.includes(secret), secret);
+});
+
+test('oversized JSONL records leave byte receipts and collection continues under a small heap', async t => {
+  const root = await fixture(t);
+  const path = join(root, '.t3/codex-home/sessions/oversized.jsonl');
+  const file = await open(path, 'w');
+  const meta = JSON.stringify({ timestamp: to, type: 'session_meta', payload: { id: 'native-large' } }) + '\n';
+  const prefix = JSON.stringify({ timestamp: to, text: '' }).slice(0, -2);
+  const block = 'x'.repeat(64 * 1024);
+  const selected = JSON.stringify({ timestamp: from, text: 'selected' }) + '\r\n';
+  await file.writeFile(meta + prefix);
+  for (let i = 0; i < 640; i++) await file.writeFile(block);
+  await file.writeFile('"}\n' + selected);
+  for (let i = 0; i < 17; i++) await file.writeFile(block);
+  await file.close();
+  const { index, rows } = await run('collect-sessions.mjs', root, [], 1, ['--max-old-space-size=24']);
+  assert.deepEqual(rows.map(r => r.raw.text), ['selected']);
+  assert.equal(index.sessions['native-large'].activity, 1);
+  assert.equal(index.complete, false);
+  assert.deepEqual(index.gapCounts, { 'oversized-jsonl': 2 });
+  const size = Buffer.byteLength(prefix) + 40 * 1024 ** 2 + 2;
+  assert.deepEqual(index.gaps.map(({ kind, provider, sessionId, line, offset, size, path }) => ({ kind, provider, sessionId, line, offset, size, path })), [
+    { kind: 'oversized-jsonl', provider: 'codex', sessionId: 'native-large', line: 2, offset: Buffer.byteLength(meta), size, path },
+    { kind: 'oversized-jsonl', provider: 'codex', sessionId: 'native-large', line: 4, offset: Buffer.byteLength(meta) + size + 1 + Buffer.byteLength(selected), size: 17 * 64 * 1024, path },
+  ]);
+});
+
 test('transcript larger than Node heap streams through the public CLI', async t => {
   const root = await fixture(t);
   const file = await open(join(root, '.t3/codex-home/sessions/large.jsonl'), 'w');
