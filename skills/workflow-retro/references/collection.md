@@ -53,6 +53,16 @@ for provider IDs, tool inputs, and results.
 Cursor `store.db` blobs remain unsupported when no matching timeline exists.
 Untimestamped provider records remain explicit gaps.
 
+Provider JSONL records default to a 2 MiB input cap, calibrated from
+[seven days of record sizes on both hosts](record-sizes.md). Pass
+`--record-bytes <bytes>` to `collect-sessions.mjs` to change it, from 1024 bytes
+through 1 GiB. The reader keeps
+one capped buffer per file; parsing and redaction also use memory proportional
+to the admitted record. Larger lines leave `oversized-jsonl` gaps with the
+provider, session, path, line, offset, size, and cap, then collection continues.
+These gaps occur before timestamp filtering. `--part-bytes` separately bounds
+output parts and fragments admitted records without dropping them.
+
 The PR collector accepts `--urls <comma-separated URLs>` for a targeted read.
 It uses the logged-in `gh` account. Reviews, review threads, nested comments,
 head checks, and statuses paginate independently. Failed PRs and partial input

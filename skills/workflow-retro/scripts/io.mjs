@@ -11,7 +11,7 @@ export function instant(value) {
 }
 
 export function options(window = true) {
-  const opts = { home: homedir(), machine: process.platform === 'darwin' ? 'mbp' : 'pc', 'part-bytes': 50 * 1024 ** 2 };
+  const opts = { home: homedir(), machine: process.platform === 'darwin' ? 'mbp' : 'pc', 'part-bytes': 50 * 1024 ** 2, 'record-bytes': 2 * 1024 ** 2 };
   for (let i = 2; i < process.argv.length; i += 2) {
     if (!/^--[a-z][a-z0-9-]*$/.test(process.argv[i]) || !process.argv[i + 1]) throw new Error('Expected --name value arguments');
     opts[process.argv[i].slice(2)] = process.argv[i + 1];
@@ -19,6 +19,8 @@ export function options(window = true) {
   if (!opts.out) throw new Error('--out is required; use a new directory');
   opts.limit = Number(opts['part-bytes']);
   if (!Number.isSafeInteger(opts.limit) || opts.limit < 1024) throw new Error('--part-bytes must be at least 1024');
+  opts.recordLimit = Number(opts['record-bytes']);
+  if (!Number.isSafeInteger(opts.recordLimit) || opts.recordLimit < 1024 || opts.recordLimit > 1024 ** 3) throw new Error('--record-bytes must be an integer between 1024 and 1073741824');
   if (window) {
     if (![opts.from, opts.to].every(v => typeof v === 'string' && /Z$/.test(v))) throw new Error('--from and --to must be UTC timestamps');
     opts.start = instant(opts.from); opts.end = instant(opts.to);
@@ -33,6 +35,11 @@ const literal = String.raw`("(?:\\.|[^"\\])*"|'[^']*'|[^\s,;"'<>]+)`;
 const quotedCredentials = new RegExp(String.raw`(["'])([^\r\n"']*${names})\1\s*:\s*${literal}`, 'gi');
 const assignedCredentials = new RegExp(String.raw`((?<![\w-])([\w-]*${names})\s*[=:]\s*)${literal}`, 'gi');
 const flagCredentials = new RegExp(String.raw`(--([\w-]*${names})\s+)${literal}`, 'gi');
+const headerNames = String.raw`(?:set-cookie|cookie|(?:proxy-)?authorization)[ \t]*:[ \t]*`;
+const headerName = new RegExp(`^${headerNames}`, 'i');
+const rawHeaders = new RegExp(String.raw`((?<![\w-])${headerNames})[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*`, 'gi');
+const headerArguments = /(?<!\S)(-H[ \t]*|--header(?:=|[ \t]+))("(?:\\.|[^"\\])*"|'[^']*'|(?:\\.|[^\s"'<>;&|()])+)/;
+const headers = new RegExp(`${headerArguments.source}|${rawHeaders.source}`, 'gi');
 function credential(key, value) {
   const counter = /tokens$/i.test(key) && (typeof value === 'number' || typeof value === 'string' && /^["']?-?\d+(?:\.\d+)?["']?$/.test(value));
   return sensitive.test(key) && !counter;
@@ -49,11 +56,17 @@ export function redact(value) {
   }
   return value
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
-    .replace(/((?<![\w-])(?:set-cookie|cookie|(?:proxy-)?authorization)[ \t]*:[ \t]*)[^\r\n]*/gi, '$1[REDACTED]')
+    .replace(headers, (match, prefix, argument, rawPrefix) => {
+      if (rawPrefix) return rawPrefix + '[REDACTED]';
+      const quote = /^["']/.test(argument) ? argument[0] : '';
+      const content = quote ? argument.slice(1, -1) : argument;
+      const header = content.match(headerName);
+      return header ? prefix + quote + header[0].trimEnd() + ' [REDACTED]' + quote : match.replace(rawHeaders, '$1[REDACTED]');
+    })
     .replace(/\bBearer\s+[^\s"'\\,;]+/gi, 'Bearer [REDACTED]')
     .replace(/(\bAuthorization["']?\s*:\s*["']?Basic\s+)[^\s"'\\,;]+/gi, '$1[REDACTED]')
     .replace(quotedCredentials, (match, quote, key, value) => credential(key, value) ? `${quote}${key}${quote}: "[REDACTED]"` : match)
-    .replace(assignedCredentials, (match, prefix, key, value) => credential(key, value) ? `${prefix}[REDACTED]` : match)
+    .replace(assignedCredentials, (match, prefix, key, value) => !headerName.test(prefix) && credential(key, value) ? `${prefix}[REDACTED]` : match)
     .replace(flagCredentials, (match, prefix, key, value) => credential(key, value) ? `${prefix}[REDACTED]` : match)
     .replace(/\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
 
@@ -70,7 +83,7 @@ export async function* files(root, receipt) {
   }
 }
 export async function* jsonl(path, receipt, session) {
-  const limit = 1024 ** 2;
+  const limit = receipt.opts.recordLimit;
   const buffer = Buffer.allocUnsafe(limit + 1);
   let line = 1, offset = 0, size = 0, lastByte = 0;
   const input = createReadStream(path);

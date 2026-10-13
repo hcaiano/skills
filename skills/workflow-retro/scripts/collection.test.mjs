@@ -143,6 +143,8 @@ test('inline header arguments retain later command arguments and discovered PRs'
     `curl -HCookie:INLINE_SHORT ${url}`,
     `curl -H Cookie:INLINE_BARE ${url}`,
     `curl --header Cookie:INLINE_LONG ${url}`,
+    `curl -H Cookie:INLINE_DELIMITED; gh pr view ${url}`,
+    `curl --header Cookie:INLINE_OPERATOR&&gh pr view ${url}`,
   ];
   await put(root, 'codex-home/sessions/inline.jsonl', commands.map(command => ({ timestamp: from, command })));
   const { rows, index, out } = await run('collect-sessions.mjs', root);
@@ -152,9 +154,29 @@ test('inline header arguments retain later command arguments and discovered PRs'
     `curl -HCookie: [REDACTED] ${url}`,
     `curl -H Cookie: [REDACTED] ${url}`,
     `curl --header Cookie: [REDACTED] ${url}`,
+    `curl -H Cookie: [REDACTED]; gh pr view ${url}`,
+    `curl --header Cookie: [REDACTED]&&gh pr view ${url}`,
   ]);
   assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'inline' }] });
   assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('INLINE_'));
+});
+
+test('record-size measurement emits only size statistics for the mtime window', async t => {
+  const root = await fixture(t);
+  const selected = join(root, '.t3/codex-home/sessions/sizes.jsonl');
+  const old = join(root, '.t3/codex-home/sessions/old.jsonl');
+  await writeFile(selected, '\n{}\r\nx\nabc');
+  await writeFile(old, 'PRIVATE_CONTENT_MUST_NOT_APPEAR\n');
+  await utimes(selected, new Date(from), new Date(from));
+  await utimes(old, new Date('2026-10-01T00:00:00Z'), new Date('2026-10-01T00:00:00Z'));
+  const { stdout } = await exec(process.execPath, [join(scripts, 'measure-record-sizes.mjs'), from, to, root]);
+  const measured = JSON.parse(stdout);
+  assert.equal(measured.providers.codex.files, 1);
+  assert.equal(measured.providers.codex.bytes, 10);
+  assert.equal(measured.combined.records, 3);
+  assert.deepEqual(measured.combined.percentiles, { 50: 2, 90: 3, 95: 3, 99: 3, '99.9': 3, 100: 3 });
+  assert.equal(measured.errors, 0);
+  assert.ok(!stdout.includes('PRIVATE_CONTENT'));
 });
 
 test('oversized JSONL records leave byte receipts and collection continues under a small heap', async t => {
@@ -170,7 +192,7 @@ test('oversized JSONL records leave byte receipts and collection continues under
   await file.writeFile('"}\n' + selected);
   for (let i = 0; i < 17; i++) await file.writeFile(block);
   await file.close();
-  const { index, rows } = await run('collect-sessions.mjs', root, [], 1, ['--max-old-space-size=24']);
+  const { index, rows } = await run('collect-sessions.mjs', root, ['--record-bytes', String(1024 ** 2)], 1, ['--max-old-space-size=24']);
   assert.deepEqual(rows.map(r => r.raw.text), ['selected']);
   assert.equal(index.sessions['native-large'].activity, 1);
   assert.equal(index.complete, false);
@@ -193,11 +215,33 @@ test('record cap counts UTF-8 bytes, accepts the boundary with CRLF and resumes 
   assert.equal(Buffer.byteLength(accepted), 1024 ** 2);
   const oversized = JSON.stringify({ timestamp: from, text: text + 'x' });
   await writeFile(path, '\n' + accepted + '\r\n' + oversized + '\r\n' + JSON.stringify({ timestamp: from, text: 'final' }));
-  const { index, rows } = await run('collect-sessions.mjs', root, [], 1);
+  const { index, rows } = await run('collect-sessions.mjs', root, ['--record-bytes', String(1024 ** 2)], 1);
   assert.deepEqual(rows.map(r => r.raw.text), [text, 'final']);
   assert.deepEqual(rows.map(r => r.line), [2, 4]);
   assert.deepEqual(index.gapCounts, { 'oversized-jsonl': 1 });
   assert.deepEqual(index.gaps, [{ kind: 'oversized-jsonl', provider: 'claude', sessionId: 'boundary', path, line: 3, offset: 1024 ** 2 + 3, size: 1024 ** 2 + 1, limit: 1024 ** 2 }]);
+});
+
+test('default record cap admits a 2 MiB tool result and receipts the next byte under a small heap', async t => {
+  const root = await fixture(t);
+  const path = join(root, '.t3/codex-home/sessions/default-cap.jsonl');
+  const empty = JSON.stringify({ timestamp: from, result: '' });
+  const result = 'x'.repeat(2 * 1024 ** 2 - Buffer.byteLength(empty));
+  await writeFile(path, JSON.stringify({ timestamp: from, result }) + '\r\n' + JSON.stringify({ timestamp: from, result: result + 'x' }) + '\n' + JSON.stringify({ timestamp: from, result: 'after' }));
+  const { rows, index } = await run('collect-sessions.mjs', root, [], 1, ['--max-old-space-size=24']);
+  assert.deepEqual(rows.map(r => r.raw.result), [result, 'after']);
+  assert.deepEqual(index.gapCounts, { 'oversized-jsonl': 1 });
+  assert.equal(index.gaps[0].limit, 2 * 1024 ** 2);
+  assert.equal(index.gaps[0].size, 2 * 1024 ** 2 + 1);
+});
+
+test('record cap rejects invalid flags before creating output', async t => {
+  const root = await fixture(t);
+  for (const value of ['0', '1023', '1.5', 'NaN', '1073741825']) {
+    const out = join(root, `invalid-${value}`);
+    await assert.rejects(exec(process.execPath, [join(scripts, 'collect-sessions.mjs'), '--out', out, '--from', from, '--to', to, '--record-bytes', value]), e => e.code === 1 && /--record-bytes/.test(e.stderr));
+    await assert.rejects(stat(out), e => e.code === 'ENOENT');
+  }
 });
 
 test('transcript larger than Node heap streams through the public CLI', async t => {
