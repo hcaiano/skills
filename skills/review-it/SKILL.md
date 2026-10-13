@@ -67,12 +67,14 @@ structural simplifications included, in one batch. Out-of-scope ideas become
 follow-ups. New contracts, architecture changes or fixes that roughly double
 the diff go to the user. Rerun the affected checks and commit.
 
-When fixes landed, run one confirmation review at `high`: a new reviewer,
+When fixes landed, run a confirmation review at `high`: a new reviewer,
 chosen like `single` with the authors of the fixes in place of the change's
-authors, reads only the fix range (the reviewed head to the new HEAD) with the
-prior findings. Apply, check and commit its valid findings; each one counts as
-`open` in the receipt, because no reviewer saw its fix, and goes to the user. A
-PR gets these two rounds and no more.
+authors, reads only the fix range (the last reviewed head to the new HEAD)
+with the prior findings. Apply, check and commit its valid findings, then
+confirm that new fix range the same way. Stop when a confirmation finds
+nothing. After three confirmations, or for a finding that needs a new design,
+the remaining findings count as `open` and go to the user. A PR gets one full
+review; confirmations only read fixes.
 
 ## 5. Receipt
 
