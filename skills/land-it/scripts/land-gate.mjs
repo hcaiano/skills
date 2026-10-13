@@ -33,12 +33,15 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|dual)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`.;]+)`?/gim;
+const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|dual)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`;,]+?)`?\.?(?=\s|$)/i;
 
+// The last `**Review.**` line is the receipt; a last line in any other shape
+// is no receipt, so an older approval above it never counts.
 export const parseReceipt = (body) => {
-  const all = [...(body ?? '').matchAll(receiptPattern)];
-  if (all.length === 0) return null;
-  const [, grade, fixed, rejected, open, sha, base] = all.at(-1);
+  const line = (body ?? '').split('\n').filter((candidate) => candidate.trimStart().startsWith('**Review.**')).at(-1);
+  const match = receiptPattern.exec(line?.trimStart() ?? '');
+  if (!match) return null;
+  const [, grade, fixed, rejected, open, sha, base] = match;
   return { grade: grade.toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base };
 };
 

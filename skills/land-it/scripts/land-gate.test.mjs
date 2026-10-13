@@ -81,6 +81,13 @@ test("an old receipt, a skip grade, a closed PR and a rollup with no success eac
   assert.deepEqual(decide(facts({ statusCheckRollup: skipped })), { action: "hold", reasons: ["no check succeeded"] });
 });
 
+test("only the last Review line counts, and the base is read whole", () => {
+  const approved = "**Review.** single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed 0123456 on main";
+  assert.equal(parseReceipt(`${approved}\n\n**Review.** dual by opus; 0 fixed, 1 rejected; reviewed 0123456`), null);
+  assert.equal(parseReceipt("**Review.** single by sol; 0 fixed, 0 rejected, 0 open; reviewed 0123456 on main.release").base, "main.release");
+  assert.equal(parseReceipt("**Review.** single by sol; 0 fixed, 0 rejected, 0 open; reviewed `0123456` on `main`.").base, "main");
+});
+
 test("pending checks and unknown mergeability wait; behind updates; protection blocks hold", () => {
   const pending = [{ __typename: "CheckRun", name: "ci", status: "IN_PROGRESS", conclusion: "" }];
   assert.deepEqual(decide(facts({ statusCheckRollup: pending, mergeable: "UNKNOWN" })), {
