@@ -149,6 +149,8 @@ test("Codex homes have separate usage and stale headroom is not recommended", ()
   assert.equal(output.codex_identities.second.pool.used_percent, 10);
   assert.equal(output.codex_identities.old.state, "unknown");
   assert.equal(output.recommended_codex_identity, "second");
+  // The default account is spent, but Codex work still has a home.
+  assert.equal(output.states.codex, "available");
 });
 
 test("live quota stays bound to each Codex home, and a failed read reuses it for 10 minutes", () => {
@@ -537,4 +539,19 @@ test("an expired stored Claude login is refused before any request", async () =>
     server.close();
   }
   assert.equal(requests, 0);
+});
+
+test("a pool spending fast in its first hours already reads as protected", async () => {
+  const { pace, poolState } = await import("./usage-state.mjs");
+  // 19% in the first 8 h of a week: four times faster than the week can fund.
+  const early = pace(19, 160);
+  assert.equal(early.burn_per_day, 38);
+  assert.equal(early.pace, 3.13);
+  assert.equal(poolState({ ...early, stale_minutes: 0 }), "protected");
+  // 3% in the first 4 h stays available: the floor keeps a quiet start quiet.
+  const quiet = pace(3, 164);
+  assert.equal(quiet.pace, 0.42);
+  assert.equal(poolState({ ...quiet, stale_minutes: 0 }), "available");
+  // Early-empty alerts wait for 12 whole hours of history.
+  assert.equal(pace(19, 168 - 11.75).elapsed_hours, 11);
 });
