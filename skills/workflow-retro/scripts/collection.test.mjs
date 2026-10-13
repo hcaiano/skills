@@ -151,3 +151,45 @@ test('read-only SQLite extracts activity, ancestor chains, failures and spanning
   assert.ok(partial.index.gapCounts['cyclic-lineage'] > 0);
   assert.equal(partial.index.gapCounts['unresolved-thread'], 1);
 });
+
+test('GitHub CLI paginates reviews, threads, nested comments, checks and statuses with provenance', async t => {
+  const root = await fixture(t); const bin = join(root, 'bin'); await mkdir(bin);
+  const mock = `#!/usr/bin/env node
+import{appendFileSync}from'node:fs';
+const args=process.argv.slice(2);appendFileSync(process.env.GH_TRACE,JSON.stringify(args)+'\\n');
+const endpoint=args[1];const field=n=>args.find(x=>x.startsWith(n+'='))?.slice(n.length+1);
+let result;
+if(endpoint==='graphql'){
+  if(process.env.GH_FAILURE){console.log(JSON.stringify({errors:[{message:'denied'}]}));process.exit(0);}
+  const c=id=>({id,isResolved:true,comments:{nodes:[{id:'first-'+id,body:'comment'}],pageInfo:{hasNextPage:true,endCursor:'comments-'+id}}});
+  if(field('id'))result={data:{node:{comments:{nodes:[{id:'last-'+field('id'),body:'last'}],pageInfo:{hasNextPage:false,endCursor:null}}}}};
+  else result={data:{repository:{pullRequest:{reviewThreads:{nodes:[c(field('cursor')?'thread2':'thread1')],pageInfo:{hasNextPage:!field('cursor'),endCursor:field('cursor')?null:'next-thread'}}}}}};
+}else if(/\\/pulls\\/12$/.test(endpoint))result={head:{sha:'abc'},body:'pull body'};
+else {const page=endpoint.includes('page=2')?2:1;const data=Array.from({length:page===1?100:1},(_,i)=>({id:page*100+i,state:'APPROVED'}));result=endpoint.includes('check-runs')?{check_runs:data,total_count:101}:data;}
+console.log(JSON.stringify(result));
+`;
+  await writeFile(join(bin, 'gh'), mock, { mode: 0o700 });
+  const input = join(root, 'input.json');
+  await writeFile(input, JSON.stringify({ version: 1, complete: true, prs: { 'https://github.com/a/b/pull/12': [{ machine: 'pc', sessionId: 's' }, { machine: 'mbp', sessionId: 's2' }] } }));
+  const env = { ...process.env, PATH: bin + ':' + process.env.PATH, GH_TRACE: join(root, 'trace') };
+  const out = join(root, 'prs');
+  await exec(process.execPath, [join(scripts, 'collect-prs.mjs'), '--out', out, '--machine', 'fixture', '--indexes', input, '--urls', 'https://github.com/A/B/pull/12'], { env });
+  const index = JSON.parse(await readFile(join(out, 'index.json'), 'utf8'));
+  assert.deepEqual(index.completedPrs, ['https://github.com/a/b/pull/12']);
+  const records = (await readFile(join(out, index.parts[0].file), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(records.length, 11);
+  assert.equal(records.filter(r => r.kind === 'reviews').flatMap(r => r.raw).length, 101);
+  assert.deepEqual(records.filter(r => r.kind === 'review-comments').map(r => r.reviewThreadId), ['thread1', 'thread2']);
+  assert.equal(records[0].provenance.length, 3);
+  const trace = (await readFile(env.GH_TRACE, 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(trace.filter(a => /\/pulls\/12$/.test(a[1])).length, 1);
+  assert.ok(trace.some(a => a.includes('cursor=next-thread')));
+  for (const id of ['thread1','thread2']) assert.ok(trace.some(a => a.includes('id='+id) && a.includes('commentCursor=comments-'+id)));
+  const failed = join(root, 'failed');
+  await assert.rejects(exec(process.execPath, [join(scripts, 'collect-prs.mjs'), '--out', failed, '--urls', 'https://github.com/a/b/pull/12'], { env: { ...env, GH_FAILURE: '1' } }), e => e.code === 1);
+  const partial = JSON.parse(await readFile(join(failed, 'index.json'), 'utf8'));
+  assert.equal(partial.gaps[0].kind, 'partial-pr');
+  assert.match(partial.gaps[0].message, /denied/);
+  assert.deepEqual(partial.completedPrs, []);
+  assert.ok(partial.records > 0);
+});
