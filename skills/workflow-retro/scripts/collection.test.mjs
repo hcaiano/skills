@@ -107,58 +107,63 @@ test('malformed lines and unavailable Cursor timelines produce partial receipts'
 
 test('emitted records redact complete cookie and authorization headers', async t => {
   const root = await fixture(t);
+  const url = 'https://github.com/o/r/pull/5';
   await put(root, 'codex-home/sessions/headers.jsonl', [{ timestamp: from, input: {
-    headers: { Cookie: 'theme=dark; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN',
+    headers: { Cookie: `theme=dark; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN ${url}`,
       'Set-Cookie': ['sessionid=FAKE_SET_TOKEN; Path=/; HttpOnly', 'auth=FAKE_SET_AUTH; Secure'],
-      Authorization: 'Digest username="FAKE_USER", nonce="FAKE_NONCE"; response="FAKE_RESPONSE"' },
+      Authorization: 'Digest username="FAKE_USER", nonce="FAKE_NONCE"; response="FAKE_RESPONSE"',
+      'Proxy-Authorization': `Basic FAKE_PROXY_TOKEN ${url}` },
     raw: 'Cookie: theme="dark"; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN\r\nSet-Cookie: theme=dark; auth=FAKE_SET_AUTH; Expires=Wed, 21 Oct 2026 07:28:00 GMT\r\nAuthorization: Digest username="FAKE_USER", nonce="FAKE_NONCE"; response="FAKE_RESPONSE"\r\nX-Public: visible',
     command: "curl -H 'Cookie: theme=dark; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN'",
     json: '{"Cookie":"theme=dark; sessionid=FAKE_SESSION_TOKEN; auth=FAKE_AUTH_TOKEN","public":"visible"}',
     assigned: 'TOKEN="FAKE_SESSION_TOKEN;FAKE_AUTH_TOKEN" PASSWORD="FAKE_USER,FAKE_NONCE"',
   } }]);
-  const { rows, out } = await run('collect-sessions.mjs', root);
-  assert.deepEqual(rows[0].raw.input.headers, { Cookie: '[REDACTED]', 'Set-Cookie': '[REDACTED]', Authorization: '[REDACTED]' });
+  const { rows, index, out } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw.input.headers, { Cookie: '[REDACTED]', 'Set-Cookie': '[REDACTED]', Authorization: '[REDACTED]', 'Proxy-Authorization': '[REDACTED]' });
+  assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'headers' }] });
   assert.equal(rows[0].raw.input.raw, 'Cookie: [REDACTED]\r\nSet-Cookie: [REDACTED]\r\nAuthorization: [REDACTED]\r\nX-Public: visible');
   assert.deepEqual(JSON.parse(rows[0].raw.input.json), { Cookie: '[REDACTED]', public: 'visible' });
   const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
-  for (const secret of ['FAKE_SESSION_TOKEN', 'FAKE_AUTH_TOKEN', 'FAKE_SET_TOKEN', 'FAKE_SET_AUTH', 'FAKE_USER', 'FAKE_NONCE', 'FAKE_RESPONSE']) assert.ok(!emitted.includes(secret), secret);
+  for (const secret of ['FAKE_SESSION_TOKEN', 'FAKE_AUTH_TOKEN', 'FAKE_SET_TOKEN', 'FAKE_SET_AUTH', 'FAKE_USER', 'FAKE_NONCE', 'FAKE_RESPONSE', 'FAKE_PROXY_TOKEN']) assert.ok(!emitted.includes(secret), secret);
 });
 
 test('folded headers redact every continuation through emitted records', async t => {
   const root = await fixture(t);
-  const headers = 'Cookie: a=1;\r\n session=FOLDED_COOKIE;\r\n\tauth=FOLDED_AUTH\r\nAuthorization: Digest\r\n nonce=FOLDED_NONCE\r\n\tresponse=FOLDED_RESPONSE\r\nSet-Cookie: a=1;\n session=FOLDED_SET\nProxy-Authorization: Basic\n\tFOLDED_PROXY\nX-Public: visible';
+  const url = 'https://github.com/o/r/pull/6';
+  const headers = `Cookie: a=1; ${url}\r\n session=FOLDED_COOKIE;\r\n\tauth=FOLDED_AUTH\r\nAuthorization: Digest\r\n nonce=FOLDED_NONCE\r\n\tresponse=FOLDED_RESPONSE\r\nSet-Cookie: a=1;\n session=FOLDED_SET\nProxy-Authorization: Basic\n\tFOLDED_PROXY\nX-Public: visible`;
   await put(root, 'codex-home/sessions/folded.jsonl', [{ timestamp: from, result: headers }]);
-  const { rows, out } = await run('collect-sessions.mjs', root);
+  const { rows, index, out } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'folded' }] });
   const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
   for (const secret of ['FOLDED_COOKIE', 'FOLDED_AUTH', 'FOLDED_NONCE', 'FOLDED_RESPONSE', 'FOLDED_SET', 'FOLDED_PROXY']) assert.ok(!emitted.includes(secret), secret);
   assert.equal(rows[0].raw.result, 'Cookie: [REDACTED]\r\nAuthorization: [REDACTED]\r\nSet-Cookie: [REDACTED]\nProxy-Authorization: [REDACTED]\nX-Public: visible');
 });
 
-test('inline header arguments retain later command arguments and discovered PRs', async t => {
-  const root = await fixture(t);
+test('header redaction consumes the line while PR discovery uses the original record', async t => {
   const url = 'https://github.com/o/r/pull/7';
-  const commands = [
-    `curl -H 'Cookie: a=1; s=INLINE_COOKIE' ${url} --fail`,
-    `curl --header="Authorization: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`,
-    `curl -HCookie:INLINE_SHORT ${url}`,
-    `curl -H Cookie:INLINE_BARE ${url}`,
-    `curl --header Cookie:INLINE_LONG ${url}`,
-    `curl -H Cookie:INLINE_DELIMITED; gh pr view ${url}`,
-    `curl --header Cookie:INLINE_OPERATOR&&gh pr view ${url}`,
+  const cases = [
+    ['concatenated quoted segments', `curl -H 'Cookie: a=1'"; s=INLINE_COOKIE" ${url}`, "curl -H 'Cookie: [REDACTED]"],
+    ['ANSI-C quoted header', `curl -H $'Cookie: a=1; s=INLINE_COOKIE' ${url}`, "curl -H $'Cookie: [REDACTED]"],
+    ['double quotes', `curl -H "aUtHoRiZaTiOn: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`, 'curl -H "aUtHoRiZaTiOn: [REDACTED]'],
+    ['single quotes', `curl -H 'Cookie: a=1; s=INLINE_COOKIE' ${url} --fail`, "curl -H 'Cookie: [REDACTED]"],
+    ['long flag with equals', `curl --header="Authorization: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`, 'curl --header="Authorization: [REDACTED]'],
+    ['attached short flag', `curl -HCookie:INLINE_SHORT ${url}`, 'curl -HCookie:[REDACTED]'],
+    ['bare short flag', `curl -H Cookie:INLINE_BARE ${url}`, 'curl -H Cookie:[REDACTED]'],
+    ['bare long flag', `curl --header Cookie:INLINE_LONG ${url}`, 'curl --header Cookie:[REDACTED]'],
+    ['semicolon', `curl -H Cookie:INLINE_DELIMITED; gh pr view ${url}`, 'curl -H Cookie:[REDACTED]'],
+    ['shell operator', `curl --header Cookie:INLINE_OPERATOR&&gh pr view ${url}`, 'curl --header Cookie:[REDACTED]'],
+    ['header without a flag', `proxy-authorization: Basic INLINE_PROXY ${url}`, 'proxy-authorization: [REDACTED]'],
+    ['embedded JSON string', `curl -d '{"Cookie":"INLINE_JSON", "url":"${url}"}'`, `curl -d '{"Cookie": "[REDACTED]"`],
   ];
-  await put(root, 'codex-home/sessions/inline.jsonl', commands.map(command => ({ timestamp: from, command })));
-  const { rows, index, out } = await run('collect-sessions.mjs', root);
-  assert.deepEqual(rows.map(r => r.raw.command), [
-    `curl -H 'Cookie: [REDACTED]' ${url} --fail`,
-    `curl --header="Authorization: [REDACTED]" ${url}`,
-    `curl -HCookie: [REDACTED] ${url}`,
-    `curl -H Cookie: [REDACTED] ${url}`,
-    `curl --header Cookie: [REDACTED] ${url}`,
-    `curl -H Cookie: [REDACTED]; gh pr view ${url}`,
-    `curl --header Cookie: [REDACTED]&&gh pr view ${url}`,
-  ]);
-  assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'inline' }] });
-  assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('INLINE_'));
+  for (const [name, command, expected] of cases) await t.test(name, async t => {
+    const root = await fixture(t);
+    await put(root, 'codex-home/sessions/inline.jsonl', [{ timestamp: from, command }]);
+    const { rows, index, out } = await run('collect-sessions.mjs', root);
+    for (const part of index.parts) assert.ok(!(await readFile(join(out, part.file), 'utf8')).includes('INLINE_'));
+    assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'inline' }] });
+    assert.equal(rows[0].raw.command, expected);
+    assert.ok(!(await readFile(join(out, 'index.json'), 'utf8')).includes('INLINE_'));
+  });
 });
 
 test('record-size measurement emits only size statistics for the mtime window', async t => {

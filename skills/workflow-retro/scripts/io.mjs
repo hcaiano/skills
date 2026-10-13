@@ -35,11 +35,9 @@ const literal = String.raw`("(?:\\.|[^"\\])*"|'[^']*'|[^\s,;"'<>]+)`;
 const quotedCredentials = new RegExp(String.raw`(["'])([^\r\n"']*${names})\1\s*:\s*${literal}`, 'gi');
 const assignedCredentials = new RegExp(String.raw`((?<![\w-])([\w-]*${names})\s*[=:]\s*)${literal}`, 'gi');
 const flagCredentials = new RegExp(String.raw`(--([\w-]*${names})\s+)${literal}`, 'gi');
-const headerNames = String.raw`(?:set-cookie|cookie|(?:proxy-)?authorization)[ \t]*:[ \t]*`;
+const headerNames = String.raw`(?:set-cookie|cookie|(?:proxy-)?authorization)["']?[ \t]*:[ \t]*`;
 const headerName = new RegExp(`^${headerNames}`, 'i');
-const rawHeaders = new RegExp(String.raw`((?<![\w-])${headerNames})[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*`, 'gi');
-const headerArguments = /(?<!\S)(-H[ \t]*|--header(?:=|[ \t]+))("(?:\\.|[^"\\])*"|'[^']*'|(?:\\.|[^\s"'<>;&|()])+)/;
-const headers = new RegExp(`${headerArguments.source}|${rawHeaders.source}`, 'gi');
+const credentialHeaders = new RegExp(String.raw`(${headerNames})[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*`, 'gi');
 function credential(key, value) {
   const counter = /tokens$/i.test(key) && (typeof value === 'number' || typeof value === 'string' && /^["']?-?\d+(?:\.\d+)?["']?$/.test(value));
   return sensitive.test(key) && !counter;
@@ -56,13 +54,7 @@ export function redact(value) {
   }
   return value
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
-    .replace(headers, (match, prefix, argument, rawPrefix) => {
-      if (rawPrefix) return rawPrefix + '[REDACTED]';
-      const quote = /^["']/.test(argument) ? argument[0] : '';
-      const content = quote ? argument.slice(1, -1) : argument;
-      const header = content.match(headerName);
-      return header ? prefix + quote + header[0].trimEnd() + ' [REDACTED]' + quote : match.replace(rawHeaders, '$1[REDACTED]');
-    })
+    .replace(credentialHeaders, '$1[REDACTED]')
     .replace(/\bBearer\s+[^\s"'\\,;]+/gi, 'Bearer [REDACTED]')
     .replace(/(\bAuthorization["']?\s*:\s*["']?Basic\s+)[^\s"'\\,;]+/gi, '$1[REDACTED]')
     .replace(quotedCredentials, (match, quote, key, value) => credential(key, value) ? `${quote}${key}${quote}: "[REDACTED]"` : match)
@@ -150,6 +142,14 @@ export class Output {
     part.bytes += bytes; part.records++;
   }
   async emit(record) {
+    if (record.kind !== 'context' && (record.kind !== 'metadata' || record.discoverPr)) {
+      const key = record.sessionId || record.threadId || record.prUrl || this.source;
+      for (const match of JSON.stringify(record).matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\b/g)) {
+        const url = `https://github.com/${match[1]}/${match[2]}/pull/${Number(match[3])}`;
+        const refs = this.index.prs[url] ||= [];
+        if (!refs.some(r => r.sessionId === key)) refs.push({ machine: this.opts.machine, sessionId: key });
+      }
+    }
     const safe = redact({ machine: this.opts.machine, source: this.source, ...record });
     const key = safe.sessionId || safe.threadId || safe.prUrl || this.source;
     const count = this.index.sessions[key] ||= { activity: 0, context: 0 };
@@ -158,13 +158,6 @@ export class Output {
     if (safe.parentSessionId) count.parentSessionId = safe.parentSessionId;
     if (safe.parentThreadId) count.parentThreadId = safe.parentThreadId;
     const encoded = JSON.stringify(safe);
-    if (safe.kind !== 'context' && (safe.kind !== 'metadata' || safe.discoverPr)) {
-      for (const match of encoded.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\b/g)) {
-        const url = `https://github.com/${match[1]}/${match[2]}/pull/${Number(match[3])}`;
-        const refs = this.index.prs[url] ||= [];
-        if (!refs.some(r => r.sessionId === key)) refs.push({ machine: this.opts.machine, sessionId: key });
-      }
-    }
     this.index.records++;
     if (Buffer.byteLength(encoded) + 1 <= this.opts.limit) return this.line(safe);
     const bytes = Buffer.from(encoded); const size = Math.floor((this.opts.limit - 512) * 3 / 4);
