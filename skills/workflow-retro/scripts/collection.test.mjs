@@ -71,35 +71,98 @@ test('structured header names redact their entire associated values', async t =>
   assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('PAIR_'));
 });
 
+test('multiline quoted passwords hide the whole field and preserve record metadata', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/multiline-password.jsonl', [{ timestamp: from, tool: 'exec', id: 'call-1', size: 123,
+    input: { cmd: ['mysql --password "FIRST_VALUE', 'UNINDENTED_VALUE', 'LAST_VALUE"', 'echo done'].join('\n') },
+    output: 'completed', messages: ['ordinary message', 'password=MESSAGE_PASSWORD'],
+    structured: { fields: [{ content: 'secret=FIELD_SECRET' }] },
+  }]);
+  const { rows } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw, { timestamp: from, tool: 'exec', id: 'call-1', size: 123,
+    input: { cmd: '[REDACTED: credential]' }, output: 'completed',
+    messages: ['ordinary message', '[REDACTED: credential]'],
+    structured: { fields: [{ content: '[REDACTED: credential]' }] },
+  });
+  assert.equal(rows[0].timestamp, from);
+  assert.equal(rows[0].sessionId, 'multiline-password');
+});
+
+test('credential headers hide long tool outputs while their PRs remain indexed', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/long-header.jsonl', [{ timestamp: from, tool: 'shell', id: 'call-2', size: 524288,
+    output: 'public log\n'.repeat(25000) + 'Cookie: session=LONG_HEADER_CREDENTIAL\nhttps://github.com/owner/repo/pull/43\n' + 'public log\n'.repeat(25000),
+    result: { ok: true },
+  }]);
+  const { rows, index } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw, { timestamp: from, tool: 'shell', id: 'call-2', size: 524288, output: '[REDACTED: credential]', result: { ok: true } });
+  assert.deepEqual(index.prs, { 'owner/repo#43': [{ machine: 'fixture', sessionId: 'long-header' }] });
+});
+
 test('sensitive shell flags hide concatenated quotes and continued lines', async t => {
   const root = await fixture(t);
   await put(root, 'codex-home/sessions/shell-flags.jsonl', [{ timestamp: from, commands: [
     `tool --password 'FLAG_FIRST'"FLAG_SECOND"; echo FLAG_TAIL`,
     ['tool --password \\', 'FLAG_CONTINUED\\', 'FLAG_LAST', 'echo visible'].join('\n'),
-    ['tool -p \\', 'FLAG_SHORT', 'echo visible'].join('\r\n'),
-    'tool -pFLAG_ATTACHED',
+    ['mysql -p \\', 'FLAG_SHORT', 'echo visible'].join('\r\n'),
+    'mysql -pFLAG_ATTACHED',
   ], pairOfCommands: ['tool --password FLAG_PAIR', 'echo visible'] }]);
   const { rows, out } = await run('collect-sessions.mjs', root);
   assert.deepEqual(rows[0].raw.commands, [
-    '[REDACTED]', '[REDACTED]\n[REDACTED]\n[REDACTED]\necho visible',
-    '[REDACTED]\r\n[REDACTED]\r\necho visible', '[REDACTED]',
+    '[REDACTED: credential]', '[REDACTED: credential]',
+    '[REDACTED: credential]', '[REDACTED: credential]',
   ]);
-  assert.deepEqual(rows[0].raw.pairOfCommands, ['[REDACTED]', 'echo visible']);
+  assert.deepEqual(rows[0].raw.pairOfCommands, ['[REDACTED: credential]', 'echo visible']);
   assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('FLAG_'));
 });
 
-test('whole sensitive lines are hidden while their PR references remain indexed', async t => {
+test('whole sensitive fields are hidden while their PR references remain indexed', async t => {
   const root = await fixture(t);
   await put(root, 'codex-home/sessions/sensitive-line.jsonl', [{ timestamp: from,
-    text: 'visible before\nlog password LINE_CREDENTIAL; gh pr view https://github.com/owner/repo/pull/42\nvisible after',
-    indicators: ['passwd', 'secret', 'token', 'api-key', 'api_key', 'bearer', 'private key'].map(name => `before ${name} LINE_CREDENTIAL after`),
+    text: 'visible before\nlog password=LINE_CREDENTIAL; gh pr view https://github.com/owner/repo/pull/42\nvisible after',
+    indicators: ['passwd', 'secret', 'token', 'api-key', 'api_key'].map(name => `before ${name}=LINE_CREDENTIAL after`),
     key: 'visible before\n-----BEGIN PRIVATE KEY-----\nLINE_KEY_BODY\n-----END PRIVATE KEY-----\nvisible after',
   }]);
   const { rows, index } = await run('collect-sessions.mjs', root);
-  assert.equal(rows[0].raw.text, 'visible before\n[REDACTED]\nvisible after');
-  assert.deepEqual(rows[0].raw.indicators, Array(7).fill('[REDACTED]'));
-  assert.equal(rows[0].raw.key, 'visible before\n[REDACTED]\n[REDACTED]\n[REDACTED]\nvisible after');
+  assert.equal(rows[0].raw.text, '[REDACTED: credential]');
+  assert.deepEqual(rows[0].raw.indicators, Array(5).fill('[REDACTED: credential]'));
+  assert.equal(rows[0].raw.key, '[REDACTED: credential]');
   assert.deepEqual(index.prs, { 'owner/repo#42': [{ machine: 'fixture', sessionId: 'sensitive-line' }] });
+});
+
+test('strong credential indicators hide entire string values', async t => {
+  const root = await fixture(t);
+  const values = [
+    'Cookie: a=1', 'Set-Cookie: a=1', 'Authorization: Basic opaque', 'Proxy-Authorization: Digest opaque',
+    'before Bearer opaque after', 'password=opaque', 'password: "opaque"', 'passwd=opaque',
+    'secret=opaque', 'api_key=opaque', 'apikey=opaque', 'token=opaque',
+    'tool --password opaque', 'tool --token="opaque"', 'tool --api-key opaque', 'tool --secret opaque',
+    'tool --password "\nopaque\n"', 'password="\nopaque\n"',
+    'mysql -popaque', '/usr/bin/mysqldump --user=root -p"opaque"', 'mariadb -popaque',
+    '-----BEGIN RSA PRIVATE KEY-----\nopaque\n-----END RSA PRIVATE KEY-----',
+    'before sk-proj-abcdefghijk after', 'ghp_abcdefghijk', 'gho_abcdefghijk',
+    'xoxa-abcdefghijk', 'xoxb-abcdefghijk', 'xoxp-abcdefghijk', 'AKIAABCDEFGHIJKLMNOP',
+    'before eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.c2lnbmF0dXJl after',
+  ];
+  await put(root, 'codex-home/sessions/strong-indicators.jsonl', [{ timestamp: from, values }]);
+  const { rows } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw.values, Array(values.length).fill('[REDACTED: credential]'));
+});
+
+test('ordinary credential discussion and flags without values remain visible', async t => {
+  const root = await fixture(t);
+  const values = [
+    'tokens used: 123', 'secret sauce', 'explain password handling', 'review API keys and private keys',
+    'token=', 'password: ', 'secret=""', 'tool --password', "tool --token ''",
+    'tool -pordinary', 'tool -p ordinary', 'psql -p5432', 'mysql -P3306',
+  ];
+  await put(root, 'codex-home/sessions/ordinary-discussion.jsonl', [{ timestamp: from, values,
+    input: { cmd: 'echo tokens used' }, output: 'secret sauce', messages: [{ text: 'discuss secrets' }],
+  }]);
+  const { rows } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw, { timestamp: from, values,
+    input: { cmd: 'echo tokens used' }, output: 'secret sauce', messages: [{ text: 'discuss secrets' }],
+  });
 });
 
 test('provider CLI filters exact window, groups children, separates Grok context and Cursor probes', async t => {
@@ -188,8 +251,8 @@ test('emitted records redact complete cookie and authorization headers', async t
   const { rows, index, out } = await run('collect-sessions.mjs', root);
   assert.deepEqual(rows[0].raw.input.headers, { Cookie: '[REDACTED]', 'Set-Cookie': '[REDACTED]', Authorization: '[REDACTED]', 'Proxy-Authorization': '[REDACTED]' });
   assert.deepEqual(index.prs, { 'o/r#5': [{ machine: 'fixture', sessionId: 'headers' }] });
-  assert.equal(rows[0].raw.input.raw, '[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\nX-Public: visible');
-  assert.deepEqual(JSON.parse(rows[0].raw.input.json), { Cookie: '[REDACTED]', public: 'visible' });
+  assert.equal(rows[0].raw.input.raw, '[REDACTED: credential]');
+  assert.equal(rows[0].raw.input.json, '[REDACTED: credential]');
   const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
   for (const secret of ['FAKE_SESSION_TOKEN', 'FAKE_AUTH_TOKEN', 'FAKE_SET_TOKEN', 'FAKE_SET_AUTH', 'FAKE_USER', 'FAKE_NONCE', 'FAKE_RESPONSE', 'FAKE_PROXY_TOKEN']) assert.ok(!emitted.includes(secret), secret);
 });
@@ -203,10 +266,10 @@ test('folded headers redact every continuation through emitted records', async t
   assert.deepEqual(index.prs, { 'o/r#6': [{ machine: 'fixture', sessionId: 'folded' }] });
   const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
   for (const secret of ['FOLDED_COOKIE', 'FOLDED_AUTH', 'FOLDED_NONCE', 'FOLDED_RESPONSE', 'FOLDED_SET', 'FOLDED_PROXY']) assert.ok(!emitted.includes(secret), secret);
-  assert.equal(rows[0].raw.result, '[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\nX-Public: visible');
+  assert.equal(rows[0].raw.result, '[REDACTED: credential]');
 });
 
-test('header redaction consumes the line while PR discovery uses the original record', async t => {
+test('header redaction consumes the field while PR discovery uses the original record', async t => {
   const url = 'https://github.com/o/r/pull/7';
   const cases = [
     ['concatenated quoted segments', `curl -H 'Cookie: a=1'"; s=INLINE_COOKIE" ${url}`],
@@ -228,7 +291,7 @@ test('header redaction consumes the line while PR discovery uses the original re
     const { rows, index, out } = await run('collect-sessions.mjs', root);
     for (const part of index.parts) assert.ok(!(await readFile(join(out, part.file), 'utf8')).includes('INLINE_'));
     assert.deepEqual(index.prs, { 'o/r#7': [{ machine: 'fixture', sessionId: 'inline' }] });
-    assert.equal(rows[0].raw.command, '[REDACTED]');
+    assert.equal(rows[0].raw.command, '[REDACTED: credential]');
     assert.ok(!(await readFile(join(out, 'index.json'), 'utf8')).includes('INLINE_'));
   });
 });
@@ -464,8 +527,8 @@ test('large alphanumeric tool results finish without truncation or credential le
   await put(root, 'codex-home/sessions/ascii.jsonl', [{ timestamp: from, result: 'a'.repeat(512 * 1024), database: 'postgresql://user:dbpassword@database', customUrl: 'a+'.repeat(100) + 'custom://user:longpassword@host', serviceUrl: 'custom://user:opaquevalue@host', note: 'visible ghp_abcdefghijk text' }]);
   const { rows } = await run('collect-sessions.mjs', root);
   assert.equal(rows[0].raw.result, 'a'.repeat(512 * 1024));
-  assert.equal(rows[0].raw.database, '[REDACTED]');
-  assert.equal(rows[0].raw.customUrl, '[REDACTED]');
-  assert.equal(rows[0].raw.serviceUrl, 'custom://user:[REDACTED]@host');
-  assert.equal(rows[0].raw.note, 'visible [REDACTED] text');
+  assert.equal(rows[0].raw.database, '[REDACTED: credential]');
+  assert.equal(rows[0].raw.customUrl, '[REDACTED: credential]');
+  assert.equal(rows[0].raw.serviceUrl, '[REDACTED: credential]');
+  assert.equal(rows[0].raw.note, '[REDACTED: credential]');
 });

@@ -33,6 +33,19 @@ const names = '(?:api[ _-]?key|private[ _-]?key|access[_-]?key(?:[_-]?id)?|secre
 const indicator = new RegExp(`${names}|(?:^|[\\s"'=])-[pP]`, 'i');
 const label = new RegExp(`^(?:[A-Za-z0-9_.-]*${names}|-[pP])$`, 'i');
 const flag = /^(?:--[\w-]+|-[pP])$/;
+const assignment = new RegExp(`${names}["']?\\s*[:=]\\s*["']?\\s*[^\\s"'\x60;,}\\]]`, 'i');
+const strongIndicators = [
+  /\b(?:Cookie|Set-Cookie|Authorization|Proxy-Authorization)["']?\s*:/i,
+  /\bBearer\s+[^\s"']+/i,
+  assignment,
+  /(?:^|[\s"'`])--(?:password|passwd|passphrase|token|api[-_]?key|secret|access-token|refresh-token|client-secret)(?:=|\s+)\s*["']?\s*[^\s"'`;,]/i,
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
+  /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/,
+  /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/,
+  /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:[^@\s]+@/i,
+];
+const passwordClient = /\b(?:mysql(?:dump|admin|check|import|show|slap)?|mariadb(?:-dump|-admin|-check|-import|-show|-slap)?)\b/i;
+const shortPassword = /(?:^|[\s"'`])-p\s*["']?\s*[^\s"'`;,=-]/;
 function credential(key, value) {
   if (typeof key !== 'string') return false;
   const counter = /tokens$/i.test(key) && (typeof value === 'number' || typeof value === 'string' && /^["']?-?\d+(?:\.\d+)?["']?$/.test(value));
@@ -54,23 +67,11 @@ export function redact(value) {
     ]));
   }
   if (typeof value !== 'string') return value;
+  if (strongIndicators.some(pattern => pattern.test(value)) || passwordClient.test(value) && shortPassword.test(value)) return '[REDACTED: credential]';
   if (/^[\[{]/.test(value.trim())) {
     try { return JSON.stringify(redact(JSON.parse(value))); } catch { /* Plain tool output can start with a brace. */ }
   }
-  const lines = value.split(/(\r\n|\n|\r)/);
-  let hidden = false, continued = false, privateKey = false;
-  for (let i = 0; i < lines.length; i += 2) {
-    const line = lines[i];
-    if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/i.test(line)) privateKey = true;
-    hidden = privateKey || indicator.test(line) || hidden && (continued || /^[ \t]+/.test(line));
-    continued = /\\[ \t]*$/.test(line);
-    if (hidden) lines[i] = '[REDACTED]';
-    if (/-----END [A-Z ]*PRIVATE KEY-----/i.test(line)) privateKey = false;
-  }
-  return lines.join('')
-    .replace(/\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
-
-    .replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^@\s]+@/gi, '$1[REDACTED]@');
+  return value;
 }
 export async function* files(root, receipt) {
   let entries;
