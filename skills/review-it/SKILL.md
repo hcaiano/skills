@@ -10,6 +10,11 @@ description: "Pre-PR review: grade a finished change by risk, have the strongest
 Run the affected checks, commit everything including new files, fetch the
 target branch, and pin `<merge-base with origin/<target>>..HEAD`. HEAD stays fixed while reviewers run.
 
+Merging or rebasing the target branch into a reviewed branch changes no
+reviewed code, so it needs no new review when the PR's own changes are
+unchanged; `land-it` checks that by comparing trees. Review again only when the
+PR's own changes moved.
+
 Write down the intent and acceptance criteria, chat-only ones included, and the
 model families that wrote the change, delegated workers included.
 
