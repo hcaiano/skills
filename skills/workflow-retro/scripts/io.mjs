@@ -1,6 +1,5 @@
 import { createReadStream } from 'node:fs';
 import { mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -50,6 +49,7 @@ export function redact(value) {
   }
   return value
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
+    .replace(/((?<![\w-])(?:set-cookie|cookie|(?:proxy-)?authorization)[ \t]*:[ \t]*)[^\r\n]*/gi, '$1[REDACTED]')
     .replace(/\bBearer\s+[^\s"'\\,;]+/gi, 'Bearer [REDACTED]')
     .replace(/(\bAuthorization["']?\s*:\s*["']?Basic\s+)[^\s"'\\,;]+/gi, '$1[REDACTED]')
     .replace(quotedCredentials, (match, quote, key, value) => credential(key, value) ? `${quote}${key}${quote}: "[REDACTED]"` : match)
@@ -69,19 +69,42 @@ export async function* files(root, receipt) {
     else if (entry.isFile()) yield path;
   }
 }
-export async function* jsonl(path, receipt) {
-  let line = 0;
+export async function* jsonl(path, receipt, session) {
+  const limit = 1024 ** 2;
+  const buffer = Buffer.allocUnsafe(limit + 1);
+  let line = 1, offset = 0, size = 0, lastByte = 0;
   const input = createReadStream(path);
-  const reader = createInterface({ input, crlfDelay: Infinity });
-  try {
-    for await (const text of reader) {
-      line++;
-      if (!text.trim()) continue;
-      try { yield { raw: JSON.parse(text), line }; }
-      catch { receipt.gap('malformed-jsonl', { path, line }); }
+  function record() {
+    const bytes = size - (lastByte === 13 ? 1 : 0);
+    if (bytes > limit) {
+      receipt.gap('oversized-jsonl', { ...session(), path, line, offset, size: bytes, limit });
+      return;
     }
+    const text = buffer.subarray(0, bytes).toString('utf8');
+    if (!text.trim()) return;
+    try { return { raw: JSON.parse(text), line }; }
+    catch { receipt.gap('malformed-jsonl', { path, line }); }
+  }
+  try {
+    for await (const chunk of input) {
+      let start = 0;
+      while (start < chunk.length) {
+        const newline = chunk.indexOf(10, start);
+        const end = newline === -1 ? chunk.length : newline;
+        const length = end - start;
+        if (size < buffer.length) chunk.copy(buffer, size, start, start + Math.min(length, buffer.length - size));
+        size += length;
+        if (length) lastByte = chunk[end - 1];
+        if (newline === -1) break;
+        const parsed = record();
+        if (parsed) yield parsed;
+        offset += size + 1; line++; size = 0; lastByte = 0;
+        start = end + 1;
+      }
+    }
+    if (size) { const parsed = record(); if (parsed) yield parsed; }
   } catch (e) { receipt.gap('unreadable-file', { path, code: e.code }); }
-  finally { reader.close(); input.destroy(); }
+  finally { input.destroy(); }
 }
 export async function json(path) { return JSON.parse(await readFile(path, 'utf8')); }
 export async function candidate(path, opts, receipt) {

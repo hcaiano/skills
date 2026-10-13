@@ -39,7 +39,7 @@ await main('sessions', true, async (opts, out) => {
       const parent = provider === 'claude' && path.includes('/subagents/') ? basename(dirname(dirname(path))) : null;
       let sessionId = provider === 'grok' ? basename(dirname(path)) : parent || basename(path, '.jsonl');
       let selected = false;
-      for await (const { raw, line } of jsonl(path, out)) {
+      for await (const { raw, line } of jsonl(path, out, () => ({ provider, sessionId }))) {
         if (!Number.isFinite(instant(raw.timestamp))) { out.gap('missing-timestamp', { provider, path, line }); continue; }
         if (!parent) sessionId = raw.sessionId || (raw.type === 'session_meta' && raw.payload?.id) || sessionId;
         if (!inside(raw.timestamp, opts)) continue;
@@ -48,7 +48,7 @@ await main('sessions', true, async (opts, out) => {
       }
       if (provider === 'grok' && selected) {
         const history = join(dirname(path), 'chat_history.jsonl');
-        for await (const { raw, line } of jsonl(history, out)) await out.emit({ provider, sessionId, path: history, line, kind: 'context', raw });
+        for await (const { raw, line } of jsonl(history, out, () => ({ provider, sessionId }))) await out.emit({ provider, sessionId, path: history, line, kind: 'context', raw });
       }
     }
   }

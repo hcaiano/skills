@@ -149,6 +149,24 @@ test('oversized JSONL records leave byte receipts and collection continues under
   ]);
 });
 
+test('record cap counts UTF-8 bytes, accepts the boundary with CRLF and resumes at EOF', async t => {
+  const root = await fixture(t);
+  const path = join(root, '.t3/claude-home/projects/p/boundary.jsonl');
+  await mkdir(join(path, '..'), { recursive: true });
+  const empty = JSON.stringify({ timestamp: from, text: '' });
+  const padding = 1024 ** 2 - Buffer.byteLength(empty);
+  const text = 'é'.repeat(Math.floor(padding / 2)) + 'x'.repeat(padding % 2);
+  const accepted = JSON.stringify({ timestamp: from, text });
+  assert.equal(Buffer.byteLength(accepted), 1024 ** 2);
+  const oversized = JSON.stringify({ timestamp: from, text: text + 'x' });
+  await writeFile(path, '\n' + accepted + '\r\n' + oversized + '\r\n' + JSON.stringify({ timestamp: from, text: 'final' }));
+  const { index, rows } = await run('collect-sessions.mjs', root, [], 1);
+  assert.deepEqual(rows.map(r => r.raw.text), [text, 'final']);
+  assert.deepEqual(rows.map(r => r.line), [2, 4]);
+  assert.deepEqual(index.gapCounts, { 'oversized-jsonl': 1 });
+  assert.deepEqual(index.gaps, [{ kind: 'oversized-jsonl', provider: 'claude', sessionId: 'boundary', path, line: 3, offset: 1024 ** 2 + 3, size: 1024 ** 2 + 1, limit: 1024 ** 2 }]);
+});
+
 test('transcript larger than Node heap streams through the public CLI', async t => {
   const root = await fixture(t);
   const file = await open(join(root, '.t3/codex-home/sessions/large.jsonl'), 'w');
