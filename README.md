@@ -57,7 +57,7 @@ leaves the globally installed copy in place.
 - `workflow-retro` — daily retro of every agent session on the PC and the
   MacBook: fixes defects in these skills and proposes everything else. Run by a
   T3 scheduled task on the PC.
-- `review-it` — pre-PR review: grade a change by risk, have Opus or Astra
+- `review-it` — pre-PR review: grade a change by risk, have Opus or Sol
   review it (the full `interrogate` panel when risky), and fix the findings.
 - `write-pr` — write a short, human-first PR description: what and why, merge
   danger, before/after screenshots, checks, and review.
