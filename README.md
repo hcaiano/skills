@@ -60,7 +60,8 @@ leaves the globally installed copy in place.
 - `review-it` — pre-PR review: grade a change by risk, have Opus or Sol
   review it (the full `interrogate` panel when risky), and fix the findings.
 - `land-it` — merge a low-risk PR once every reviewer approved it and CI is
-  green, then settle its T3 thread; risky PRs wait for a person.
+  green, test it after merge, and tell the user the thread is ready to
+  settle; risky PRs wait for a person.
 - `write-pr` — write a short, human-first PR description: what and why, merge
   danger, before/after screenshots, checks, and review.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious

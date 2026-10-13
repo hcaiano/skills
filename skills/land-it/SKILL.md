@@ -1,6 +1,6 @@
 ---
 name: land-it
-description: "Merge a low-risk PR that every reviewer approved, then settle its T3 thread. Use when a PR reaches merge-ready, or when a thread's PRs have all landed."
+description: "Merge a low-risk PR that every reviewer approved, test it after merge, and hand the thread back ready to settle. Use when a PR reaches merge-ready."
 ---
 
 # Land it
@@ -54,13 +54,26 @@ Only PRs into the default branch land here. In a stack, the bottom PR lands
 first; the owner then rebases the next layer onto the default branch and
 retargets it, and that layer takes its one final review before the gate.
 
-## 4. Settle or hand back
+## 4. Test after merge
 
-Read `list_thread_pull_requests`. When every linked PR is merged or closed and
-no child task, scheduled task or requested check is still open, call
-`unwatch_pull_request` for any watch and settle the thread with
-`t3_thread_organize`. Otherwise end with each PR still open and the reason it
-waits, quoting the gate's `reasons`.
+For each PR that landed, watch the merge commit's checks on the default
+branch, and run the task's acceptance check against the merged result: the
+deployed app when the repo deploys on merge, otherwise the default branch.
+A red result is new work in this thread, not a reason to stay silent.
 
-Done when every PR of the task is merged, or reported with its hold, and the
-thread is settled or its open work is named.
+## 5. Hand back
+
+End the turn with one final message the user can triage at a glance. Read
+`list_thread_pull_requests` first, and `unwatch_pull_request` every PR that
+merged or now waits for the user. Start the message with one of:
+
+- `Ready to settle:` every linked PR is merged or closed, the after-merge
+  checks passed, and no child task, scheduled task or requested check is
+  open. Name what landed and how it was tested.
+- `Needs you:` then each open PR with the gate's `reasons`, or the open
+  work, and the one decision or action that would unblock it.
+
+The user settles the thread; leave that to them.
+
+Done when every PR of the task is merged and tested, or reported with its
+hold, and the final message starts with one of the two labels.
