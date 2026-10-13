@@ -29,7 +29,7 @@ to the receipt.
 
 `single`: one reviewer from the `interrogate reviewers` line of
 `pstack-models.md`, resolved with `t3-capacity` as one tier per model in this
-order: the lead models of the first two seats (Opus and Astra), then every
+order: the lead models of the first two seats (Opus and Sol), then every
 other model on the line in line order. When only one of those two families
 wrote the change, the other family's lead model goes first. The brief
 carries the absolute path of the [review brief](references/review-brief.md), the
