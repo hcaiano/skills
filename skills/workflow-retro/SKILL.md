@@ -18,6 +18,9 @@ the last 24 hours on a first run. Gather, from both machines:
   `~/.t3/codex-home/sessions`, `~/.t3/grok-home` and `~/.t3/cursor-home`.
 - Every PR those sessions opened or touched: body, review threads and checks,
   through `gh`.
+- Every scheduled task: on the PC through `list_scheduled_tasks` for each
+  project from `t3_project_list`; on the MacBook from the `scheduled_tasks`
+  table of `~/.t3/userdata/statev2.sqlite`, opened read-only.
 
 Select logs by modification time against a reference file
 (`TZ=UTC touch -t <CCYYMMDDhhmm.ss> <ref>`, then `find … -newer <ref>`): macOS
@@ -51,7 +54,10 @@ session against the workflow in `~/.agents/AGENTS.md` and look for:
 - red CI, conflicts or open review threads left behind;
 - questions to the user that the docs already answered;
 - repeated manual work a skill or script could do;
-- model or account choices against `~/.agents/pstack-models.md`.
+- model or account choices against `~/.agents/pstack-models.md`;
+- scheduled tasks without the `[A]` title prefix that belong to the user's
+  automations, and agent timers whose end condition passed, whose thread is
+  settled or archived, or whose recent runs changed nothing;
 - time each feature spent in implementation, review, fixes, babysitting and
   merge, and defects found after merge, by the reasoning effort each phase
   ran at, so effort budgets follow measured results.
@@ -72,6 +78,10 @@ ssh mbp 'PATH=/opt/homebrew/bin:$PATH env -u CLAUDE_CONFIG_DIR -u GROK_HOME -u C
 
 Done when the Mac's `~/.agents/skills/<name>/SKILL.md` matches the merged
 file. At most three merged fixes per run; the rest become proposals.
+
+Delete an agent timer (no `[A]` prefix) on the PC when its bound thread is
+settled or archived, and list each one in the report. Every other timer
+finding is a proposal.
 
 Everything else is a proposal for the user: `~/.agents/AGENTS.md`,
 `pstack-models.md`, pstack itself, work repositories, new skills, and any
