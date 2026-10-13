@@ -37,7 +37,12 @@ worktree, the pinned range, the intent and acceptance criteria, and the paths of
 any spec, issue and repo instruction files.
 
 `dual`: run `interrogate` on the pinned range with the same intent; its Act On
-findings are the findings.
+findings are the findings. Add one seat from the `high-risk extra reviewer`
+line only for a one-way door, or a change to security, auth, payments or
+stored data.
+
+Effort follows the grade: `single` reviewers run at `high`; `dual` seats and
+the final review of a `dual` change run at `xhigh`.
 
 Staff every reviewer, `dual` seats and the final review included, through
 `delegate_task` in runtime mode `full-access` with the read-only brief: a

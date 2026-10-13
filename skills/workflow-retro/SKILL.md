@@ -52,6 +52,9 @@ session against the workflow in `~/.agents/AGENTS.md` and look for:
 - questions to the user that the docs already answered;
 - repeated manual work a skill or script could do;
 - model or account choices against `~/.agents/pstack-models.md`.
+- time each feature spent in implementation, review, fixes, babysitting and
+  merge, and defects found after merge, by the reasoning effort each phase
+  ran at, so effort budgets follow measured results.
 
 Each finding carries its evidence: machine, session, PR and a short quote.
 Drop findings already open in a PR or proposed in an earlier retro thread.
