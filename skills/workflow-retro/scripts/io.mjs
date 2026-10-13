@@ -76,10 +76,13 @@ export async function candidate(path, opts, receipt) {
 export class Output {
   constructor(opts, source) {
     this.opts = opts; this.source = source; this.handle = null;
-    this.index = { version: 1, machine: opts.machine, source, from: opts.from, to: opts.to, complete: false, records: 0, parts: [], sessions: {}, prs: {}, sources: {}, gaps: [] };
+    this.index = { version: 1, machine: opts.machine, source, from: opts.from, to: opts.to, complete: false, records: 0, parts: [], sessions: {}, prs: {}, sources: {}, gapCounts: {}, gaps: [] };
   }
   async start() { await mkdir(this.opts.out, { mode: 0o700 }); }
-  gap(kind, detail = {}) { this.index.gaps.push(redact({ kind, ...detail })); }
+  gap(kind, detail = {}) {
+    this.index.gapCounts[kind] = (this.index.gapCounts[kind] || 0) + 1;
+    if (this.index.gaps.length < 200) this.index.gaps.push(redact({ kind, ...detail }));
+  }
   async line(record) {
     const data = JSON.stringify(record) + '\n';
     const bytes = Buffer.byteLength(data);
@@ -102,7 +105,7 @@ export class Output {
     if (safe.parentSessionId) count.parentSessionId = safe.parentSessionId;
     if (safe.parentThreadId) count.parentThreadId = safe.parentThreadId;
     const encoded = JSON.stringify(safe);
-    if (safe.kind !== 'context' && safe.kind !== 'metadata') {
+    if (safe.kind !== 'context' && (safe.kind !== 'metadata' || safe.discoverPr)) {
       for (const match of encoded.matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\b/g)) {
         const url = `https://github.com/${match[1]}/${match[2]}/pull/${Number(match[3])}`;
         const refs = this.index.prs[url] ||= [];
@@ -120,7 +123,7 @@ export class Output {
   async finish() {
     if (this.handle) { await this.handle.close(); this.handle = null; }
     this.index.complete = this.index.gaps.length === 0;
-    await writeFile(join(this.opts.out, 'index.json'), JSON.stringify(this.index, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
+    await writeFile(join(this.opts.out, 'index.json'), JSON.stringify(redact(this.index), null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     console.log(JSON.stringify({ out: this.opts.out, records: this.index.records, sessions: Object.keys(this.index.sessions).length, gaps: this.index.gaps.length, complete: this.index.complete }));
     if (!this.index.complete) process.exitCode = 1;
   }

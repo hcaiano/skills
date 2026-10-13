@@ -100,3 +100,54 @@ test('transcript larger than Node heap streams through the public CLI', async t 
   const { rows } = await run('collect-sessions.mjs', root, [], 0, ['--max-old-space-size=24']);
   assert.deepEqual(rows.map(r => r.raw.text), ['selected']);
 });
+
+test('read-only SQLite extracts activity, ancestor chains, failures and spanning runs without restart noise', async t => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const root = await fixture(t); const path = join(root, 'state.sqlite'); const db = new DatabaseSync(path);
+  const specs = {
+    threads: 'thread_id TEXT, payload_json TEXT', messages: 'thread_id TEXT, run_id TEXT, created_at TEXT, payload_json TEXT',
+    turn_items: 'thread_id TEXT, run_id TEXT, payload_json TEXT', runs: 'thread_id TEXT, run_id TEXT, requested_at TEXT, completed_at TEXT, status TEXT, payload_json TEXT',
+    run_attempts: 'thread_id TEXT, run_id TEXT, payload_json TEXT', nodes: 'thread_id TEXT, run_id TEXT, payload_json TEXT',
+    subagents: 'thread_id TEXT, child_thread_id TEXT, run_id TEXT, payload_json TEXT', provider_threads: 'thread_id TEXT, payload_json TEXT',
+  };
+  for (const [table, columns] of Object.entries(specs)) db.exec(`CREATE TABLE orchestration_v2_projection_${table} (${columns})`);
+  function insert(table, row) {
+    const keys = Object.keys(row); db.prepare(`INSERT INTO orchestration_v2_projection_${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...Object.values(row));
+  }
+  for (const id of ['root', 'middle', 'child', 'restart', 'fork']) insert('threads', { thread_id: id, payload_json: JSON.stringify({ id, updatedAt: from, forkedFrom: id === 'fork' ? 'root' : null }) });
+  insert('subagents', { thread_id: 'root', child_thread_id: 'middle', payload_json: '{}' });
+  insert('subagents', { thread_id: 'middle', child_thread_id: 'child', payload_json: '{}' });
+  insert('messages', { thread_id: 'child', run_id: 'failed', created_at: '2026-10-12T13:00:00+01:00', payload_json: '{"text":"inside"}' });
+  insert('messages', { thread_id: 'restart', created_at: to, payload_json: '{"text":"outside"}' });
+  insert('messages', { thread_id: 'fork', created_at: from, payload_json: '{"text":"fork"}' });
+  insert('runs', { thread_id: 'child', run_id: 'failed', requested_at: from, completed_at: '2026-10-12T14:00:00Z', status: 'failed', payload_json: '{"status":"failed"}' });
+  insert('runs', { thread_id: 'root', run_id: 'ongoing', requested_at: '2026-10-11T00:00:00Z', status: 'running', payload_json: '{"status":"running"}' });
+  insert('run_attempts', { thread_id: 'child', run_id: 'failed', payload_json: '{"status":"failed","error":"provider failed"}' });
+  insert('nodes', { thread_id: 'child', run_id: 'failed', payload_json: '{"status":"failed"}' });
+  insert('turn_items', { thread_id: 'child', run_id: 'failed', payload_json: JSON.stringify({ type: 'error', startedAt: from, error: 'tool failed', token: 'dont-expose' }) });
+  insert('provider_threads', { thread_id: 'child', payload_json: '{"nativeThreadRef":{"nativeId":"native-child"},"driver":"cursor"}' });
+  const taskCols = ['task_id','title','prompt','enabled','schedule_json','project_id','thread_id','workspace_strategy_json','model_selection_json','runtime_mode','interaction_mode','created_at','updated_at','next_run_at','last_run_at','last_run_status','last_run_error','run_count','webhook_secret','webhook_token'];
+  db.exec(`CREATE TABLE scheduled_tasks (${taskCols.map(c => c + ' TEXT').join(',')})`);
+  db.exec("INSERT INTO scheduled_tasks (task_id, title, prompt, schedule_json, webhook_secret, webhook_token) VALUES ('task', '[A] keep', 'PASSWORD=hidden', '{\"type\":\"interval\"}', 'webhook-secret-value', 'webhook-token-value')");
+  db.close(); const before = await readFile(path);
+  const { index, rows } = await run('collect-t3.mjs', root, ['--db', path]);
+  assert.equal(index.counts.activeThreads, 3); assert.equal(index.counts.ancestorThreads, 1);
+  assert.equal(index.counts.runs, 2); assert.equal(index.counts.attempts, 1);
+  assert.ok(!rows.some(r => r.threadId === 'restart'));
+  assert.equal(rows.find(r => r.raw.id === 'child').parentThreadId, 'middle');
+  assert.equal(rows.find(r => r.raw.id === 'fork').parentThreadId, undefined);
+  assert.equal(rows.find(r => r.runId === 'ongoing').kind, 'metadata');
+  assert.ok(rows.some(r => r.raw.error === 'provider failed'));
+  assert.equal(index.nativeMappings[0].nativeThreadRef.nativeId, 'native-child');
+  assert.ok(!JSON.stringify(rows).includes('dont-expose'));
+  const tasks = await run('list-scheduled-tasks.mjs', root, ['--db', path]);
+  assert.equal(tasks.rows[0].raw.title, '[A] keep');
+  for (const secret of ['hidden', 'webhook-secret-value', 'webhook-token-value', 'webhook_secret', 'webhook_token']) assert.ok(!JSON.stringify(tasks).includes(secret), secret);
+  assert.deepEqual(await readFile(path), before);
+  const changed = new DatabaseSync(path);
+  changed.exec("INSERT INTO orchestration_v2_projection_subagents (thread_id, child_thread_id, payload_json) VALUES ('child', 'root', '{}'), ('missing', 'fork', '{}')");
+  changed.close();
+  const partial = await run('collect-t3.mjs', root, ['--db', path], 1);
+  assert.ok(partial.index.gapCounts['cyclic-lineage'] > 0);
+  assert.equal(partial.index.gapCounts['unresolved-thread'], 1);
+});
