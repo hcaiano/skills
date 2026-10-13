@@ -47,7 +47,8 @@ confirmation reviews run at `high`.
 Staff every reviewer, `panel` seats and the confirmation review included, through
 `delegate_task` in runtime mode `full-access` with the read-only brief: a
 headless run has nobody to approve it. Every seat comes from the `interrogate
-reviewers` line: those are the strongest models the user pays for. Authorship
+reviewers` line, except the high-risk extra seat from its own line: those are
+the strongest models the user pays for. Authorship
 only orders the two lead models, so a reviewer from the author's family is a
 normal review. When every model on the line is out of capacity, report a
 blocker. Where `delegate_task` is unavailable, as in a subagent
@@ -69,8 +70,8 @@ the diff go to the user. Rerun the affected checks and commit.
 When fixes landed, run one confirmation review at `high`: a new reviewer,
 chosen like `single` with the authors of the fixes in place of the change's
 authors, reads only the fix range (the reviewed head to the new HEAD) with the
-prior findings. Apply, check and commit its valid findings that need no new
-design; anything else counts as `open` in the receipt and goes to the user. A
+prior findings. Apply, check and commit its valid findings; each one counts as
+`open` in the receipt, because no reviewer saw its fix, and goes to the user. A
 PR gets these two rounds and no more.
 
 ## 5. Receipt
