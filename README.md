@@ -4,7 +4,7 @@
 
 Personal agent skills shared across Claude Code, Codex, Cursor, and Grok.
 
-The repository contains seven active skills under `skills/` and small maintenance
+The repository contains eight active skills under `skills/` and small maintenance
 scripts under `scripts/`.
 
 ## Install
@@ -59,6 +59,9 @@ leaves the globally installed copy in place.
   T3 scheduled task on the PC.
 - `review-it` — pre-PR review: grade a change by risk, have Opus or Sol
   review it (the full `interrogate` panel when risky), and fix the findings.
+- `land-it` — merge a low-risk PR once every reviewer approved it and CI is
+  green, test it after merge, and tell the user the thread is ready to
+  settle; risky PRs wait for a person.
 - `write-pr` — write a short, human-first PR description: what and why, merge
   danger, before/after screenshots, checks, and review.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious

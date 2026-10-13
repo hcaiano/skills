@@ -1,0 +1,7 @@
+interface:
+  display_name: "Land It"
+  short_description: "Merge a low-risk PR every reviewer approved and hand it back tested"
+  default_prompt: "Use $land-it to decide whether this PR can merge without the user and land it."
+
+policy:
+  allow_implicit_invocation: true
