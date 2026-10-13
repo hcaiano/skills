@@ -48,8 +48,8 @@ protection to GitHub; a rule it cannot satisfy becomes a hold.
   `write-pr`, and run the gate again. After a confirmation review, the PR is
   the user's.
 - `hold` because the grade was `skip` or the receipt is missing or in an
-  older shape: run `review-it` from its grading step on the whole PR, within
-  its two rounds, and run the gate again.
+  older shape: run `review-it` on the whole PR graded at least `single`,
+  within its two rounds, and run the gate again.
 - `hold` because the PR could not be read or the code could not be compared:
   fix the access or checkout (GitHub login, fetch access, the PR's
   repository) and run the gate again.
