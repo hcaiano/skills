@@ -70,8 +70,9 @@ to the user.
 ## 5. Receipt
 
 Return this line for `write-pr`'s Review section, plus any blocker and its next
-step. `land-it` parses it, so keep its exact shape; `rejected` counts findings
-the reviewers raised and the authors declined, and `reviewed` names the head
-the last round saw:
+step. `land-it` parses it, so keep its exact shape. `rejected` counts findings
+the reviewers raised and the authors declined; `open` counts findings handed
+to the user, blockers and seats that never returned a verdict; `reviewed`
+names the head the last round saw:
 
-`**Review.** <skip | single | dual> by <models>; <n> fixed, <n> rejected; reviewed <short SHA>`
+`**Review.** <skip | single | dual> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <short SHA>`
