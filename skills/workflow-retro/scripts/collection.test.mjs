@@ -124,6 +124,39 @@ test('emitted records redact complete cookie and authorization headers', async t
   for (const secret of ['FAKE_SESSION_TOKEN', 'FAKE_AUTH_TOKEN', 'FAKE_SET_TOKEN', 'FAKE_SET_AUTH', 'FAKE_USER', 'FAKE_NONCE', 'FAKE_RESPONSE']) assert.ok(!emitted.includes(secret), secret);
 });
 
+test('folded headers redact every continuation through emitted records', async t => {
+  const root = await fixture(t);
+  const headers = 'Cookie: a=1;\r\n session=FOLDED_COOKIE;\r\n\tauth=FOLDED_AUTH\r\nAuthorization: Digest\r\n nonce=FOLDED_NONCE\r\n\tresponse=FOLDED_RESPONSE\r\nSet-Cookie: a=1;\n session=FOLDED_SET\nProxy-Authorization: Basic\n\tFOLDED_PROXY\nX-Public: visible';
+  await put(root, 'codex-home/sessions/folded.jsonl', [{ timestamp: from, result: headers }]);
+  const { rows, out } = await run('collect-sessions.mjs', root);
+  const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
+  for (const secret of ['FOLDED_COOKIE', 'FOLDED_AUTH', 'FOLDED_NONCE', 'FOLDED_RESPONSE', 'FOLDED_SET', 'FOLDED_PROXY']) assert.ok(!emitted.includes(secret), secret);
+  assert.equal(rows[0].raw.result, 'Cookie: [REDACTED]\r\nAuthorization: [REDACTED]\r\nSet-Cookie: [REDACTED]\nProxy-Authorization: [REDACTED]\nX-Public: visible');
+});
+
+test('inline header arguments retain later command arguments and discovered PRs', async t => {
+  const root = await fixture(t);
+  const url = 'https://github.com/o/r/pull/7';
+  const commands = [
+    `curl -H 'Cookie: a=1; s=INLINE_COOKIE' ${url} --fail`,
+    `curl --header="Authorization: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`,
+    `curl -HCookie:INLINE_SHORT ${url}`,
+    `curl -H Cookie:INLINE_BARE ${url}`,
+    `curl --header Cookie:INLINE_LONG ${url}`,
+  ];
+  await put(root, 'codex-home/sessions/inline.jsonl', commands.map(command => ({ timestamp: from, command })));
+  const { rows, index, out } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows.map(r => r.raw.command), [
+    `curl -H 'Cookie: [REDACTED]' ${url} --fail`,
+    `curl --header="Authorization: [REDACTED]" ${url}`,
+    `curl -HCookie: [REDACTED] ${url}`,
+    `curl -H Cookie: [REDACTED] ${url}`,
+    `curl --header Cookie: [REDACTED] ${url}`,
+  ]);
+  assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'inline' }] });
+  assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('INLINE_'));
+});
+
 test('oversized JSONL records leave byte receipts and collection continues under a small heap', async t => {
   const root = await fixture(t);
   const path = join(root, '.t3/codex-home/sessions/oversized.jsonl');
