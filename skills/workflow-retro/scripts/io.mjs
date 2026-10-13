@@ -29,37 +29,45 @@ export function options(window = true) {
   return opts;
 }
 export const inside = (value, opts) => instant(value) >= opts.start && instant(value) < opts.end;
-const names = '(?:api[ _-]?key|private[ _-]?key|access[_-]?key(?:[_-]?id)?|secret[_-]?key|token|password|passwd|passphrase|secret|cookie|authorization|credential)(?:s|[_-]?(?:value|hash|digest))?';
-const sensitive = new RegExp(`${names}$`, 'i');
-const literal = String.raw`("(?:\\.|[^"\\])*"|'[^']*'|[^\s,;"'<>]+)`;
-const quotedCredentials = new RegExp(String.raw`(["'])([^\r\n"']*${names})\1\s*:\s*${literal}`, 'gi');
-const assignedCredentials = new RegExp(String.raw`((?<![\w-])([\w-]*${names})\s*[=:]\s*)${literal}`, 'gi');
-const flagCredentials = new RegExp(String.raw`(--([\w-]*${names})\s+)${literal}`, 'gi');
-const headerNames = String.raw`(?:set-cookie|cookie|(?:proxy-)?authorization)["']?[ \t]*:[ \t]*`;
-const headerName = new RegExp(`^${headerNames}`, 'i');
-const credentialHeaders = new RegExp(String.raw`(${headerNames})[^\r\n]*(?:\r?\n[ \t]+[^\r\n]*)*`, 'gi');
+const names = '(?:api[ _-]?key|private[ _-]?key|access[_-]?key(?:[_-]?id)?|secret[_-]?key|token|password|passwd|passphrase|secret|cookie|authorization|bearer|credential)(?:s|[_-]?(?:value|hash|digest))?';
+const indicator = new RegExp(`${names}|(?:^|[\\s"'=])-[pP]`, 'i');
+const label = new RegExp(`^(?:[A-Za-z0-9_.-]*${names}|-[pP])$`, 'i');
+const flag = /^(?:--[\w-]+|-[pP])$/;
 function credential(key, value) {
+  if (typeof key !== 'string') return false;
   const counter = /tokens$/i.test(key) && (typeof value === 'number' || typeof value === 'string' && /^["']?-?\d+(?:\.\d+)?["']?$/.test(value));
-  return sensitive.test(key) && !counter;
+  return indicator.test(key) && !counter;
 }
 export function redact(value) {
-  if (Array.isArray(value)) return value.map((v, i) => {
-    const flag = value[i - 1];
-    return typeof flag === 'string' && /^--[\w-]+$/.test(flag) && credential(flag.slice(2), v) ? '[REDACTED]' : redact(v);
-  });
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, credential(k, v) ? '[REDACTED]' : redact(v)]));
+  if (Array.isArray(value)) {
+    if (value.length === 2 && typeof value[0] === 'string' && label.test(value[0]) && credential(value[0], value[1])) return [value[0], '[REDACTED]'];
+    return value.map((v, i) => {
+      if (flag.test(value[i - 1]) && credential(value[i - 1], v)) return '[REDACTED]';
+      if (typeof v === 'string' && flag.test(v)) return v;
+      return redact(v);
+    });
+  }
+  if (value && typeof value === 'object') {
+    const named = typeof value.name === 'string' && label.test(value.name) && credential(value.name, value.value);
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k,
+      credential(k, v) || named && k === 'value' ? '[REDACTED]' : named && k === 'name' ? v : redact(v),
+    ]));
+  }
   if (typeof value !== 'string') return value;
   if (/^[\[{]/.test(value.trim())) {
     try { return JSON.stringify(redact(JSON.parse(value))); } catch { /* Plain tool output can start with a brace. */ }
   }
-  return value
-    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
-    .replace(credentialHeaders, '$1[REDACTED]')
-    .replace(/\bBearer\s+[^\s"'\\,;]+/gi, 'Bearer [REDACTED]')
-    .replace(/(\bAuthorization["']?\s*:\s*["']?Basic\s+)[^\s"'\\,;]+/gi, '$1[REDACTED]')
-    .replace(quotedCredentials, (match, quote, key, value) => credential(key, value) ? `${quote}${key}${quote}: "[REDACTED]"` : match)
-    .replace(assignedCredentials, (match, prefix, key, value) => !headerName.test(prefix) && credential(key, value) ? `${prefix}[REDACTED]` : match)
-    .replace(flagCredentials, (match, prefix, key, value) => credential(key, value) ? `${prefix}[REDACTED]` : match)
+  const lines = value.split(/(\r\n|\n|\r)/);
+  let hidden = false, continued = false, privateKey = false;
+  for (let i = 0; i < lines.length; i += 2) {
+    const line = lines[i];
+    if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/i.test(line)) privateKey = true;
+    hidden = privateKey || indicator.test(line) || hidden && (continued || /^[ \t]+/.test(line));
+    continued = /\\[ \t]*$/.test(line);
+    if (hidden) lines[i] = '[REDACTED]';
+    if (/-----END [A-Z ]*PRIVATE KEY-----/i.test(line)) privateKey = false;
+  }
+  return lines.join('')
     .replace(/\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
 
     .replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^@\s]+@/gi, '$1[REDACTED]@');
@@ -143,10 +151,11 @@ export class Output {
   }
   async emit(record) {
     if (record.kind !== 'context' && (record.kind !== 'metadata' || record.discoverPr)) {
-      const key = record.sessionId || record.threadId || record.prUrl || this.source;
-      for (const match of JSON.stringify(record).matchAll(/https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)\b/g)) {
-        const url = `https://github.com/${match[1]}/${match[2]}/pull/${Number(match[3])}`;
-        const refs = this.index.prs[url] ||= [];
+      const key = redact(record.sessionId || record.threadId || record.prUrl || this.source);
+      for (const match of JSON.stringify(record).matchAll(/https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?=$|[/?#\s"'\\<>,;)\]}])/g)) {
+        const id = `${match[1]}/${match[2]}#${match[3].replace(/^0+(?=\d)/, '')}`;
+        if (redact(id) !== id) continue;
+        const refs = this.index.prs[id] ||= [];
         if (!refs.some(r => r.sessionId === key)) refs.push({ machine: this.opts.machine, sessionId: key });
       }
     }

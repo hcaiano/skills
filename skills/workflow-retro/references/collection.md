@@ -38,6 +38,11 @@ Archive the output locally before trashing the PC temporary directory.
 Each index contains byte counts, per-session activity and context counts, PR
 provenance, source availability, and `gapCounts`. `gaps` retains the first 200
 examples. Parts contain redacted JSONL envelopes and never exceed 50 MiB.
+The `prs` keys are normalized `owner/repo#number` identifiers. Discovery reads
+the original records before redaction and drops invalid or credential-bearing
+identifiers. Sensitive text lines and their shell or folded header continuations
+become `[REDACTED]`. Structured credential values are redacted in full, including
+headers represented as `{name, value}` objects or `[name, value]` pairs.
 Oversized records use ordered base64 fragments with `recordId`, `fragment`, and
 `total`. Concatenate decoded fragment bytes to recover the exact redacted JSON.
 An exit of 1 and `complete: false` mean partial evidence. A fatal startup error
@@ -66,7 +71,7 @@ output parts and fragments admitted records without dropping them.
 The PR collector accepts `--urls <comma-separated URLs>` for a targeted read.
 It uses the logged-in `gh` account. Reviews, review threads, nested comments,
 head checks, and statuses paginate independently. Failed PRs and partial input
-indexes remain gaps. Discovered URLs are references, not proof a session changed
+indexes remain gaps. Discovered PR identifiers are references, not proof a session changed
 those PRs. Verify ownership when judging them.
 
 Run maintained fixture tests with:

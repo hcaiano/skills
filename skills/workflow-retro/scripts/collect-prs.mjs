@@ -32,8 +32,9 @@ async function connection(fetch, emit, initialCursor) {
 await main('prs', false, async (opts, out) => {
   const urls = new Map();
   function add(value, provenance) {
-    const match = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(value);
-    if (!match) throw new Error('Invalid GitHub PR URL');
+    const match = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)#(\d+)$/.exec(value)
+      || /^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)(?:[/?#].*)?$/.exec(value);
+    if (!match) throw new Error('Invalid GitHub PR reference');
     const url = `https://github.com/${match[1].toLowerCase()}/${match[2].toLowerCase()}/pull/${Number(match[3])}`;
     const pr = urls.get(url) || { owner: match[1], repo: match[2], number: Number(match[3]), provenance: [] };
     for (const ref of provenance) if (!pr.provenance.some(r => JSON.stringify(r) === JSON.stringify(ref))) pr.provenance.push(ref);

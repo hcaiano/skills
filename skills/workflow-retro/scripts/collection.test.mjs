@@ -78,12 +78,13 @@ test('sensitive shell flags hide concatenated quotes and continued lines', async
     ['tool --password \\', 'FLAG_CONTINUED\\', 'FLAG_LAST', 'echo visible'].join('\n'),
     ['tool -p \\', 'FLAG_SHORT', 'echo visible'].join('\r\n'),
     'tool -pFLAG_ATTACHED',
-  ] }]);
+  ], pairOfCommands: ['tool --password FLAG_PAIR', 'echo visible'] }]);
   const { rows, out } = await run('collect-sessions.mjs', root);
   assert.deepEqual(rows[0].raw.commands, [
     '[REDACTED]', '[REDACTED]\n[REDACTED]\n[REDACTED]\necho visible',
     '[REDACTED]\r\n[REDACTED]\r\necho visible', '[REDACTED]',
   ]);
+  assert.deepEqual(rows[0].raw.pairOfCommands, ['[REDACTED]', 'echo visible']);
   assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('FLAG_'));
 });
 
@@ -460,9 +461,11 @@ test('gap samples stay bounded and an existing output cannot acquire stale parts
 
 test('large alphanumeric tool results finish without truncation or credential leakage', async t => {
   const root = await fixture(t);
-  await put(root, 'codex-home/sessions/ascii.jsonl', [{ timestamp: from, result: 'a'.repeat(512 * 1024), database: 'postgresql://user:dbpassword@database', customUrl: 'a+'.repeat(100) + 'custom://user:longpassword@host' }]);
+  await put(root, 'codex-home/sessions/ascii.jsonl', [{ timestamp: from, result: 'a'.repeat(512 * 1024), database: 'postgresql://user:dbpassword@database', customUrl: 'a+'.repeat(100) + 'custom://user:longpassword@host', serviceUrl: 'custom://user:opaquevalue@host', note: 'visible ghp_abcdefghijk text' }]);
   const { rows } = await run('collect-sessions.mjs', root);
   assert.equal(rows[0].raw.result, 'a'.repeat(512 * 1024));
-  assert.equal(rows[0].raw.database, 'postgresql://user:[REDACTED]@database');
-  assert.equal(rows[0].raw.customUrl, 'a+'.repeat(100) + 'custom://user:[REDACTED]@host');
+  assert.equal(rows[0].raw.database, '[REDACTED]');
+  assert.equal(rows[0].raw.customUrl, '[REDACTED]');
+  assert.equal(rows[0].raw.serviceUrl, 'custom://user:[REDACTED]@host');
+  assert.equal(rows[0].raw.note, 'visible [REDACTED] text');
 });
