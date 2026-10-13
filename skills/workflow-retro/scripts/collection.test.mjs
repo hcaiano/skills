@@ -35,6 +35,72 @@ async function run(script, root, more = [], expected = 0, nodeArgs = []) {
   return { out, index, rows, stdout };
 }
 
+test('PR index stores safe identifiers and drops credential-bearing URL segments', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/pr-index.jsonl', [{ timestamp: from, text: [
+    'https://github.com/ghp_INDEX_CREDENTIAL/repo/pull/8',
+    'https://github.com/owner/répo/pull/9',
+    'https://github.com/owner/repo/pull/10-invalid',
+    'https://github.com/Owner_1/Repo.name-2/pull/0011?token=INDEX_QUERY_CREDENTIAL',
+  ].join('\n') }]);
+  const { index, rows, out } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(index.prs, { 'Owner_1/Repo.name-2#11': [{ machine: 'fixture', sessionId: 'pr-index' }] });
+  const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
+  for (const secret of ['ghp_INDEX_CREDENTIAL', 'INDEX_QUERY_CREDENTIAL']) assert.ok(!emitted.includes(secret), secret);
+});
+
+test('structured header names redact their entire associated values', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/header-pairs.jsonl', [{ timestamp: from, headers: [
+    { name: 'cOoKiE', value: 'PAIR_COOKIE; second=PAIR_SECOND', extra: 'visible' },
+    { name: 'Authorization', value: ['PAIR_AUTH', { nested: 'PAIR_NESTED' }] },
+    ['Proxy-Authorization', 'PAIR_PROXY'],
+    ['Cookie', ['PAIR_ARRAY', 'PAIR_OTHER']],
+    { name: 'X-Public', value: 'visible' },
+    ['X-Public', 'visible'],
+  ] }]);
+  const { rows, out } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw.headers, [
+    { name: 'cOoKiE', value: '[REDACTED]', extra: 'visible' },
+    { name: 'Authorization', value: '[REDACTED]' },
+    ['Proxy-Authorization', '[REDACTED]'],
+    ['Cookie', '[REDACTED]'],
+    { name: 'X-Public', value: 'visible' },
+    ['X-Public', 'visible'],
+  ]);
+  assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('PAIR_'));
+});
+
+test('sensitive shell flags hide concatenated quotes and continued lines', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/shell-flags.jsonl', [{ timestamp: from, commands: [
+    `tool --password 'FLAG_FIRST'"FLAG_SECOND"; echo FLAG_TAIL`,
+    ['tool --password \\', 'FLAG_CONTINUED\\', 'FLAG_LAST', 'echo visible'].join('\n'),
+    ['tool -p \\', 'FLAG_SHORT', 'echo visible'].join('\r\n'),
+    'tool -pFLAG_ATTACHED',
+  ] }]);
+  const { rows, out } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw.commands, [
+    '[REDACTED]', '[REDACTED]\n[REDACTED]\n[REDACTED]\necho visible',
+    '[REDACTED]\r\n[REDACTED]\r\necho visible', '[REDACTED]',
+  ]);
+  assert.ok(!(JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8')).includes('FLAG_'));
+});
+
+test('whole sensitive lines are hidden while their PR references remain indexed', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/sensitive-line.jsonl', [{ timestamp: from,
+    text: 'visible before\nlog password LINE_CREDENTIAL; gh pr view https://github.com/owner/repo/pull/42\nvisible after',
+    indicators: ['passwd', 'secret', 'token', 'api-key', 'api_key', 'bearer', 'private key'].map(name => `before ${name} LINE_CREDENTIAL after`),
+    key: 'visible before\n-----BEGIN PRIVATE KEY-----\nLINE_KEY_BODY\n-----END PRIVATE KEY-----\nvisible after',
+  }]);
+  const { rows, index } = await run('collect-sessions.mjs', root);
+  assert.equal(rows[0].raw.text, 'visible before\n[REDACTED]\nvisible after');
+  assert.deepEqual(rows[0].raw.indicators, Array(7).fill('[REDACTED]'));
+  assert.equal(rows[0].raw.key, 'visible before\n[REDACTED]\n[REDACTED]\n[REDACTED]\nvisible after');
+  assert.deepEqual(index.prs, { 'owner/repo#42': [{ machine: 'fixture', sessionId: 'sensitive-line' }] });
+});
+
 test('provider CLI filters exact window, groups children, separates Grok context and Cursor probes', async t => {
   const root = await fixture(t);
   const path = await put(root, 'claude-home/projects/p/parent.jsonl', [
@@ -57,7 +123,7 @@ test('provider CLI filters exact window, groups children, separates Grok context
   assert.equal(rows.find(r => r.childSessionId)?.sessionId, 'parent');
   assert.equal(rows.find(r => r.raw.tool)?.raw.result.ok, true);
   assert.equal(index.sessions.g.context, 1);
-  assert.deepEqual(Object.keys(index.prs), ['https://github.com/a/b/pull/12']);
+  assert.deepEqual(Object.keys(index.prs), ['a/b#12']);
   assert.equal(index.sources.cursor.probes, 1);
   assert.equal(index.sessions['native-codex'].activity, 1);
 });
@@ -120,8 +186,8 @@ test('emitted records redact complete cookie and authorization headers', async t
   } }]);
   const { rows, index, out } = await run('collect-sessions.mjs', root);
   assert.deepEqual(rows[0].raw.input.headers, { Cookie: '[REDACTED]', 'Set-Cookie': '[REDACTED]', Authorization: '[REDACTED]', 'Proxy-Authorization': '[REDACTED]' });
-  assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'headers' }] });
-  assert.equal(rows[0].raw.input.raw, 'Cookie: [REDACTED]\r\nSet-Cookie: [REDACTED]\r\nAuthorization: [REDACTED]\r\nX-Public: visible');
+  assert.deepEqual(index.prs, { 'o/r#5': [{ machine: 'fixture', sessionId: 'headers' }] });
+  assert.equal(rows[0].raw.input.raw, '[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\nX-Public: visible');
   assert.deepEqual(JSON.parse(rows[0].raw.input.json), { Cookie: '[REDACTED]', public: 'visible' });
   const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
   for (const secret of ['FAKE_SESSION_TOKEN', 'FAKE_AUTH_TOKEN', 'FAKE_SET_TOKEN', 'FAKE_SET_AUTH', 'FAKE_USER', 'FAKE_NONCE', 'FAKE_RESPONSE', 'FAKE_PROXY_TOKEN']) assert.ok(!emitted.includes(secret), secret);
@@ -133,35 +199,35 @@ test('folded headers redact every continuation through emitted records', async t
   const headers = `Cookie: a=1; ${url}\r\n session=FOLDED_COOKIE;\r\n\tauth=FOLDED_AUTH\r\nAuthorization: Digest\r\n nonce=FOLDED_NONCE\r\n\tresponse=FOLDED_RESPONSE\r\nSet-Cookie: a=1;\n session=FOLDED_SET\nProxy-Authorization: Basic\n\tFOLDED_PROXY\nX-Public: visible`;
   await put(root, 'codex-home/sessions/folded.jsonl', [{ timestamp: from, result: headers }]);
   const { rows, index, out } = await run('collect-sessions.mjs', root);
-  assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'folded' }] });
+  assert.deepEqual(index.prs, { 'o/r#6': [{ machine: 'fixture', sessionId: 'folded' }] });
   const emitted = JSON.stringify(rows) + await readFile(join(out, 'index.json'), 'utf8');
   for (const secret of ['FOLDED_COOKIE', 'FOLDED_AUTH', 'FOLDED_NONCE', 'FOLDED_RESPONSE', 'FOLDED_SET', 'FOLDED_PROXY']) assert.ok(!emitted.includes(secret), secret);
-  assert.equal(rows[0].raw.result, 'Cookie: [REDACTED]\r\nAuthorization: [REDACTED]\r\nSet-Cookie: [REDACTED]\nProxy-Authorization: [REDACTED]\nX-Public: visible');
+  assert.equal(rows[0].raw.result, '[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\r\n[REDACTED]\n[REDACTED]\n[REDACTED]\n[REDACTED]\nX-Public: visible');
 });
 
 test('header redaction consumes the line while PR discovery uses the original record', async t => {
   const url = 'https://github.com/o/r/pull/7';
   const cases = [
-    ['concatenated quoted segments', `curl -H 'Cookie: a=1'"; s=INLINE_COOKIE" ${url}`, "curl -H 'Cookie: [REDACTED]"],
-    ['ANSI-C quoted header', `curl -H $'Cookie: a=1; s=INLINE_COOKIE' ${url}`, "curl -H $'Cookie: [REDACTED]"],
-    ['double quotes', `curl -H "aUtHoRiZaTiOn: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`, 'curl -H "aUtHoRiZaTiOn: [REDACTED]'],
-    ['single quotes', `curl -H 'Cookie: a=1; s=INLINE_COOKIE' ${url} --fail`, "curl -H 'Cookie: [REDACTED]"],
-    ['long flag with equals', `curl --header="Authorization: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`, 'curl --header="Authorization: [REDACTED]'],
-    ['attached short flag', `curl -HCookie:INLINE_SHORT ${url}`, 'curl -HCookie:[REDACTED]'],
-    ['bare short flag', `curl -H Cookie:INLINE_BARE ${url}`, 'curl -H Cookie:[REDACTED]'],
-    ['bare long flag', `curl --header Cookie:INLINE_LONG ${url}`, 'curl --header Cookie:[REDACTED]'],
-    ['semicolon', `curl -H Cookie:INLINE_DELIMITED; gh pr view ${url}`, 'curl -H Cookie:[REDACTED]'],
-    ['shell operator', `curl --header Cookie:INLINE_OPERATOR&&gh pr view ${url}`, 'curl --header Cookie:[REDACTED]'],
-    ['header without a flag', `proxy-authorization: Basic INLINE_PROXY ${url}`, 'proxy-authorization: [REDACTED]'],
-    ['embedded JSON string', `curl -d '{"Cookie":"INLINE_JSON", "url":"${url}"}'`, `curl -d '{"Cookie": "[REDACTED]"`],
+    ['concatenated quoted segments', `curl -H 'Cookie: a=1'"; s=INLINE_COOKIE" ${url}`],
+    ['ANSI-C quoted header', `curl -H $'Cookie: a=1; s=INLINE_COOKIE' ${url}`],
+    ['double quotes', `curl -H "aUtHoRiZaTiOn: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`],
+    ['single quotes', `curl -H 'Cookie: a=1; s=INLINE_COOKIE' ${url} --fail`],
+    ['long flag with equals', `curl --header="Authorization: Digest nonce=INLINE_AUTH; response=INLINE_RESPONSE" ${url}`],
+    ['attached short flag', `curl -HCookie:INLINE_SHORT ${url}`],
+    ['bare short flag', `curl -H Cookie:INLINE_BARE ${url}`],
+    ['bare long flag', `curl --header Cookie:INLINE_LONG ${url}`],
+    ['semicolon', `curl -H Cookie:INLINE_DELIMITED; gh pr view ${url}`],
+    ['shell operator', `curl --header Cookie:INLINE_OPERATOR&&gh pr view ${url}`],
+    ['header without a flag', `proxy-authorization: Basic INLINE_PROXY ${url}`],
+    ['embedded JSON string', `curl -d '{"Cookie":"INLINE_JSON", "url":"${url}"}'`],
   ];
-  for (const [name, command, expected] of cases) await t.test(name, async t => {
+  for (const [name, command] of cases) await t.test(name, async t => {
     const root = await fixture(t);
     await put(root, 'codex-home/sessions/inline.jsonl', [{ timestamp: from, command }]);
     const { rows, index, out } = await run('collect-sessions.mjs', root);
     for (const part of index.parts) assert.ok(!(await readFile(join(out, part.file), 'utf8')).includes('INLINE_'));
-    assert.deepEqual(index.prs, { [url]: [{ machine: 'fixture', sessionId: 'inline' }] });
-    assert.equal(rows[0].raw.command, expected);
+    assert.deepEqual(index.prs, { 'o/r#7': [{ machine: 'fixture', sessionId: 'inline' }] });
+    assert.equal(rows[0].raw.command, '[REDACTED]');
     assert.ok(!(await readFile(join(out, 'index.json'), 'utf8')).includes('INLINE_'));
   });
 });
@@ -333,7 +399,7 @@ console.log(JSON.stringify(result));
 `;
   await writeFile(join(bin, 'gh'), mock, { mode: 0o700 });
   const input = join(root, 'input.json');
-  await writeFile(input, JSON.stringify({ version: 1, complete: true, prs: { 'https://github.com/a/b/pull/12': [{ machine: 'pc', sessionId: 's' }, { machine: 'mbp', sessionId: 's2' }] } }));
+  await writeFile(input, JSON.stringify({ version: 1, complete: true, prs: { 'a/b#12': [{ machine: 'pc', sessionId: 's' }, { machine: 'mbp', sessionId: 's2' }] } }));
   const env = { ...process.env, PATH: bin + ':' + process.env.PATH, GH_TRACE: join(root, 'trace') };
   const out = join(root, 'prs');
   await exec(process.execPath, [join(scripts, 'collect-prs.mjs'), '--out', out, '--machine', 'fixture', '--indexes', input, '--urls', 'https://github.com/A/B/pull/12'], { env });
