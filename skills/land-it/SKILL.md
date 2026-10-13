@@ -42,13 +42,18 @@ protection to GitHub; a rule it cannot satisfy becomes a hold.
   Run the repo's post-merge steps, such as reinstalling skills per its README.
 - `update-branch`, `wait`, or `acted: queued`: arm `watch_pull_request`, end
   the turn, and run the gate again on the wake.
-- `hold` because the code or base changed since the review, the grade was
-  `skip`, or the receipt is missing or in an older shape: run `review-it`'s
-  final review once on the current head, carry its receipt into the body with
-  `write-pr`, and run the gate again. The receipt states what that review
-  found; a second such hold makes the PR the user's.
-- `hold` because the code could not be compared: fix the checkout (fetch
-  access, the PR's repository) and run the gate again.
+- `hold` because the code or base changed since the review, or findings are
+  `open` only because their fixes were never confirmed: run `review-it`'s
+  confirmation review on what changed since the reviewed head, carry its
+  receipt into the body with `write-pr`, and run the gate again. When three
+  confirmations still leave findings or unconfirmed fixes, the PR is the
+  user's.
+- `hold` because the grade was `skip` or the receipt is missing or in an
+  older shape: run `review-it` on the whole PR graded at least `single`,
+  and run the gate again.
+- `hold` because the PR could not be read or the code could not be compared:
+  fix the access or checkout (GitHub login, fetch access, the PR's
+  repository) and run the gate again.
 - `hold` for anything else: the PR is the user's. Report it in step 5.
 - `done` with `PR is merged`: go to step 4 if its after-merge test has not run.
 - `done` with `PR was closed without merging`: report it in step 5.

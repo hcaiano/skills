@@ -18,7 +18,7 @@ model families that wrote the change, delegated workers included.
 - `skip`: only docs, comments or copy; no code that runs and no agent
   instructions.
 - `single`: any other change bounded to one subsystem.
-- `dual`: security, auth, permissions, payments, migrations, destructive data,
+- `panel`: security, auth, permissions, payments, migrations, destructive data,
   infrastructure, concurrency, public contracts, cross-subsystem changes,
   ambiguous requirements, or unbounded impact.
 
@@ -36,13 +36,19 @@ carries the absolute path of the [review brief](references/review-brief.md), the
 worktree, the pinned range, the intent and acceptance criteria, and the paths of
 any spec, issue and repo instruction files.
 
-`dual`: run `interrogate` on the pinned range with the same intent; its Act On
-findings are the findings.
+`panel`: run `interrogate` on the pinned range with the same intent; its Act On
+findings are the findings. Add one seat from the `high-risk extra reviewer`
+line only for a one-way door, or a change to security, auth, payments or
+stored data.
 
-Staff every reviewer, `dual` seats and the final review included, through
+Effort follows the grade: `panel` seats run at `xhigh`; `single` reviewers and
+confirmation reviews run at `high`.
+
+Staff every reviewer, `panel` seats and the confirmation review included, through
 `delegate_task` in runtime mode `full-access` with the read-only brief: a
 headless run has nobody to approve it. Every seat comes from the `interrogate
-reviewers` line: those are the strongest models the user pays for. Authorship
+reviewers` line, except the high-risk extra seat from its own line: those are
+the strongest models the user pays for. Authorship
 only orders the two lead models, so a reviewer from the author's family is a
 normal review. When every model on the line is out of capacity, report a
 blocker. Where `delegate_task` is unavailable, as in a subagent
@@ -51,8 +57,8 @@ blocker. Where `delegate_task` is unavailable, as in a subagent
 A review counts once it returns a substantive verdict on the pinned HEAD; restaff
 refusals, quota errors and empty results. Watch every seat for a _stalled_ run as
 `~/.agents/skills/poteto-mode/references/t3-execution.md` describes: a stalled
-seat's final verdict counts as its review. A material finding or a `dual` risk
-promotes `single` to `dual`.
+seat's final verdict counts as its review. A material finding or a `panel` risk
+promotes `single` to `panel`.
 
 ## 4. Fix
 
@@ -61,11 +67,14 @@ structural simplifications included, in one batch. Out-of-scope ideas become
 follow-ups. New contracts, architecture changes or fixes that roughly double
 the diff go to the user. Rerun the affected checks and commit.
 
-When the fixes change behavior, scope, security or architecture, run one final
-review: a new reviewer on the new HEAD with the prior findings, chosen like
-`single` with the authors of the fixes in place of the change's authors. Apply,
-check and commit its valid findings; anything needing another such change goes
-to the user.
+When fixes landed, run a confirmation review at `high`: a new reviewer,
+chosen like `single` with the authors of the fixes in place of the change's
+authors, reads only the fix range (the last reviewed head to the new HEAD)
+with the prior findings. Apply, check and commit its valid findings, then
+confirm that new fix range the same way. Stop when a confirmation finds
+nothing. After three confirmations, or for a finding that needs a new design,
+the remaining findings count as `open` and go to the user. A PR gets one full
+review; confirmations only read fixes.
 
 ## 5. Receipt
 
@@ -75,4 +84,4 @@ the reviewers raised and the authors declined; `open` counts findings handed
 to the user, blockers and seats that never returned a verdict; `reviewed`
 names the head and base branch the last round saw:
 
-`**Review.** <skip | single | dual> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <short SHA> on <base branch>`
+`**Review.** <skip | single | panel> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <short SHA> on <base branch>`

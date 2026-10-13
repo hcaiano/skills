@@ -38,7 +38,7 @@ test("a reviewed, green, two-way PR merges", () => {
 
 test("risk, disagreement, foreign authorship and open review state each hold the PR", () => {
   const risky = facts({
-    body: body("dual by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 2 rejected, 1 open; reviewed 0123456 on fix/below").replace("two-way", "one-way"),
+    body: body("panel by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 2 rejected, 1 open; reviewed 0123456 on fix/below").replace("two-way", "one-way"),
     isDraft: true, labels: [{ name: "do-not-merge" }, { name: "stakeholder-review" }], mergeable: "CONFLICTING",
     author: { login: "someone" }, isCrossRepository: true, baseRefName: "feature/epic", reviewDecision: "CHANGES_REQUESTED",
     statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "FAILURE" }],
@@ -52,7 +52,7 @@ test("risk, disagreement, foreign authorship and open review state each hold the
       "draft",
       "hold label: do-not-merge",
       "Door: one-way",
-      "review-it graded dual",
+      "review-it graded panel",
       "2 rejected review finding(s): reviewers did not all agree",
       "1 review finding(s) or blocker(s) left open",
       "reviewed on fix/below, but the base is now feature/epic",

@@ -121,7 +121,7 @@ under Install.
   environment; unverified account mappings and missing usage remain unknown.
 - `review-it` requires the T3 Code orchestration MCP, `t3-capacity`, and
   pstack's `poteto-mode` and `interrogate` (for `references/t3-execution.md`,
-  the `interrogate reviewers` line in `pstack-models.md`, and the `dual`
+  the `interrogate reviewers` line in `pstack-models.md`, and the `panel`
   panel).
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `delegate_task` to a Codex instance anywhere else.
