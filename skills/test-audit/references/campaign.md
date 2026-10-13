@@ -133,7 +133,7 @@ When the default branch changed a file the campaign deleted, keep the deletion,
 port the new contract into its keeper, and confirm every new regression test
 there still has a home. Rerun the whole subsystem suite on the merged head.
 
-Run `review-it` at grade `dual` on the subsystem diff. Its intent carries the
+Run `review-it` at grade `panel` on the subsystem diff. Its intent carries the
 step-6 preservation review: each retired contract, the keeper that now proves it, and
 the gaps restored with their mutations. Once the user authorizes delivery, open
 the subsystem PR through poteto-mode's Opening a PR playbook. The PR carries

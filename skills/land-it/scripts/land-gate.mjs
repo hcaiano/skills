@@ -33,7 +33,7 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|dual)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`;,]+?)`?\.?(?=\s|$)/i;
+const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|panel)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`;,]+?)`?\.?(?=\s|$)/i;
 
 // The last `**Review.**` line is the receipt; a last line in any other shape
 // is no receipt, so an older approval above it never counts.
@@ -78,7 +78,7 @@ export const decide = (facts) => {
   const { receipt } = facts;
   if (!receipt) holds.push('no review-it receipt in the PR body');
   else {
-    if (receipt.grade === 'dual') holds.push('review-it graded dual');
+    if (receipt.grade === 'panel') holds.push('review-it graded panel');
     if (receipt.grade === 'skip') holds.push('graded skip: no reviewer saw the change');
     if (receipt.rejected > 0) holds.push(`${receipt.rejected} rejected review finding(s): reviewers did not all agree`);
     if (receipt.open > 0) holds.push(`${receipt.open} review finding(s) or blocker(s) left open`);
@@ -196,7 +196,13 @@ const main = () => {
     console.error('usage: land-gate.mjs <pr-url|number> [--merge]');
     process.exit(2);
   }
-  const gathered = gather(target[0]);
+  let gathered;
+  try {
+    gathered = gather(target[0]);
+  } catch (error) {
+    console.log(JSON.stringify({ pr: target[0], head: null, action: 'hold', reasons: [`could not read the PR: ${firstLine(error)}`], acted: null }, null, 2));
+    return;
+  }
   let decision = decide(gathered.facts);
   let acted = null;
   if (args.includes('--merge') && ['merge', 'update-branch'].includes(decision.action)) ({ decision, acted } = act(gathered, decision));

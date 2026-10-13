@@ -44,11 +44,12 @@ protection to GitHub; a rule it cannot satisfy becomes a hold.
   the turn, and run the gate again on the wake.
 - `hold` because the code or base changed since the review, the grade was
   `skip`, or the receipt is missing or in an older shape: run `review-it`'s
-  final review once on the current head, carry its receipt into the body with
-  `write-pr`, and run the gate again. The receipt states what that review
+  confirmation review once on what changed since the review, carry its
+  receipt into the body with `write-pr`, and run the gate again. The receipt states what that review
   found; a second such hold makes the PR the user's.
-- `hold` because the code could not be compared: fix the checkout (fetch
-  access, the PR's repository) and run the gate again.
+- `hold` because the PR could not be read or the code could not be compared:
+  fix the access or checkout (GitHub login, fetch access, the PR's
+  repository) and run the gate again.
 - `hold` for anything else: the PR is the user's. Report it in step 5.
 - `done` with `PR is merged`: go to step 4 if its after-merge test has not run.
 - `done` with `PR was closed without merging`: report it in step 5.
