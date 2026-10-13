@@ -6,8 +6,9 @@
 //   elapsed_hours    how much of the 168 h window has already passed
 //   resets_in_hours  hours until the window resets
 //   days_left        resets_in_hours / 24
-//   burn_per_day     points/day spent so far (null before 12 h elapsed — a rate
-//                    measured over a few hours is noise, not a trend)
+//   burn_per_day     points/day spent so far, measured over at least 12 h so a
+//                    few busy hours early in the window read as a floor, not
+//                    a 300%/day spike
 //   budget_per_day   points/day still affordable: (100 - used) / days_left
 //   pace             burn_per_day / budget_per_day; >1 = spending faster than
 //                    the rest of the window can fund, <1 = headroom to spare
@@ -46,7 +47,9 @@ import { codexRead, listCodexHomes } from './codex-rpc.mjs';
 const WEEK_MINUTES = 10080;
 const WEEK_HOURS = WEEK_MINUTES / 60;
 // A rate extrapolated from a sliver of the window swings wildly (one busy
-// evening reads as 300%/day), so pace stays null until half a day has elapsed.
+// evening reads as 300%/day), so burn is spread over at least half a day. That
+// still flags a pool spending a day's budget in its first hours, which a null
+// pace used to hide until the pool was already hot.
 const MIN_ELAPSED_HOURS = 12;
 // Mirror image at the other end: with hours left, dividing the remaining
 // percent by a sliver of a day yields a huge budget and a near-zero pace,
@@ -155,7 +158,7 @@ export const pace = (usedPercent, hoursLeft, windowHours = WEEK_HOURS) => {
   const left = hoursLeft;
   const elapsed = Math.max(windowHours - left, 0);
   const daysLeft = left / 24;
-  const burn = elapsed >= MIN_ELAPSED_HOURS ? used / (elapsed / 24) : null;
+  const burn = used / (Math.max(elapsed, MIN_ELAPSED_HOURS) / 24);
   const budget = left >= MIN_LEFT_HOURS ? (100 - used) / daysLeft : null;
   return {
     used_percent: used,
@@ -603,15 +606,17 @@ const main = async () => {
     else [claude, claudeNote, claudeSource] = [read.pool, read.note ?? null, read.note ? 'oauth/usage, cached' : 'oauth/usage'];
   }
   // One state per pool, so a caller acts on `states` instead of re-deriving the
-  // thresholds. Codex takes the default identity's state, which already keeps a
-  // failed live read from reporting a snapshot as current headroom. Cursor's
+  // thresholds. Codex takes its best identity's state: work can go to whichever
+  // account has room, and each identity's state already keeps a failed live
+  // read from reporting a snapshot as current headroom. Cursor's
   // monthly pools share the snapshot age of the one /usage read.
   const cursorPool = (pool) => (pool ? { ...pool, stale_minutes: cursor.stale_minutes } : null);
   const claudeState = claudeError && !['protected', 'unavailable'].includes(poolState(claude))
     ? 'unknown' : poolState(claude);
   const states = {
     claude: claudeState,
-    codex: codexIdentities.default?.state ?? poolState(null),
+    codex: ['available', 'protected', 'unknown', 'unavailable']
+      .find((state) => Object.values(codexIdentities).some((entry) => entry.state === state)) ?? poolState(null),
     cursor_models: poolState(cursorPool(cursor?.cursor_models)),
     other_models: poolState(cursorPool(cursor?.other_models)),
   };
