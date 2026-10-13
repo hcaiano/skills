@@ -66,11 +66,12 @@ structural simplifications included, in one batch. Out-of-scope ideas become
 follow-ups. New contracts, architecture changes or fixes that roughly double
 the diff go to the user. Rerun the affected checks and commit.
 
-When the fixes change behavior, scope, security or architecture, run one final
-review: a new reviewer on the new HEAD with the prior findings, chosen like
-`single` with the authors of the fixes in place of the change's authors. Apply,
-check and commit its valid findings; anything needing another such change goes
-to the user.
+When fixes landed, run one confirmation review at `high`: a new reviewer,
+chosen like `single` with the authors of the fixes in place of the change's
+authors, reads only the fix range (the reviewed head to the new HEAD) with the
+prior findings. Apply, check and commit its valid findings that need no new
+design; anything else counts as `open` in the receipt and goes to the user. A
+PR gets these two rounds and no more.
 
 ## 5. Receipt
 
