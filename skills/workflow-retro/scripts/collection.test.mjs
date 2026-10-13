@@ -23,15 +23,16 @@ async function put(root, path, value) {
 async function run(script, root, more = [], expected = 0, nodeArgs = []) {
   const out = join(root, `out-${Math.random().toString(16).slice(2)}`);
   const args = [...nodeArgs, join(scripts, script), '--out', out, '--home', root, '--machine', 'fixture', '--from', from, '--to', to, ...more];
-  try { await exec(process.execPath, args, { timeout: 15000 }); assert.equal(expected, 0); }
-  catch (e) { assert.equal(e.code, expected, e.stderr || e.message); }
+  let stdout;
+  try { ({ stdout } = await exec(process.execPath, args, { timeout: 15000 })); assert.equal(expected, 0); }
+  catch (e) { stdout = e.stdout; assert.equal(e.code, expected, e.stderr || e.message); }
   const index = JSON.parse(await readFile(join(out, 'index.json'), 'utf8'));
   const rows = [];
   for (const part of index.parts) {
     assert.equal((await stat(join(out, part.file))).size, part.bytes);
     for (const line of (await readFile(join(out, part.file), 'utf8')).trim().split('\n')) if (line) rows.push(JSON.parse(line));
   }
-  return { out, index, rows };
+  return { out, index, rows, stdout };
 }
 
 test('provider CLI filters exact window, groups children, separates Grok context and Cursor probes', async t => {
@@ -63,11 +64,18 @@ test('provider CLI filters exact window, groups children, separates Grok context
 
 test('redaction precedes bounded UTF-8 fragmentation and restores structured tools', async t => {
   const root = await fixture(t);
-  const secrets = ['shortpw', 'shorttoken', 'sk-proj-abcdefghijk', 'ghp_abcdefghijkl', 'keycontents', 'urlpass', 'jsonpassword', 'clipassword', 'YmFzaWMtc2VjcmV0', 'client-secret-value', 'dbpassword'];
+  const secrets = ['shortpw', 'shorttoken', 'sk-proj-abcdefghijk', 'ghp_abcdefghijkl', 'keycontents', 'urlpass', 'jsonpassword', 'clipassword', 'YmFzaWMtc2VjcmV0', 'client-secret-value', 'dbpassword', 'opaque-key-value', 'cookie-secret-value', 'xai-' + 'fixture'.repeat(8)];
   await put(root, 'codex-home/sessions/s.jsonl', [{ timestamp: from, tool: 'shell', input: {
-    password: secrets[0], clientSecret: 'client-secret-value', input_tokens: 123, nested: { access_token: secrets[1] },
+    password: secrets[0], secretValue: 'opaque-key-value', providerApiKey: 'opaque-key-value', awsSecretAccessKey: 'opaque-key-value', clientSecret: 'client-secret-value', input_tokens: 123, nested: { access_token: secrets[1] },
     arguments: JSON.stringify({ private_key: '-----BEGIN PRIVATE KEY-----\nkeycontents\n-----END PRIVATE KEY-----', cmd: 'PASSWORD="shortpw"' }),
     db: 'postgresql://user:dbpassword@database',
+    providerText: 'key ' + secrets.at(-1),
+    providerModel: 'xai-grok-4-fast',
+    argv: ['curl', '--password', 'clipassword', '--max_tokens', '4096'],
+    labels: 'awsSecretAccessKey=opaque-key-value',
+    query: 'https://example.com?token=shorttoken&public=true',
+    cookie: 'cookie-secret-value',
+    inline: `curl -d '{"client_secret":"client-secret-value","providerApiKey":"opaque-key-value"}'`,
     ordinary: 'basic checks pass',
     embedded: `curl -d '{"password":"jsonpassword"}' --password clipassword -H 'Authorization: Basic YmFzaWMtc2VjcmV0'`,
     cmd: `curl -H 'Authorization: Bearer shorttoken' https://user:urlpass@example.com ${secrets[2]} ${secrets[3]}`,
@@ -80,6 +88,8 @@ test('redaction precedes bounded UTF-8 fragmentation and restores structured too
   assert.equal(restored.raw.input.password, '[REDACTED]');
   assert.equal(restored.raw.input.input_tokens, 123);
   assert.equal(restored.raw.input.ordinary, 'basic checks pass');
+  assert.equal(restored.raw.input.providerModel, 'xai-grok-4-fast');
+  assert.deepEqual(restored.raw.input.argv, ['curl', '--password', '[REDACTED]', '--max_tokens', '4096']);
   const text = JSON.stringify(restored) + await readFile(join(out, 'index.json'), 'utf8');
   for (const secret of secrets) assert.ok(!text.includes(secret), secret);
   assert.equal(new Set(rows.map(r => r.recordId)).size, 1);
@@ -227,7 +237,8 @@ test('gap samples stay bounded and an existing output cannot acquire stale parts
   const root = await fixture(t);
   await writeFile(join(root, '.t3/codex-home/sessions/missing.jsonl'), '{"timestamp":{}}\n'.repeat(501));
   await put(root, 'claude-home/projects/p/prototype.jsonl', [{ sessionId: '__proto__', timestamp: from, text: 'selected' }]);
-  const { index, out } = await run('collect-sessions.mjs', root, [], 1);
+  const { index, out, stdout } = await run('collect-sessions.mjs', root, [], 1);
+  assert.equal(JSON.parse(stdout).gaps, 501);
   assert.equal(index.sessions.__proto__.activity, 1);
   assert.equal(index.gaps.length, 200);
   assert.equal(index.gapCounts['missing-timestamp'], 501);

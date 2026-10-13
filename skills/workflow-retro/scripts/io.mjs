@@ -28,10 +28,22 @@ export function options(window = true) {
   return opts;
 }
 export const inside = (value, opts) => instant(value) >= opts.start && instant(value) < opts.end;
-const sensitive = /^(?:.*[_-])?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|passwd|(?:client|webhook|signing)?[_-]?secret|authorization|private[_-]?key|credential)s?$/i;
+const names = '(?:api[ _-]?key|private[ _-]?key|access[_-]?key(?:[_-]?id)?|secret[_-]?key|token|password|passwd|passphrase|secret|cookie|authorization|credential)(?:s|[_-]?(?:value|hash|digest))?';
+const sensitive = new RegExp(`${names}$`, 'i');
+const literal = String.raw`("(?:\\.|[^"\\])*"|'[^']*'|[^\s,;"'<>]+)`;
+const quotedCredentials = new RegExp(String.raw`(["'])([^\r\n"']*${names})\1\s*:\s*${literal}`, 'gi');
+const assignedCredentials = new RegExp(String.raw`((?<![\w-])([\w-]*${names})\s*[=:]\s*)${literal}`, 'gi');
+const flagCredentials = new RegExp(String.raw`(--([\w-]*${names})\s+)${literal}`, 'gi');
+function credential(key, value) {
+  const counter = /tokens$/i.test(key) && (typeof value === 'number' || typeof value === 'string' && /^["']?-?\d+(?:\.\d+)?["']?$/.test(value));
+  return sensitive.test(key) && !counter;
+}
 export function redact(value) {
-  if (Array.isArray(value)) return value.map(redact);
-  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, sensitive.test(k) && !(typeof v === 'number' && /tokens$/i.test(k)) ? '[REDACTED]' : redact(v)]));
+  if (Array.isArray(value)) return value.map((v, i) => {
+    const flag = value[i - 1];
+    return typeof flag === 'string' && /^--[\w-]+$/.test(flag) && credential(flag.slice(2), v) ? '[REDACTED]' : redact(v);
+  });
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, credential(k, v) ? '[REDACTED]' : redact(v)]));
   if (typeof value !== 'string') return value;
   if (/^[\[{]/.test(value.trim())) {
     try { return JSON.stringify(redact(JSON.parse(value))); } catch { /* Plain tool output can start with a brace. */ }
@@ -40,10 +52,11 @@ export function redact(value) {
     .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, '[REDACTED]')
     .replace(/\bBearer\s+[^\s"'\\,;]+/gi, 'Bearer [REDACTED]')
     .replace(/(\bAuthorization["']?\s*:\s*["']?Basic\s+)[^\s"'\\,;]+/gi, '$1[REDACTED]')
-    .replace(/(["'](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|password|passwd|secret|credential)["']\s*:\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s,;}]+)/gi, '$1"[REDACTED]"')
-    .replace(/(--(?:api-key|token|password|secret)(?:=|\s+))(?:"[^"]*"|'[^']*'|[^\s]+)/gi, '$1[REDACTED]')
-    .replace(/\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
-    .replace(/(\b(?:[\w-]*[_-])?(?:api[_-]?key|token|password|passwd|secret|credential)s?\b\s*[=:]\s*)(?:"(?:\\.|[^"\\])*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
+    .replace(quotedCredentials, (match, quote, key, value) => credential(key, value) ? `${quote}${key}${quote}: "[REDACTED]"` : match)
+    .replace(assignedCredentials, (match, prefix, key, value) => credential(key, value) ? `${prefix}[REDACTED]` : match)
+    .replace(flagCredentials, (match, prefix, key, value) => credential(key, value) ? `${prefix}[REDACTED]` : match)
+    .replace(/\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/g, '[REDACTED]')
+
     .replace(/(?<![a-z0-9+.-])([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^@\s]+@/gi, '$1[REDACTED]@');
 }
 export async function* files(root, receipt) {
@@ -126,9 +139,10 @@ export class Output {
   }
   async finish() {
     if (this.handle) { await this.handle.close(); this.handle = null; }
-    this.index.complete = this.index.gaps.length === 0;
+    const gaps = Object.values(this.index.gapCounts).reduce((sum, count) => sum + count, 0);
+    this.index.complete = gaps === 0;
     await writeFile(join(this.opts.out, 'index.json'), JSON.stringify(redact(this.index), null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-    console.log(JSON.stringify({ out: this.opts.out, records: this.index.records, sessions: Object.keys(this.index.sessions).length, gaps: this.index.gaps.length, complete: this.index.complete }));
+    console.log(JSON.stringify({ out: this.opts.out, records: this.index.records, sessions: Object.keys(this.index.sessions).length, gaps, complete: this.index.complete }));
     if (!this.index.complete) process.exitCode = 1;
   }
 }
