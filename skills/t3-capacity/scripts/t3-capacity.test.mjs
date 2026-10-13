@@ -310,3 +310,39 @@ test("a recorded mapping maps every run, and the choice takes the first tier wit
   const cursor = await run(["--candidate", "cursor/grok-4.7,cursor/composer-2.5,cursor/claude-opus-5-5"], env);
   assert.deepEqual(cursor.candidates.map(({ pool }) => pool), ["cursor_models", "cursor_models", "other_models"]);
 });
+
+test("role CLI reads the default models file and mapping, and returns complete delegate targets", async () => {
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-role-"));
+  login(join(home, ".codex-profiles", "second", "auth.json"));
+  const settings = settingsFile(home, { second: { driver: "codex", config: { binaryPath: "codex",
+    homePath: join(home, ".codex-profiles", "second") } } });
+  mkdirSync(join(home, ".agents"), { recursive: true });
+  writeFileSync(join(home, ".agents", "t3-capacity.json"), JSON.stringify({ settings }));
+  const models = "# effort high: feature, refactoring\nfeature, refactoring: capacity[sol], capacity[missing]\n";
+  writeFileSync(join(home, ".agents", "pstack-models.md"), models);
+  const capabilities = join(home, "capabilities.json");
+  writeFileSync(capabilities, JSON.stringify({ providers: [{ providerInstanceId: "second", driverKind: "codex",
+    models: [{ id: "sol", options: [{ id: "reasoningEffort", options: [{ id: "medium" }, { id: "high" }] }] }] }] }));
+  const args = ["--role", "refactoring", "--capabilities", capabilities];
+  const env = { HOME: home, CODEX_BIN: fakeCodex(home) };
+  const output = await run(args, env);
+  assert.equal(output.role, "refactoring");
+  assert.deepEqual(output.seats[0].target, { providerInstanceId: "second", model: "sol",
+    options: [{ id: "reasoningEffort", value: "high" }] });
+  assert.equal(output.seats[1].choice, null);
+  assert.equal(output.seats[1].target, null);
+  assert.deepEqual(output.seats[1].rejected, [{ model: "missing", reason: "model missing from catalog" }]);
+
+  const alternate = join(home, "alternate.md");
+  writeFileSync(alternate, "# effort medium: refactoring\nrefactoring: capacity[sol]\n");
+  const overridden = await run([...args, "--models", alternate], env);
+  assert.deepEqual(overridden.seats[0].target.options, [{ id: "reasoningEffort", value: "medium" }]);
+  const unknown = await run(["--role", "unknown", "--capabilities", capabilities], env);
+  assert.equal(unknown.seats[0].target, null);
+  assert.equal(unknown.seats[0].reason, "unknown role unknown");
+
+  const invalid = spawnSync(process.execPath, [script, ...args, "--candidate", "second/sol"],
+    { encoding: "utf8", env: testEnv(env) });
+  assert.equal(invalid.status, 2);
+  assert.match(invalid.stderr, /cannot be combined/u);
+});

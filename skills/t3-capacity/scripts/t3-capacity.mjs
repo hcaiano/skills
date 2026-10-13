@@ -11,6 +11,8 @@
 //   candidates with --candidate: each <instance>/<model> with the pool it
 //              bills and that pool's state, pace and use
 //   choice     the candidate to delegate to, or null when none can take work
+//   seats      with --role: each seat's capacity choice and complete target,
+//              or a null target with its reason
 //
 // Each --candidate flag is one preference tier of comma-separated
 // <instance>/<model> entries. Preference order comes first: the choice is
@@ -48,16 +50,27 @@
 // Nothing here prints a credential or runs a launcher; the only files written
 // are usage-state's cache of its last good live readings and its record of
 // live read attempts, shared with the Grok read here.
+// --role <name> --capabilities <saved JSON> resolves one target per capacity[...]
+// entry in --models <pstack-models.md>, default ~/.agents/pstack-models.md.
+// Commas separate seats, > orders tiers, and | joins equal models in a tier.
+// Role aliases are comma-separated before the colon. Effort comments use
+// # effort high: feature, refactoring, bug-fix
+// # effort medium: how explorer, why investigators
+// Other roles default to xhigh. Each target uses the catalog's option key and
+// the highest supported effort at or below the role budget.
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { accountKey, fetchUsage, liveRead, poolFromRaw, poolState } from './usage-state.mjs';
+import { byPace, chooseCandidate, rankCandidates } from './capacity-choice.mjs';
+import { parseRole, resolveRole } from './role-target.mjs';
 
 const usage = 'usage: t3-capacity.mjs --instance <id>:<driverKind>... [--auth-home <id>=<dir>]... '
   + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
-  + '[--mapping <file>] [--candidate <id>/<model>[,<id>/<model>...]]...';
+  + '[--mapping <file>] [--candidate <id>/<model>[,<id>/<model>...]]... '
+  + '[--role <name> --capabilities <file> [--models <pstack-models.md>]]';
 const fail = (message) => { console.error(message); process.exit(2); };
 
 const instances = [];
@@ -66,6 +79,9 @@ const declared = new Map();
 let settingsFile = null;
 let mappingFile = null;
 const tiers = [];
+let role = null;
+let capabilitiesFile = null;
+let modelsFile = path.join(os.homedir(), '.agents', 'pstack-models.md');
 const expand = (dir) => path.resolve(dir.replace(/^~(?=\/|$)/u, os.homedir()));
 const args = process.argv.slice(2);
 for (let i = 0; i < args.length; i += 2) {
@@ -83,6 +99,9 @@ for (let i = 0; i < args.length; i += 2) {
     declared.set(id, pool);
   } else if (flag === '--settings') settingsFile = path.resolve(value);
   else if (flag === '--mapping') mappingFile = expand(value);
+  else if (flag === '--role') role = value;
+  else if (flag === '--capabilities') capabilitiesFile = expand(value);
+  else if (flag === '--models') modelsFile = expand(value);
   else if (flag === '--candidate') {
     tiers.push(value.split(',').map((entry) => {
       const at = entry.indexOf('/');
@@ -105,10 +124,28 @@ if (mappingFile) {
     if (entry.declare && !declared.has(id)) declared.set(id, entry.declare);
   }
 }
+let roleConfig = null;
+let capabilities = null;
+if (role) {
+  if (tiers.length) fail('--role and --candidate cannot be combined');
+  if (!capabilitiesFile) fail('--role needs --capabilities');
+  try {
+    roleConfig = parseRole(fs.readFileSync(modelsFile, 'utf8'), role);
+    capabilities = JSON.parse(fs.readFileSync(capabilitiesFile, 'utf8'));
+    if (!Array.isArray(capabilities.providers) || capabilities.providers.some((provider) =>
+      typeof provider.providerInstanceId !== 'string' || typeof provider.driverKind !== 'string'
+      || !Array.isArray(provider.models))) throw new Error('invalid providers catalog');
+    for (const provider of capabilities.providers) {
+      const existing = instances.find(({ id }) => id === provider.providerInstanceId);
+      if (existing && existing.driver !== provider.driverKind) throw new Error(`catalog driver mismatch for ${existing.id}`);
+      if (!existing) instances.push({ id: provider.providerInstanceId, driver: provider.driverKind });
+    }
+  } catch (error) { fail(`cannot resolve role: ${error.message}`); }
+}
 for (const { instance } of tiers.flat()) {
   if (!instances.some(({ id }) => id === instance)) fail(`--candidate names ${instance}, which no instance lists`);
 }
-if (!instances.length) fail(`name at least one instance from orchestrator_capabilities\n${usage}`);
+if (!instances.length && !role) fail(`name at least one instance from orchestrator_capabilities\n${usage}`);
 // A declaration names an account, never another subscription: the driver
 // decides which vendor bills the instance.
 const DECLARABLE = { codex: /^codex:[A-Za-z0-9][A-Za-z0-9_-]*$/u, claudeAgent: /^claude$/u, cursor: /^cursor$/u, grok: /^grok$/u };
@@ -311,31 +348,17 @@ const mapped = instances.map((instance) => {
   return result;
 });
 
-const byPace = (a, b) => (a.pace ?? 1) - (b.pace ?? 1) || (a.used_percent ?? 100) - (b.used_percent ?? 100);
 const available = Object.entries(accounts)
   .filter(([, entry]) => entry.state === 'available' && entry.instances.length && !entry.same_account_as)
   .sort(([, a], [, b]) => byPace(a.reading, b.reading))
   .map(([key]) => key);
 
-const cursorOwn = /^(?:default|auto|composer|grok)(?:[-.]|$)/iu;
-const ranked = tiers.map((tier, index) => tier.map(({ instance, model }) => {
-  const { pools, driver } = mapped.find(({ id }) => id === instance);
-  const billed = driver === 'cursor' && pools.length ? [cursorOwn.test(model) ? 'cursor_models' : 'other_models'] : pools;
-  const pool = billed.length === 1 ? billed[0] : null;
-  const reading = pool ? accounts[pool].reading : null;
-  return { tier: index, instance, model, pool, state: pool ? accounts[pool].state : 'unknown',
-    pace: reading?.pace ?? null, used_percent: reading?.used_percent ?? null };
-}));
-const byState = (a, b) => (a.state === 'available' ? 0 : 1) - (b.state === 'available' ? 0 : 1) || byPace(a, b);
-const best = ranked.map((tier) => tier.filter(({ state }) => state === 'available' || state === 'protected')
-  .sort(byState)[0]);
-const first = best.findIndex(Boolean);
-const yields = (protectedPick, next) => protectedPick.state === 'protected' && next != null
-  && (next.state === 'available' || (next.pace != null && protectedPick.pace != null && next.pace < protectedPick.pace));
-const choice = first < 0 ? null : yields(best[first], best[first + 1]) ? best[first + 1] : best[first];
+const ranked = rankCandidates(tiers, mapped, accounts);
+const choice = chooseCandidate(ranked);
 
 console.log(JSON.stringify({
   instances: mapped, accounts, available, alerts: usageState.alerts ?? [],
+  ...(role ? { role, seats: resolveRole(roleConfig, capabilities, mapped, accounts) } : {}),
   ...(tiers.length ? { candidates: ranked.flat(), choice } : {}),
   ...(settingsError ? { settings_error: settingsError } : {}),
 }, null, 1));
