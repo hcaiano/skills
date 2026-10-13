@@ -26,6 +26,27 @@ lower pace, `choice` is the next tier's, so an account above pace hands work
 one tier down, never further.
 A null `choice` is a capacity blocker: report it, never guess.
 
+To resolve a configured role, save `orchestrator_capabilities` as JSON and run:
+
+```bash
+node "$SKILL_DIR/scripts/t3-capacity.mjs" \
+  --role "bug-fix" --capabilities /tmp/capabilities.json \
+  [--models ~/.agents/pstack-models.md]
+```
+
+The models file defaults to `~/.agents/pstack-models.md`. Role lines use
+`bug-fix: capacity[a > b | c]`. `>` orders preference tiers, `|` groups equal
+models, and comma-separated `capacity[...]` entries give one seat each.
+Comma-separated role names before the colon share a line. Set effort with
+comments such as `# effort high: feature, refactoring, bug-fix` and
+`# effort medium: how explorer, why investigators`. Other roles use `xhigh`.
+The script expands each model to every serving instance and applies the same
+capacity rule per seat. It reads reasoning option keys and supported values
+from the catalog, using the highest value at or below the role's effort.
+Pass each `seats[].target` to `delegate_task` unchanged. A null target includes
+a reason; `rejected` lists missing models, disabled providers, and unsupported
+effort options. Role mode cannot be combined with `--candidate`.
+
 Summarize usage, pace, resets and account states. Pace above 1 risks
 exhaustion before reset. Unknown capacity proves no headroom. Each account
 is read live at most once per two minutes across threads. An account `note`
