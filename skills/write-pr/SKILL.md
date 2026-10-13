@@ -54,7 +54,7 @@ Baseline `<sha>`, final `<sha>`.
 
 **Checks.** <Local: check, result, commit. CI: result, commit.>
 
-**Review.** <grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha>
+**Review.** <grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>
 ```
 
 No code snippets, diffs, diagrams or file lists: the reviewer has the diff.

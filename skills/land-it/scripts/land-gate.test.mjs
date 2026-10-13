@@ -14,7 +14,7 @@ const green = [
   { __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "SUCCESS" },
   { __typename: "StatusContext", context: "CodeRabbit", state: "SUCCESS" },
 ];
-const body = (receipt = `single by gpt-6.1-sol; 1 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\``) =>
+const body = (receipt = `single by gpt-6.1-sol; 1 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) =>
   `Fix the thing.\n\n**Merge danger.** Door: two-way. Blast radius: small.\n\n**Review.** ${receipt}\n`;
 const pr = (overrides = {}) => ({
   number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", isDraft: false, body: body(),
@@ -26,8 +26,8 @@ const pr = (overrides = {}) => ({
 const facts = (prOverrides = {}, overrides = {}) => {
   const p = pr(prOverrides);
   return {
-    pr: p, viewer: "henrique", defaultBranch: "main", unresolvedThreads: 0, moreThreads: false,
-    receipt: parseReceipt(p.body), door: parseDoor(p.body), reviewed: { matches: true }, baseChangedAfterReview: false,
+    pr: p, viewer: "henrique", defaultBranch: "main", unresolvedThreads: 0,
+    receipt: parseReceipt(p.body), door: parseDoor(p.body), reviewed: { matches: true },
     ...overrides,
   };
 };
@@ -38,11 +38,11 @@ test("a reviewed, green, two-way PR merges", () => {
 
 test("risk, disagreement, foreign authorship and open review state each hold the PR", () => {
   const risky = facts({
-    body: body("dual by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 2 rejected, 1 open; reviewed 0123456").replace("two-way", "one-way"),
+    body: body("dual by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 2 rejected, 1 open; reviewed 0123456 on fix/below").replace("two-way", "one-way"),
     isDraft: true, labels: [{ name: "do-not-merge" }, { name: "stakeholder-review" }], mergeable: "CONFLICTING",
     author: { login: "someone" }, isCrossRepository: true, baseRefName: "feature/epic", reviewDecision: "CHANGES_REQUESTED",
     statusCheckRollup: [{ __typename: "CheckRun", name: "ci", status: "COMPLETED", conclusion: "FAILURE" }],
-  }, { unresolvedThreads: 1, reviewed: { matches: false, reason: "HEAD changed since the review of 0123456" }, baseChangedAfterReview: true });
+  }, { unresolvedThreads: 1, reviewed: { matches: false, reason: "HEAD changed since the review of 0123456" } });
   assert.deepEqual(decide(risky), {
     action: "hold",
     reasons: [
@@ -55,8 +55,8 @@ test("risk, disagreement, foreign authorship and open review state each hold the
       "review-it graded dual",
       "2 rejected review finding(s): reviewers did not all agree",
       "1 review finding(s) or blocker(s) left open",
+      "reviewed on fix/below, but the base is now feature/epic",
       "HEAD changed since the review of 0123456",
-      "base changed after the review",
       "changes requested",
       "conflicts with the base",
       "1 unresolved review thread(s)",
@@ -71,13 +71,14 @@ test("the Merge danger line decides the door, and any one-way mention wins", () 
   assert.equal(parseDoor("**Merge danger.** Door: two-way. Blast radius: small."), "two-way");
 });
 
-test("a receipt without its open count, or skip on code, holds", () => {
+test("an old receipt, a skip grade, a closed PR and a rollup with no success each stop the merge", () => {
   const old = facts({ body: body("single by gpt-6.1-sol; 0 fixed, 0 rejected; reviewed 0123456") });
   assert.deepEqual(decide(old).reasons, ["no review-it receipt in the PR body"]);
-  const skip = (files) => facts({ body: body("skip by none; 0 fixed, 0 rejected, 0 open; reviewed 0123456"), files, changedFiles: files.length });
-  assert.equal(decide(skip([{ path: "docs/guide.md" }])).action, "merge");
-  assert.deepEqual(decide(skip([{ path: "skills/review-it/SKILL.md" }])).reasons, ["graded skip but changes more than plain docs"]);
-  assert.deepEqual(decide(skip([{ path: "src/app.js" }])).reasons, ["graded skip but changes more than plain docs"]);
+  const skip = facts({ body: body("skip by none; 0 fixed, 0 rejected, 0 open; reviewed 0123456 on main") });
+  assert.deepEqual(decide(skip).reasons, ["graded skip: no reviewer saw the change"]);
+  assert.deepEqual(decide(facts({ state: "CLOSED" })), { action: "done", reasons: ["PR was closed without merging"] });
+  const skipped = [{ __typename: "CheckRun", name: "deploy", status: "COMPLETED", conclusion: "SKIPPED" }];
+  assert.deepEqual(decide(facts({ statusCheckRollup: skipped })), { action: "hold", reasons: ["no check succeeded"] });
 });
 
 test("pending checks and unknown mergeability wait; behind updates; protection blocks hold", () => {
@@ -104,7 +105,7 @@ else if (args[0] === 'pr' && args[1] === 'view') out(f.pr);
 else if (args[0] === 'repo') out({ defaultBranchRef: { name: 'main' }, ...f.methods });
 else if (args[0] === 'api' && args[1] === 'user') console.log('henrique');
 else if (args[0] === 'api') out({ data: { repository: { pullRequest: {
-  reviewThreads: { pageInfo: { hasNextPage: false }, nodes: [] }, timelineItems: { nodes: [] } } } } });
+  reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
 else if (args[0] === 'pr' && args[1] === 'merge' && f.mergeError) { console.error(f.mergeError); process.exit(1); }
 `);
 chmodSync(join(fakeGhDir, "gh"), 0o755);
@@ -155,7 +156,7 @@ const repoWithPr = () => {
 test("a head that only merged its base keeps the review and lands with an allowed method", () => {
   const { work, reviewed, baseMerged, publish } = repoWithPr();
   publish(baseMerged);
-  const receipt = `single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${reviewed.slice(0, 10)}`;
+  const receipt = `single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${reviewed.slice(0, 10)} on main`;
   const out = cli({ pr: pr({ headRefOid: baseMerged, body: body(receipt) }), methods: { squashMergeAllowed: false, mergeCommitAllowed: true }, afterMerge: "MERGED" }, work);
   assert.equal(out.action, "merge");
   assert.equal(out.acted, "merged");
@@ -165,7 +166,7 @@ test("a head that only merged its base keeps the review and lands with an allowe
 test("any change after the review holds, even one patch-id would call whitespace", () => {
   const { work, reviewed, dedented, publish } = repoWithPr();
   publish(dedented);
-  const receipt = `single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${reviewed.slice(0, 10)}`;
+  const receipt = `single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${reviewed.slice(0, 10)} on main`;
   const out = cli({ pr: pr({ headRefOid: dedented, body: body(receipt) }), methods: { squashMergeAllowed: true } }, work);
   assert.equal(out.action, "hold");
   assert.deepEqual(out.reasons, [`HEAD changed since the review of ${reviewed.slice(0, 10)}`]);
@@ -175,7 +176,7 @@ test("any change after the review holds, even one patch-id would call whitespace
 test("a rejected or queued merge is reported, never claimed as merged", () => {
   const { work, reviewed, publish } = repoWithPr();
   publish(reviewed);
-  const receipt = `single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${reviewed}`;
+  const receipt = `single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${reviewed} on main`;
   const base = { pr: pr({ headRefOid: reviewed, body: body(receipt) }), methods: { squashMergeAllowed: true } };
   const rejected = cli({ ...base, mergeError: "GraphQL: Head branch was modified. Review and try the merge again." }, work);
   assert.deepEqual([rejected.action, rejected.acted], ["hold", null]);

@@ -13,14 +13,15 @@
 //   - its `**Merge danger.**` line says `Door: two-way` and no `Door: one-way`
 //     appears anywhere in the body;
 //   - its last `**Review.**` line is review-it's receipt
-//     `<grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha>`
-//     graded single (or skip, when every changed file is plain docs) with no
-//     rejected and no open findings: every reviewer agreed;
-//   - the reviewed commit still describes the change: the head is that commit,
-//     or merging the reviewed commit with the base the head now contains gives
-//     exactly the head's tree; and the base did not change after the review;
-//   - checks reported and all passed, review threads are resolved, nothing
-//     requests changes, and GitHub reports no conflict or protection block.
+//     `<grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>`
+//     graded single with no rejected and no open findings: every reviewer
+//     agreed;
+//   - the review saw this base, and the reviewed commit still describes the
+//     change: the head is that commit, or merging the reviewed commit with the
+//     base the head now contains gives exactly the head's tree;
+//   - at least one check succeeded and none failed, every review thread is
+//     resolved, nothing requests changes, and GitHub reports no conflict or
+//     protection block.
 // Pending checks or unknown mergeability give wait; a branch behind its base
 // gives update-branch; any other failed rule gives hold.
 //
@@ -32,13 +33,13 @@ import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|dual)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?/gim;
+const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|dual)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`.;]+)`?/gim;
 
 export const parseReceipt = (body) => {
   const all = [...(body ?? '').matchAll(receiptPattern)];
   if (all.length === 0) return null;
-  const [, grade, fixed, rejected, open, sha] = all.at(-1);
-  return { grade: grade.toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase() };
+  const [, grade, fixed, rejected, open, sha, base] = all.at(-1);
+  return { grade: grade.toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base };
 };
 
 export const parseDoor = (body) => {
@@ -47,12 +48,6 @@ export const parseDoor = (body) => {
   const line = text.split('\n').find((candidate) => candidate.trimStart().startsWith('**Merge danger.**'));
   return /Door:\s*two-way/i.test(line ?? '') ? 'two-way' : null;
 };
-
-// Plain documentation: no code that runs and no agent instructions.
-const agentPaths = /(^|\/)(skills|\.claude|\.codex|\.cursor|\.agents|\.github)\//i;
-const agentFiles = /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i;
-export const docsOnly = (files) => files.length > 0
-  && files.every((file) => /\.(md|mdx|txt|rst)$/i.test(file) && !agentPaths.test(file) && !agentFiles.test(file));
 
 const checkState = (check) => {
   if (check.__typename === 'StatusContext') {
@@ -63,11 +58,11 @@ const checkState = (check) => {
   return ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion) ? 'pass' : 'fail';
 };
 
-// facts: { pr, viewer, defaultBranch, unresolvedThreads, moreThreads, receipt,
-//          door, reviewed: { matches, reason } | null, baseChangedAfterReview }
+// facts: { pr, viewer, defaultBranch, unresolvedThreads, receipt, door,
+//          reviewed: { matches, reason } | null }
 export const decide = (facts) => {
   const { pr } = facts;
-  if (pr.state !== 'OPEN') return { action: 'done', reasons: [`PR is ${pr.state.toLowerCase()}`] };
+  if (pr.state !== 'OPEN') return { action: 'done', reasons: [pr.state === 'MERGED' ? 'PR is merged' : 'PR was closed without merging'] };
   const holds = [];
   const waits = [];
   if (pr.isCrossRepository) holds.push('PR comes from a fork');
@@ -81,17 +76,15 @@ export const decide = (facts) => {
   if (!receipt) holds.push('no review-it receipt in the PR body');
   else {
     if (receipt.grade === 'dual') holds.push('review-it graded dual');
-    if (receipt.grade === 'skip' && !(pr.changedFiles <= (pr.files ?? []).length && docsOnly(pr.files.map((file) => file.path)))) {
-      holds.push('graded skip but changes more than plain docs');
-    }
+    if (receipt.grade === 'skip') holds.push('graded skip: no reviewer saw the change');
     if (receipt.rejected > 0) holds.push(`${receipt.rejected} rejected review finding(s): reviewers did not all agree`);
     if (receipt.open > 0) holds.push(`${receipt.open} review finding(s) or blocker(s) left open`);
+    if (receipt.base !== pr.baseRefName) holds.push(`reviewed on ${receipt.base}, but the base is now ${pr.baseRefName}`);
     if (facts.reviewed && !facts.reviewed.matches) holds.push(facts.reviewed.reason);
-    if (facts.baseChangedAfterReview) holds.push('base changed after the review');
   }
   if (pr.reviewDecision === 'CHANGES_REQUESTED') holds.push('changes requested');
   if (pr.mergeable === 'CONFLICTING') holds.push('conflicts with the base');
-  if (facts.unresolvedThreads || facts.moreThreads) holds.push(`${facts.unresolvedThreads}${facts.moreThreads ? '+' : ''} unresolved review thread(s)`);
+  if (facts.unresolvedThreads) holds.push(`${facts.unresolvedThreads} unresolved review thread(s)`);
   const checks = pr.statusCheckRollup ?? [];
   if (checks.length === 0) holds.push('no checks reported');
   const states = checks.map((check) => [check.name ?? check.context, checkState(check)]);
@@ -99,6 +92,7 @@ export const decide = (facts) => {
   if (failing.length) holds.push(`failing checks: ${failing.join(', ')}`);
   const pending = states.filter(([, state]) => state === 'pending').map(([name]) => name);
   if (pending.length) waits.push(`pending checks: ${pending.join(', ')}`);
+  else if (checks.length && !failing.length && !checks.some((check) => check.conclusion === 'SUCCESS' || check.state === 'SUCCESS')) holds.push('no check succeeded');
   if (pr.mergeable === 'UNKNOWN') waits.push('GitHub is still computing mergeability');
   if (holds.length) return { action: 'hold', reasons: [...holds, ...waits] };
   if (waits.length) return { action: 'wait', reasons: waits };
@@ -115,29 +109,28 @@ const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 
 
 // The reviewed commit still describes the PR when merging it with the base
 // the head now contains reproduces the head's tree exactly.
-const compareTrees = (pr, receiptSha) => {
+const compareTrees = (pr, receiptSha, slug) => {
+  if (pr.headRefOid.toLowerCase().startsWith(receiptSha)) return { matches: true };
   try {
-    git('fetch', '-q', 'origin', pr.baseRefName, `pull/${pr.number}/head`);
+    const remotes = git('remote', '-v').split('\n').map((line) => line.split(/\s+/));
+    const remote = remotes.find(([, url]) => new RegExp(`[:/]${slug}(\\.git)?$`, 'i').test(url ?? ''))?.[0] ?? 'origin';
+    git('fetch', '-q', remote, `+refs/heads/${pr.baseRefName}:refs/land-it/base`, `+refs/pull/${pr.number}/head:refs/land-it/head`);
     const reviewed = git('rev-parse', '--verify', `${receiptSha}^{commit}`);
-    const reviewedAt = git('show', '-s', '--format=%cI', reviewed);
-    if (reviewed === pr.headRefOid) return { matches: true, reviewedAt };
-    const base = git('merge-base', `origin/${pr.baseRefName}`, pr.headRefOid);
+    const base = git('merge-base', 'refs/land-it/base', pr.headRefOid);
     let expected;
     try {
       expected = git('merge-tree', '--write-tree', reviewed, base).split('\n')[0];
     } catch {
-      return { matches: false, reason: `the reviewed ${receiptSha} conflicts with the base the head contains`, reviewedAt };
+      return { matches: false, reason: `the reviewed ${receiptSha} conflicts with the base the head contains` };
     }
     const actual = git('rev-parse', `${pr.headRefOid}^{tree}`);
-    return expected === actual
-      ? { matches: true, reviewedAt }
-      : { matches: false, reason: `HEAD changed since the review of ${receiptSha}`, reviewedAt };
+    return expected === actual ? { matches: true } : { matches: false, reason: `HEAD changed since the review of ${receiptSha}` };
   } catch (error) {
     return { matches: false, reason: `could not compare the reviewed and current code: ${firstLine(error)}` };
   }
 };
 
-const fields = 'number,url,state,isDraft,body,author,isCrossRepository,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,labels,files,changedFiles';
+const fields = 'number,url,state,isDraft,body,author,isCrossRepository,headRefOid,baseRefName,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup,labels';
 const readPr = (target) => {
   let pr = JSON.parse(gh('pr', 'view', target, '--json', fields));
   for (let attempt = 0; pr.mergeable === 'UNKNOWN' && attempt < 3; attempt += 1) {
@@ -152,24 +145,20 @@ const gather = (target) => {
   const [, owner, name] = new URL(pr.url).pathname.split('/');
   const repo = JSON.parse(gh('repo', 'view', `${owner}/${name}`, '--json', 'defaultBranchRef,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed'));
   const viewer = gh('api', 'user', '-q', '.login').trim();
-  const query = 'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){'
-    + 'reviewThreads(first:100){pageInfo{hasNextPage} nodes{isResolved}} '
-    + 'timelineItems(itemTypes:[BASE_REF_CHANGED_EVENT],last:1){nodes{... on BaseRefChangedEvent{createdAt}}}}}}';
-  const data = JSON.parse(gh('api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`, '-F', `number=${pr.number}`))
-    .data.repository.pullRequest;
+  const query = 'query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){pullRequest(number:$number){'
+    + 'reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{isResolved}}}}}';
+  let unresolvedThreads = 0;
+  for (let after = null, more = true; more;) {
+    const page = JSON.parse(gh('api', 'graphql', '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `name=${name}`,
+      '-F', `number=${pr.number}`, ...(after ? ['-f', `after=${after}`] : []))).data.repository.pullRequest.reviewThreads;
+    unresolvedThreads += page.nodes.filter((thread) => !thread.isResolved).length;
+    ({ hasNextPage: more, endCursor: after } = page.pageInfo);
+  }
   const receipt = parseReceipt(pr.body);
-  const reviewed = receipt && pr.state === 'OPEN' ? compareTrees(pr, receipt.sha) : null;
-  const baseChangedAt = data.timelineItems.nodes[0]?.createdAt;
+  const reviewed = receipt && pr.state === 'OPEN' ? compareTrees(pr, receipt.sha, `${owner}/${name}`) : null;
   return {
     repo, owner, name,
-    facts: {
-      pr, viewer, receipt, reviewed,
-      defaultBranch: repo.defaultBranchRef.name,
-      door: parseDoor(pr.body),
-      unresolvedThreads: data.reviewThreads.nodes.filter((thread) => !thread.isResolved).length,
-      moreThreads: data.reviewThreads.pageInfo.hasNextPage,
-      baseChangedAfterReview: Boolean(baseChangedAt && reviewed?.reviewedAt && Date.parse(baseChangedAt) > Date.parse(reviewed.reviewedAt)),
-    },
+    facts: { pr, viewer, receipt, reviewed, unresolvedThreads, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body) },
   };
 };
 
