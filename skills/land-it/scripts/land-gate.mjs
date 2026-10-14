@@ -209,4 +209,9 @@ const main = () => {
   console.log(JSON.stringify({ pr: gathered.facts.pr.url, head: gathered.facts.pr.headRefOid, ...decision, acted }, null, 2));
 };
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+const isMain = () => {
+  try { return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url)); }
+  catch { return false; }
+};
+
+if (isMain()) main();

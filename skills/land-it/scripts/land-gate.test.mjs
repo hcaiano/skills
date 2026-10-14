@@ -3,7 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import { decide, parseDoor, parseReceipt } from "./land-gate.mjs";
 
@@ -14,10 +14,21 @@ test("a symlinked invocation prints usage when no PR is supplied", () => {
   const dir = mkdtempSync(join(tmpdir(), "land-gate-symlink-"));
   const linkedScript = join(dir, "land-gate.mjs");
   symlinkSync(script, linkedScript);
-  const result = spawnSync(process.execPath, [linkedScript], { encoding: "utf8" });
-  assert.equal(result.status, 2, result.stderr);
-  assert.equal(result.stdout, "");
-  assert.equal(result.stderr, "usage: land-gate.mjs <pr-url|number> [--merge]\n");
+  for (const flags of [[], ["--preserve-symlinks-main"]]) {
+    const result = spawnSync(process.execPath, [...flags, linkedScript], { encoding: "utf8" });
+    assert.equal(result.status, 2, result.stderr);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "usage: land-gate.mjs <pr-url|number> [--merge]\n");
+  }
+});
+
+test("an import with a nonexistent argv path loads without running main", () => {
+  const missing = join(mkdtempSync(join(tmpdir(), "land-gate-import-")), "missing.mjs");
+  const source = `await import(${JSON.stringify(pathToFileURL(script).href)}); console.log('imported');`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", source, missing], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "imported\n");
+  assert.equal(result.stderr, "");
 });
 
 const green = [
