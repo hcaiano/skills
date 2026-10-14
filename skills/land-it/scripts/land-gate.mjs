@@ -30,7 +30,7 @@
 // merge instead of landing unreviewed code. It never uses --admin. Git runs
 // in the current directory, a checkout of the PR's repository.
 import { execFileSync } from 'node:child_process';
-import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|panel)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`;,]+?)`?\.?(?=\s|$)/i;
@@ -209,4 +209,4 @@ const main = () => {
   console.log(JSON.stringify({ pr: gathered.facts.pr.url, head: gathered.facts.pr.headRefOid, ...decision, acted }, null, 2));
 };
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main();
