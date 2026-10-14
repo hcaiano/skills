@@ -122,7 +122,7 @@ test("owner bypass only covers owner-only rulesets and met classic protection", 
     return [protection];
   };
   const p = pr();
-  const none = Object.assign(new Error("gh: Upgrade to GitHub Pro (HTTP 403)"), { stderr: "HTTP 403" });
+  const none = Object.assign(new Error("gh: Upgrade to GitHub Pro (HTTP 403)"), { stderr: "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)" });
   assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, none)), true);
   assert.equal(ownerBypass(p, "a/b", responses([owner, { type: "pull_request", ruleset_id: 1 }], { current_user_can_bypass: "always" }, none)), false);
   assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_status_checks: { contexts: ["build-and-test"] } })), false);
