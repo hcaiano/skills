@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -33,11 +33,10 @@ const names = '(?:api[ _-]?key|private[ _-]?key|access[_-]?key(?:[_-]?id)?|secre
 const indicator = new RegExp(`${names}|(?:^|[\\s"'=])-[pP]`, 'i');
 const label = new RegExp(`^(?:[A-Za-z0-9_.-]*${names}|-[pP])$`, 'i');
 const flag = /^(?:--[\w-]+|-[pP])$/;
-const assignment = new RegExp(`${names}["']?\\s*[:=]\\s*["']?\\s*[^\\s"'\x60;,}\\]]`, 'i');
+const assignment = new RegExp(`\\b([A-Za-z0-9_.-]*${names})["']?\\s*[:=]\\s*["']?\\s*([^\\s"'\x60;,}\\]]+)`, 'gi');
 const strongIndicators = [
   /\b(?:Cookie|Set-Cookie|Authorization|Proxy-Authorization)["']?\s*:/i,
   /\bBearer\s+[^\s"']+/i,
-  assignment,
   /(?:^|[\s"'`])--(?:password|passwd|passphrase|token|api[-_]?key|secret|access-token|refresh-token|client-secret)(?:=|\s+)\s*["']?\s*[^\s"'`;,]/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/i,
   /\b(?:sk-(?:proj-|ant-)?[A-Za-z0-9_-]{8,}|xai-[A-Za-z0-9_-]{32,}|gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AIza[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})\b/,
@@ -56,7 +55,6 @@ export function redact(value) {
     if (value.length === 2 && typeof value[0] === 'string' && label.test(value[0]) && credential(value[0], value[1])) return [value[0], '[REDACTED]'];
     return value.map((v, i) => {
       if (flag.test(value[i - 1]) && credential(value[i - 1], v)) return '[REDACTED]';
-      if (typeof v === 'string' && flag.test(v)) return v;
       return redact(v);
     });
   }
@@ -67,7 +65,9 @@ export function redact(value) {
     ]));
   }
   if (typeof value !== 'string') return value;
-  if (strongIndicators.some(pattern => pattern.test(value)) || passwordClient.test(value) && shortPassword.test(value)) return '[REDACTED: credential]';
+  if (strongIndicators.some(pattern => pattern.test(value)) ||
+      [...value.matchAll(assignment)].some(([, key, assigned]) => credential(key, assigned)) ||
+      passwordClient.test(value) && shortPassword.test(value)) return '[REDACTED: credential]';
   if (/^[\[{]/.test(value.trim())) {
     try { return JSON.stringify(redact(JSON.parse(value))); } catch { /* Plain tool output can start with a brace. */ }
   }
@@ -131,7 +131,18 @@ export class Output {
     this.opts = opts; this.source = source; this.handle = null;
     this.index = { version: 1, machine: opts.machine, source, from: opts.from, to: opts.to, complete: false, records: 0, parts: [], sessions: Object.create(null), prs: Object.create(null), sources: Object.create(null), gapCounts: Object.create(null), gaps: [] };
   }
-  async start() { await mkdir(this.opts.out, { mode: 0o700 }); }
+  async start() {
+    try { await mkdir(this.opts.out, { mode: 0o700 }); }
+    catch (e) {
+      if (e.code !== 'EEXIST') throw e;
+      await chmod(this.opts.out, 0o700);
+      for (const entry of await readdir(this.opts.out, { withFileTypes: true })) {
+        if (entry.isFile()) await chmod(join(this.opts.out, entry.name), 0o600);
+      }
+      throw e;
+    }
+    await chmod(this.opts.out, 0o700);
+  }
   gap(kind, detail = {}) {
     this.index.gapCounts[kind] = (this.index.gapCounts[kind] || 0) + 1;
     if (this.index.gaps.length < 200) this.index.gaps.push(redact({ kind, ...detail }));

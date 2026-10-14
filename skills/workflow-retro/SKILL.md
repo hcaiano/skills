@@ -16,6 +16,9 @@ run, use the last 24 hours. Collect T3 activity and parent chains from read-only
 SQLite, provider sessions, PR evidence through `gh`, and scheduled tasks from
 both databases. Done when each source has an index with machine, counts, and gaps.
 
+Redaction is best-effort; keep outputs local under `~/.local/state`.
+Never paste raw evidence into PRs, issues, or other external services; quote only short, redacted excerpts.
+
 Keep tool names, structured inputs, and results. Recover any invocation or read
 missing from an extract before judging it. Record unrecovered evidence in
 `LIMITS.md`. Cursor timelines live in the referenced T3 parts. Grok history is
