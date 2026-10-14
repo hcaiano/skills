@@ -9,7 +9,7 @@ scripts="$PWD/skills/workflow-retro/scripts"
 retro_run=$(node -p 'new Date().toISOString().replaceAll(/[:.]/g,"-")')
 retro_root="/tmp/workflow-retro-$retro_run"
 mkdir -m 700 "$retro_root"
-retro_from=$(cat "$HOME/.local/state/workflow-retro/last-run" 2>/dev/null || node -p 'new Date(Date.now()-86400000).toISOString()')
+retro_from=$(cat "$HOME/.local/state/workflow-retro/last-run" 2>/dev/null || node -p 'new Date(Date.now()-604800000).toISOString()')
 retro_to=$(node -p 'new Date().toISOString()')
 agent-run heavy -- node "$scripts/collect-t3.mjs" --machine pc --from "$retro_from" --to "$retro_to" --out "$retro_root/pc-t3"
 agent-run heavy -- node "$scripts/collect-sessions.mjs" --machine pc --from "$retro_from" --to "$retro_to" --t3-index "$retro_root/pc-t3/index.json" --out "$retro_root/pc-sessions"

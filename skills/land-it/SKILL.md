@@ -32,7 +32,8 @@ node "$SKILL_DIR/scripts/land-gate.mjs" <pr-url> --merge
 
 It prints the `action` it took or needs, with `reasons`. The script header
 lists every rule. Risk comes from what the PR already records: `Door:
-two-way` from `write-pr`, and the `review-it` receipt graded `single` with no
+two-way` from `write-pr`, and the `review-it` receipt graded `standard` (or
+the older `single`) with no
 rejected and no open findings, on the code and base being merged. It merges with a method the repository allows and leaves branch
 protection to GitHub; a rule it cannot satisfy becomes a hold.
 
@@ -49,7 +50,7 @@ protection to GitHub; a rule it cannot satisfy becomes a hold.
   confirmation still leaves findings or unconfirmed fixes, the PR is the
   user's.
 - `hold` because the grade was `skip` or the receipt is missing or in an
-  older shape: run `review-it` on the whole PR graded at least `single`,
+  older shape: run `review-it` on the whole PR graded at least `standard`,
   and run the gate again.
 - `hold` because the PR could not be read or the code could not be compared:
   fix the access or checkout (GitHub login, fetch access, the PR's
@@ -64,10 +65,12 @@ retargets it, and that layer takes its one final review before the gate.
 
 ## 4. Test after merge
 
-For each PR that landed, watch the merge commit's checks on the default
-branch, and run the task's acceptance check against the merged result: the
-deployed app when the repo deploys on merge, otherwise the default branch.
-A red result is new work in this thread, not a reason to stay silent.
+For each PR that landed, watch the merge commit's checks on the default branch
+and, when the repo deploys on merge, the deploy's status and health. That is
+the after-merge test: the change already proved itself before the PR opened.
+Run the task's acceptance check again against the deployed app or the default
+branch only when the user asked for one. A red result is new work in this
+thread, not a reason to stay silent.
 
 ## 5. Hand back
 

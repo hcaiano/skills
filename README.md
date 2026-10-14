@@ -54,11 +54,12 @@ leaves the globally installed copy in place.
 
 ### Engineering
 
-- `workflow-retro` — daily retro of every agent session on the PC and the
+- `workflow-retro` — weekly retro of every agent session on the PC and the
   MacBook: fixes defects in these skills and proposes everything else. Run by a
   T3 scheduled task on the PC.
-- `review-it` — pre-PR review: grade a change by risk, have Opus or Sol
-  review it (the full `interrogate` panel when risky), and fix the findings.
+- `review-it` — pre-PR review: grade a change by risk, have two reviewers
+  review it in one `interrogate` round (higher effort when risky), and fix the
+  findings.
 - `land-it` — merge a low-risk PR once every reviewer approved it and CI is
   green, test it after merge, and tell the user the thread is ready to
   settle; risky PRs wait for a person.
@@ -121,8 +122,7 @@ under Install.
   environment; unverified account mappings and missing usage remain unknown.
 - `review-it` requires the T3 Code orchestration MCP, `t3-capacity`, and
   pstack's `poteto-mode` and `interrogate` (for `references/t3-execution.md`,
-  the `interrogate reviewers` line in `pstack-models.md`, and the `panel`
-  panel).
+  and the `interrogate reviewers` line in `pstack-models.md`).
 - `art-director` uses Codex's built-in `imagegen` skill: directly in Codex,
   and through a `delegate_task` to a Codex instance anywhere else.
 - `test-audit` campaigns review each subsystem PR with `review-it` and run
