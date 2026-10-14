@@ -466,7 +466,7 @@ export const parseClaudeLogins = (entries, home = os.homedir()) => {
       throw new Error('Claude login needs a simple name and optional secureStorageDir string');
     }
     const secureStorageDir = entry.secureStorageDir
-      ? path.resolve(entry.secureStorageDir.replace(/^~(?=\/|$)/u, home)) : null;
+      ? path.resolve(entry.secureStorageDir.replace(/^~(?=\/|$)/u, home)).normalize('NFC') : null;
     if (logins.has(entry.name) && logins.get(entry.name).secureStorageDir !== secureStorageDir) {
       throw new Error(`Claude pool ${entry.name} names different login locations`);
     }
@@ -479,7 +479,7 @@ const claudeCredential = (secureStorageDir) => {
   let text;
   if (process.platform === 'darwin') {
     const suffix = secureStorageDir
-      ? `-${crypto.createHash('sha256').update(secureStorageDir.normalize('NFC')).digest('hex').slice(0, 8)}` : '';
+      ? `-${crypto.createHash('sha256').update(secureStorageDir).digest('hex').slice(0, 8)}` : '';
     text = spawnSync('security', ['find-generic-password', '-s', `Claude Code-credentials${suffix}`, '-w'],
       { encoding: 'utf8', timeout: 3000 }).stdout;
   } else {

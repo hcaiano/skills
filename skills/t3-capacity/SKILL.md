@@ -35,7 +35,10 @@ Claude pools use `claude:<name>`. Record each instance's pool and login location
 
 Merge these entries into the recorded mapping. `secureStorageDir` is the
 launcher's `CLAUDE_SECURESTORAGE_CONFIG_DIR`, independent of its history home.
-Omitted or empty means the default login. Flags use `--declare <id>=claude:<name>`
+Omitted or empty means the default login. If the launcher leaves that variable
+unset but sets `CLAUDE_CONFIG_DIR`, record the config directory as
+`secureStorageDir`. Coordinate the mapping migration with the installed-skill update.
+Flags use `--declare <id>=claude:<name>`
 and `--secure-storage-dir <id>=<dir>`. Bare `claude` declarations must migrate.
 On macOS, read the login's Keychain service; on Linux, its `.credentials.json`.
 Only the default login uses `~/.claude/usage-state.json` offline. Each named

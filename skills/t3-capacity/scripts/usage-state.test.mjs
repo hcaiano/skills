@@ -552,7 +552,7 @@ test("a pool spending fast in its first hours already reads as protected", async
 
 test("Claude credentials follow Linux files and macOS Keychain services", async () => {
   const fixture = await claudeFixture();
-  const named = join(fixture.home, "auth-second");
+  const named = join(fixture.home, "café");
   mkdirSync(named);
   writeFileSync(join(named, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "linux-second" } }));
   const keychain = join(fixture.home, "security");
@@ -563,9 +563,10 @@ console.log(JSON.stringify({ claudeAiOauth: { accessToken: 'mac-login' } }));
 `);
   chmodSync(keychain, 0o755);
   try {
-    const linux = await fixture.run(["--claude-logins", JSON.stringify([{ name: "games" }, { name: "second", secureStorageDir: named }])], {}, "linux");
+    const linux = await fixture.run(["--claude-logins", JSON.stringify([{ name: "games" }, { name: "second", secureStorageDir: named.replace("é", "e\u0301") }])], {}, "linux");
     assert.deepEqual(fixture.seen.map(({ authorization }) => authorization).sort(), ["Bearer fixture-token", "Bearer linux-second"]);
     assert.equal(linux.claude_identities.second.pool.used_percent, 64);
+    assert.equal(linux.claude_identities.second.secure_storage_dir, named);
     const missing = await fixture.run(["--claude-logins", JSON.stringify([{ name: "missing", secureStorageDir: join(named, "absent") }])], {}, "linux");
     assert.equal(missing.claude_identities.missing.state, "unknown");
     assert.equal(fixture.seen.length, 2);
@@ -590,10 +591,8 @@ test("Claude login names normalize paths and reject conflicting pool locations",
   assert.deepEqual(parseClaudeLogins([
     { name: "games" }, { name: "second", secureStorageDir: "~/.t3/cafe\u0301" }, { name: "games", secureStorageDir: "" },
   ], "/Users/test"), [
-    { name: "games", secureStorageDir: null }, { name: "second", secureStorageDir: "/Users/test/.t3/cafe\u0301" },
+    { name: "games", secureStorageDir: null }, { name: "second", secureStorageDir: "/Users/test/.t3/café" },
   ]);
-  assert.throws(() => parseClaudeLogins([{ name: "games" }, { name: "games", secureStorageDir: "/other" }]),
-    /names different login locations/u);
   assert.throws(() => parseClaudeLogins([{ name: "../bad" }]), /simple name/u);
   assert.throws(() => parseClaudeLogins([{ name: "games", secureStorageDir: 3 }]), /secureStorageDir string/u);
 

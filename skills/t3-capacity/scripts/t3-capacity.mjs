@@ -157,6 +157,7 @@ const DECLARABLE = { codex: /^codex:[A-Za-z0-9][A-Za-z0-9_-]*$/u, claudeAgent: /
 for (const [id, pool] of declared) {
   const driver = instances.find((instance) => instance.id === id)?.driver;
   if (!driver) fail(`--declare names ${id}, which no --instance lists`);
+  if (driver === 'claudeAgent' && pool === 'claude') fail('bare Claude pool was removed; declare claude:<name>');
   if (!DECLARABLE[driver]?.test(pool)) fail(`a ${driver} instance cannot bill ${pool}`);
 }
 
@@ -295,7 +296,7 @@ for (const [key, entry] of Object.entries(accounts)) {
 const claudeByLogin = new Map();
 for (const { name, secureStorageDir } of claudeLogins) {
   const key = `claude:${name}`;
-  const location = process.platform === 'darwin' ? (secureStorageDir ?? '').normalize('NFC') : secureStorageDir ?? '';
+  const location = secureStorageDir ?? '';
   if (claudeByLogin.has(location)) accounts[key].same_account_as = claudeByLogin.get(location);
   else claudeByLogin.set(location, key);
 }
@@ -350,6 +351,9 @@ const prove = ({ id, driver }) => {
       + 'read it and pass the login home it sets with --auth-home' };
   }
   if (!authHome && !settingsHome) {
+    if (spec.defaultProof && !spec.defaultPools.length) {
+      return { pools: [], proof: null, launcher, note: 'default login has no recorded pool; declare its account' };
+    }
     return spec.defaultProof
       ? { pools: spec.defaultPools, proof: 'default-login', launcher }
       : { pools: [], proof: null, launcher, note: KEYCHAIN };

@@ -61,8 +61,12 @@ const testEnv = (env) => ({
 });
 // Ends usage-state's two-minute spacing, so the next run reads live again.
 const endSpacing = (home) => rmSync(join(home, ".cache", "t3-capacity", "live-attempts.json"), { force: true });
-const run = (args, env) => new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, [script, ...args], { env: testEnv(env) });
+const run = (args, env, platform = null) => new Promise((resolve, reject) => {
+  const entry = `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });
+const { pathToFileURL } = await import('node:url');
+await import(pathToFileURL(process.argv[1]));`;
+  const launch = platform ? ["--input-type=module", "--eval", entry, script, ...args] : [script, ...args];
+  const child = spawn(process.execPath, launch, { env: testEnv(env) });
   let out = "";
   let err = "";
   child.stdout.on("data", (chunk) => { out += chunk; });
@@ -349,21 +353,27 @@ test("role CLI reads the default models file and mapping, and returns complete d
 test("named Claude mappings read independent accounts and select the one with capacity in candidate and role modes", async () => {
   const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-accounts-"));
   const authDir = join(home, ".t3", "claude-auth-gatticaiano");
+  const overrideDir = join(home, ".t3", "claude-auth-override");
   const games = { claudeAiOauth: { accessToken: "games-token" } };
   const second = { claudeAiOauth: { accessToken: "second-token" } };
+  const third = { claudeAiOauth: { accessToken: "third-token" } };
   login(join(home, ".claude", ".credentials.json"), JSON.stringify(games));
   login(join(authDir, ".credentials.json"), JSON.stringify(second));
+  login(join(overrideDir, ".credentials.json"), JSON.stringify(third));
   const { createHash } = await import("node:crypto");
   const service = `Claude Code-credentials-${createHash("sha256").update(authDir).digest("hex").slice(0, 8)}`;
+  const overrideService = `Claude Code-credentials-${createHash("sha256").update(overrideDir).digest("hex").slice(0, 8)}`;
   const keychain = securityStub(`#!${process.execPath}
-console.log(JSON.stringify(process.argv[4] === ${JSON.stringify(service)} ? ${JSON.stringify(second)} : ${JSON.stringify(games)}));
+console.log(JSON.stringify(process.argv[4] === ${JSON.stringify(service)} ? ${JSON.stringify(second)}
+  : process.argv[4] === ${JSON.stringify(overrideService)} ? ${JSON.stringify(third)} : ${JSON.stringify(games)}));
 `);
   const seen = [];
   const server = await listen((request, response) => {
     seen.push(request.headers.authorization);
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ seven_day: {
-      utilization: request.headers.authorization === "Bearer games-token" ? 95 : 10,
+      utilization: request.headers.authorization === "Bearer games-token" ? 95
+        : request.headers.authorization === "Bearer third-token" ? 23 : 10,
       resets_at: new Date(Date.now() + 100 * 3600000).toISOString(),
     } }));
   });
@@ -408,12 +418,14 @@ console.log(JSON.stringify(process.argv[4] === ${JSON.stringify(service)} ? ${JS
     assert.deepEqual(role.seats[0].candidates.map(({ model, pool }) => [model, pool]),
       [["opus", "claude:games"], ["opus", "claude:gatticaiano"]]);
     assert.equal(seen.length, 2);
-    const override = await run([...args, "--secure-storage-dir", `claudeAgent_gatticaiano=${authDir}`], env);
-    assert.equal(override.accounts["claude:gatticaiano"].reading.used_percent, 10);
+    const override = await run([...args, "--secure-storage-dir", `claudeAgent_gatticaiano=${overrideDir}`], env);
+    assert.equal(override.accounts["claude:gatticaiano"].reading.used_percent, 23);
+    assert.equal(override.accounts["claude:gatticaiano"].secure_storage_dir, overrideDir);
+    assert.equal(seen[2], "Bearer third-token");
     const bare = spawnSync(process.execPath, [script, ...args, "--declare", "claudeAgent=claude"],
       { encoding: "utf8", env: testEnv(env) });
     assert.equal(bare.status, 2);
-    assert.match(bare.stderr, /cannot bill claude/u);
+    assert.match(bare.stderr, /bare Claude pool was removed; declare claude:<name>/u);
     writeFileSync(mapping, JSON.stringify({ settings, instances: {
       ...instances, alias: { driver: "claudeAgent", declare: "claude:games", secureStorageDir: authDir },
     } }));
@@ -431,4 +443,15 @@ test("two Claude pool names for the default login still map to one account", asy
   assert.deepEqual(output.instances.map(({ pools }) => pools), [["claude:games"], ["claude:games"]]);
   assert.equal(output.accounts["claude:alias"].same_account_as, "claude:games");
   assert.deepEqual(output.accounts["claude:games"].instances, ["main", "alias"]);
+});
+
+test("a native Linux Claude login without a recorded default pool asks for a declaration", async () => {
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-unrecorded-"));
+  const settings = settingsFile(home, { named: { driver: "claudeAgent" }, native: { driver: "claudeAgent" } });
+  const output = await run(["--settings", settings, "--instance", "named:claudeAgent", "--instance", "native:claudeAgent",
+    "--declare", "named=claude:second", "--secure-storage-dir", `named=${join(home, "named-auth")}`],
+    { HOME: home, CODEX_BIN: join(home, "missing") }, "linux");
+  assert.deepEqual(output.instances[0].pools, ["claude:second"]);
+  assert.deepEqual(output.instances[1], { id: "native", driver: "claudeAgent", pools: [], proof: null,
+    launcher: "native", note: "default login has no recorded pool; declare its account", states: {} });
 });
