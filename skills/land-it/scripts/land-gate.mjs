@@ -34,23 +34,27 @@ import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|standard|panel|high)\b[^;\n]*;\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`;,]+?)`?\.?(?=\s|$)/i;
+const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|standard|panel|high)\b([^;\n]*);\s*(\d+)\s+fixed,\s*(\d+)\s+rejected,\s*(\d+)\s+open;\s*reviewed\s+`?([0-9a-f]{7,40})`?\s+on\s+`?([^\s`;,]+?)`?\.?(?=\s|$)/i;
 
 // The last `**Review.**` line is the receipt; a last line in any other shape
 // is no receipt, so an older approval above it never counts.
 // Each rejected finding is one `- Declined: <finding> (raised by <models>): <reason>`
 // line after the receipt.
-const declinedPattern = /^-\s*Declined:\s*.+?\(raised by ([^)]+)\):\s*(\S.*)$/i;
+const declinedPattern = /^-\s*Declined:\s*(.*?)\s*\(raised by ([^)]*)\):\s*(.*)$/i;
 
 export const parseReceipt = (body) => {
   const lines = (body ?? '').split('\n');
   const index = lines.findLastIndex((candidate) => candidate.trimStart().startsWith('**Review.**'));
   const match = receiptPattern.exec(lines[index]?.trimStart() ?? '');
   if (!match) return null;
-  const [, grade, fixed, rejected, open, sha, base] = match;
+  const [, grade, reviewers, fixed, rejected, open, sha, base] = match;
   const declined = lines.slice(index + 1).map((line) => declinedPattern.exec(line.trim())).filter(Boolean)
-    .map(([, raisedBy]) => ({ raisedBy: raisedBy.split(/,|\band\b/).map((model) => model.trim()).filter(Boolean) }));
-  return { grade: grade.toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base, declined };
+    .map(([, finding, raisedBy, reason]) => ({
+      finding: finding.trim().toLowerCase(),
+      raisedBy: raisedBy.split(/,|\band\b/).map((model) => model.trim()).filter(Boolean),
+      reason: reason.trim(),
+    }));
+  return { grade: grade.toLowerCase(), reviewers: reviewers.replace(/^\s*by\s+/i, '').toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base, declined };
 };
 
 export const parseDoor = (body) => {
@@ -89,8 +93,10 @@ export const decide = (facts) => {
     if (receipt.grade === 'panel' || receipt.grade === 'high') holds.push(`review-it graded ${receipt.grade}`);
     if (receipt.grade === 'skip') holds.push('graded skip: no reviewer saw the change');
     if (receipt.rejected > 0) {
-      const declined = receipt.declined ?? [];
-      if (declined.length !== receipt.rejected) holds.push(`${receipt.rejected} rejected review finding(s) without one \`- Declined:\` reason each`);
+      const declined = (receipt.declined ?? []).filter((entry) => entry.finding && entry.reason && entry.raisedBy.length);
+      const distinct = new Set(declined.map((entry) => entry.finding));
+      const named = declined.every((entry) => entry.raisedBy.every((model) => receipt.reviewers.includes(model.toLowerCase())));
+      if (distinct.size !== receipt.rejected || declined.length !== receipt.rejected || !named) holds.push(`${receipt.rejected} rejected review finding(s) without one \`- Declined:\` reason each`);
       else if (declined.some((entry) => entry.raisedBy.length > 1)) holds.push('a declined finding was raised by more than one reviewer');
     }
     if (receipt.open > 0) holds.push(`${receipt.open} review finding(s) or blocker(s) left open`);
