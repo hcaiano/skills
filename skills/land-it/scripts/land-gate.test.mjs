@@ -125,13 +125,16 @@ test("owner bypass only covers owner-only rulesets and met classic protection", 
   const none = Object.assign(new Error("gh: Upgrade to GitHub Pro (HTTP 403)"), { stderr: "HTTP 403" });
   assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, none)), true);
   assert.equal(ownerBypass(p, "a/b", responses([owner, { type: "pull_request", ruleset_id: 1 }], { current_user_can_bypass: "always" }, none)), false);
-  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "pull_requests_only" }, none)), false);
   assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_status_checks: { contexts: ["build-and-test"] } })), false);
   assert.equal(ownerBypass(pr({ statusCheckRollup: [{ __typename: "CheckRun", name: "build-and-test", status: "COMPLETED", conclusion: "SUCCESS" }] }), "a/b",
     responses([owner], { current_user_can_bypass: "always" }, { required_status_checks: { contexts: ["build-and-test"] } })), true);
   assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_pull_request_reviews: { required_approving_review_count: 1 } })), false);
   assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_signatures: { enabled: true } })), false);
   assert.equal(ownerBypass(p, "a/b", () => { throw new Error("HTTP 500"); }), false);
+  assert.equal(ownerBypass(p, "a/b", responses([], { current_user_can_bypass: "always" }, none)), false);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "pull_requests_only" }, none)), true);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, Object.assign(new Error("x"), { stderr: "HTTP 403 Forbidden" }))), false);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_pull_request_reviews: { required_approving_review_count: 0, require_last_push_approval: true } })), false);
 });
 
 test("a standard receipt lands and a high receipt holds", () => {

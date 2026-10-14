@@ -181,17 +181,19 @@ export const ownerBypass = (pr, slug, api = (path) => JSON.parse(gh('api', '--pa
     const rules = api(`repos/${slug}/rules/branches/${encodeURIComponent(pr.baseRefName)}`).flat();
     if (!rules.length || !rules.every((rule) => ownerOnlyRules.has(rule.type))) return false;
     const ids = [...new Set(rules.map((rule) => rule.ruleset_id))];
-    if (!ids.every((id) => api(`repos/${slug}/rulesets/${id}`).flat()[0]?.current_user_can_bypass === 'always')) return false;
+    if (!ids.every((id) => ['always', 'pull_requests_only'].includes(api(`repos/${slug}/rulesets/${id}`).flat()[0]?.current_user_can_bypass))) return false;
     let protection = null;
     try {
       protection = api(`repos/${slug}/branches/${encodeURIComponent(pr.baseRefName)}/protection`).flat()[0];
     } catch (error) {
-      // Private repositories on a free plan have no classic protection (HTTP 403/404).
-      if (!/HTTP 40[34]/.test(String(error.stderr ?? error.message))) return false;
+      // No classic protection: none set (404) or a private repository on a free plan.
+      if (!/HTTP 404|Upgrade to GitHub Pro/.test(String(error.stderr ?? error.message))) return false;
     }
     if (!protection) return true;
     if (protection.required_signatures?.enabled || protection.lock_branch?.enabled || protection.restrictions) return false;
-    if ((protection.required_pull_request_reviews?.required_approving_review_count ?? 0) > 0 && pr.reviewDecision !== 'APPROVED') return false;
+    const reviews = protection.required_pull_request_reviews;
+    if (reviews && (reviews.required_approving_review_count > 0 || reviews.require_code_owner_reviews || reviews.require_last_push_approval)
+      && pr.reviewDecision !== 'APPROVED') return false;
     const passed = new Set((pr.statusCheckRollup ?? []).filter((check) => checkState(check) === 'pass').map((check) => check.name ?? check.context));
     const required = [...(protection.required_status_checks?.contexts ?? []), ...(protection.required_status_checks?.checks ?? []).map((check) => check.context)];
     return required.every((context) => passed.has(context));
