@@ -47,11 +47,10 @@ accounts serving the same model do not add model diversity.
 
 To pick a delegate, pass each preference tier as one `--candidate` flag,
 listing every instance that serves each model in that tier. Delegate to
-`choice`: it comes from the first tier with an available or protected
-candidate, so preference outranks pace. One exception: when that tier's best
-candidate is protected and the next tier's best is available or burns at a
-lower pace, `choice` is the next tier's, so an account above pace hands work
-one tier down, never further.
+`choice`: the lowest-pace available candidate of the first tier holding one,
+however far down. With no available candidate in any tier, it is the protected
+candidate with the lowest pace across all tiers, so the burn spreads to the
+pool with the most room.
 A null `choice` is a capacity blocker: report it, never guess.
 
 To resolve a configured role, save `orchestrator_capabilities` as JSON and run:
