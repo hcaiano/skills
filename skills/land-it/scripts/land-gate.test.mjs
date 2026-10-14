@@ -92,6 +92,11 @@ test("the Merge danger line decides the door, and any one-way mention wins", () 
   assert.equal(parseDoor("**Merge danger.** Door: two-way. Blast radius: small."), "two-way");
 });
 
+test("a standard receipt lands and a high receipt holds", () => {
+  assert.equal(decide(facts({ body: body(`standard by claude-opus-5-5, gpt-6.1-sol; 1 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) })).action, "merge");
+  assert.deepEqual(decide(facts({ body: body(`high by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) })).reasons, ["review-it graded high"]);
+});
+
 test("an old receipt, a skip grade, a closed PR and a rollup with no success each stop the merge", () => {
   const old = facts({ body: body("single by gpt-6.1-sol; 0 fixed, 0 rejected; reviewed 0123456") });
   assert.deepEqual(decide(old).reasons, ["no review-it receipt in the PR body"]);

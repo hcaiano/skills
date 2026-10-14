@@ -22,40 +22,37 @@ model families that wrote the change, delegated workers included.
 
 - `skip`: only docs, comments or copy; no code that runs and no agent
   instructions.
-- `panel`: the change touches security, auth, permissions, payments,
+- `high`: the change touches security, auth, permissions, payments,
   migrations or destructive data, or it is a one-way door (a public contract or
   stored format that is hard to revert).
-- `single`: every other change, however many files or subsystems it touches.
+- `standard`: every other change, however many files or subsystems it touches.
 
-A grade the user gives is a floor. `skip` goes straight to the receipt.
+A grade the user gives is a floor. `skip` goes straight to the receipt. The
+grade sets reviewer effort and whether `land-it` may merge without the user.
 
 ## 3. Review
 
-`single`: one reviewer at `high` from the `interrogate reviewers` line of
-`pstack-models.md`, resolved with `t3-capacity` as one tier per model in line
-order, with a lead model that did not write the change first when there is one.
-Authorship only orders the models, so a reviewer from the author's family is a
-normal review.
-The brief carries the absolute path of the [review brief](references/review-brief.md),
-the worktree, the pinned range, the intent and acceptance criteria, and the
-paths of any spec, issue and repo instruction files.
-
-`panel`: run `interrogate` on the pinned range with the same intent, its seats
-at `xhigh`; its Act On findings are the findings.
+Run `interrogate` once on the pinned range with the intent and acceptance
+criteria, its seats from the `interrogate reviewers` line of `pstack-models.md`
+resolved with `t3-capacity`: two reviewers in parallel, at `high` for
+`standard` and `xhigh` for `high`. Each brief also carries the absolute path of
+the [review brief](references/review-brief.md), the worktree, and the paths of
+any spec, issue and repo instruction files. Its Act On findings are the
+findings. A reviewer from the author's family is a normal review.
 
 Staff every reviewer through `delegate_task` in runtime mode `full-access` with
 the read-only brief: a headless run has nobody to approve it. When every model
 on the line is out of capacity, report a blocker. Where `delegate_task` is
 unavailable, as in a subagent (`parent_not_active`), hand the pinned range back
 to the parent as a blocker. After staffing, end the turn; the completion
-notification wakes you.
+notifications wake you.
 
 A review counts once it returns a substantive verdict on the pinned HEAD; restaff
 refusals, quota errors and empty results. Watch every seat for a _stalled_ run as
 `~/.agents/skills/poteto-mode/references/t3-execution.md` describes: a stalled
 seat's final verdict counts as its review. A finding that names a concrete
-failure in a `panel` category, or a race or compatibility break with a real
-consequence, promotes `single` to `panel`.
+failure in a `high` category, or a race or compatibility break with a real
+consequence, raises the grade to `high`.
 
 ## 4. Fix
 
@@ -66,8 +63,8 @@ the diff go to the user. Rerun the affected checks and commit.
 
 Check every fix yourself against its finding and commit it. Run a confirmation review only
 when a fix changed behaviour beyond what its finding named: one new reviewer at
-`high`, chosen like `single` with the authors of the fixes in place of the
-change's authors, reads only the fix range (the last reviewed head to the new
+`high` from the `interrogate reviewers` line, preferably one that did not
+write the fixes, reads only the fix range (the last reviewed head to the new
 HEAD) with the prior findings. Apply, check and commit its valid findings. After
 that one confirmation, or for a finding that needs a new design, the remaining
 findings count as `open` and go to the user. A PR gets one full review;
@@ -82,4 +79,4 @@ to the user, blockers and seats that never returned a verdict; `reviewed`
 names the base branch and the head the last round saw, or the head after the
 fixes you checked against their findings when no confirmation ran:
 
-`**Review.** <skip | single | panel> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <short SHA> on <base branch>`
+`**Review.** <skip | standard | high> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <short SHA> on <base branch>`
