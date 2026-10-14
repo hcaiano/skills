@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdir, mkdtemp, readFile, stat, utimes, writeFile, open } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, stat, utimes, writeFile, open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -147,6 +147,47 @@ test('strong credential indicators hide entire string values', async t => {
   await put(root, 'codex-home/sessions/strong-indicators.jsonl', [{ timestamp: from, values }]);
   const { rows } = await run('collect-sessions.mjs', root);
   assert.deepEqual(rows[0].raw.values, Array(values.length).fill('[REDACTED: credential]'));
+});
+
+test('credential strings shaped like flags are redacted in argument arrays', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/flag-credentials.jsonl', [{ timestamp: from,
+    argv: ['tool', '--ghp_FAKE_VALUE', '--verbose'],
+  }]);
+  const { rows } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw.argv, ['tool', '[REDACTED: credential]', '--verbose']);
+});
+
+test('numeric token counters survive while token assignments are redacted', async t => {
+  const root = await fixture(t);
+  const counters = ['Usage: input_tokens=123 output_tokens=456', 'tokens: 123', 'cached_tokens=0', 'tokens="123"'];
+  const assignments = ['token=COUNTER_SECRET', 'api_token=COUNTER_SECRET', 'access_token=COUNTER_SECRET',
+    'tokens: COUNTER_SECRET', 'input_tokens=123 token=COUNTER_SECRET', 'token=123'];
+  await put(root, 'codex-home/sessions/token-counters.jsonl', [{ timestamp: from, counters, assignments }]);
+  const { rows } = await run('collect-sessions.mjs', root);
+  assert.deepEqual(rows[0].raw.counters, counters);
+  assert.deepEqual(rows[0].raw.assignments, Array(assignments.length).fill('[REDACTED: credential]'));
+});
+
+test('output permissions are private on creation and tightened before refusing reuse', async t => {
+  const root = await fixture(t);
+  await put(root, 'codex-home/sessions/permissions.jsonl', [{ timestamp: from, text: 'visible evidence' }]);
+  const { out, index } = await run('collect-sessions.mjs', root);
+  const paths = ['index.json', ...index.parts.map(part => part.file)].map(file => join(out, file));
+  assert.equal((await stat(out)).mode & 0o777, 0o700);
+  const before = [];
+  for (const path of paths) {
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    before.push(await readFile(path));
+    await chmod(path, 0o666);
+  }
+  await chmod(out, 0o777);
+  await assert.rejects(exec(process.execPath, [join(scripts, 'collect-sessions.mjs'), '--home', root, '--out', out, '--from', from, '--to', to]), e => e.code === 1);
+  assert.equal((await stat(out)).mode & 0o777, 0o700);
+  for (const [i, path] of paths.entries()) {
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.deepEqual(await readFile(path), before[i]);
+  }
 });
 
 test('ordinary credential discussion and flags without values remain visible', async t => {
