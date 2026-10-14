@@ -34,7 +34,7 @@ It prints the `action` it took or needs, with `reasons`. The script header
 lists every rule. Risk comes from what the PR already records: `Door:
 two-way` from `write-pr`, and the `review-it` receipt graded `standard` (or
 the older `single`) with no
-rejected and no open findings, on the code and base being merged. It merges with a method the repository allows and leaves branch
+open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer, on the code and base being merged. It merges with a method the repository allows and leaves branch
 protection to GitHub; a rule it cannot satisfy becomes a hold.
 
 ## 3. Act on the action

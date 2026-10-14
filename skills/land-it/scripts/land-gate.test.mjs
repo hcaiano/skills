@@ -74,7 +74,7 @@ test("risk, disagreement, foreign authorship and open review state each hold the
       "hold label: do-not-merge",
       "Door: one-way",
       "review-it graded panel",
-      "2 rejected review finding(s): reviewers did not all agree",
+      "2 rejected review finding(s) without one `- Declined:` reason each",
       "1 review finding(s) or blocker(s) left open",
       "reviewed on fix/below, but the base is now feature/epic",
       "HEAD changed since the review of 0123456",
@@ -90,6 +90,15 @@ test("the Merge danger line decides the door, and any one-way mention wins", () 
   assert.equal(parseDoor("Old notes said Door: two-way.\n\n**Merge danger.** Door: one-way. Blast radius: data."), "one-way");
   assert.equal(parseDoor("We now read `Door: two-way` from write-pr.\n\n**Merge danger.** Blast radius: small."), null);
   assert.equal(parseDoor("**Merge danger.** Door: two-way. Blast radius: small."), "two-way");
+});
+
+test("reasoned declines land; unexplained or shared ones hold", () => {
+  const receipt = `standard by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 1 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`;
+  const reasoned = `${body(receipt)}\n- Declined: rename the helper (raised by gpt-6.1-sol): the name matches the API it wraps.`;
+  assert.equal(decide(facts({ body: reasoned })).action, "merge");
+  assert.deepEqual(decide(facts({ body: body(receipt) })).reasons, ["1 rejected review finding(s) without one `- Declined:` reason each"]);
+  const shared = `${body(receipt)}\n- Declined: drop the cache (raised by claude-opus-5-5, gpt-6.1-sol): it is measured.`;
+  assert.deepEqual(decide(facts({ body: shared })).reasons, ["a declined finding was raised by more than one reviewer"]);
 });
 
 test("a standard receipt lands and a high receipt holds", () => {

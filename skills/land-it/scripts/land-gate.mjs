@@ -14,8 +14,9 @@
 //     appears anywhere in the body;
 //   - its last `**Review.**` line is review-it's receipt
 //     `<grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>`
-//     graded standard (or the older single) with no rejected and no open
-//     findings: every reviewer agreed;
+//     graded standard (or the older single) with no open findings, and one
+//     `- Declined: <finding> (raised by <model>): <reason>` line after it for
+//     each rejected finding, none raised by more than one reviewer;
 //   - the review saw this base, and the reviewed commit still describes the
 //     change: the head is that commit, or merging the reviewed commit with the
 //     base the head now contains gives exactly the head's tree;
@@ -37,12 +38,19 @@ const receiptPattern = /^\*\*Review\.\*\*\s*(skip|single|standard|panel|high)\b[
 
 // The last `**Review.**` line is the receipt; a last line in any other shape
 // is no receipt, so an older approval above it never counts.
+// Each rejected finding is one `- Declined: <finding> (raised by <models>): <reason>`
+// line after the receipt.
+const declinedPattern = /^-\s*Declined:\s*.+?\(raised by ([^)]+)\):\s*(\S.*)$/i;
+
 export const parseReceipt = (body) => {
-  const line = (body ?? '').split('\n').filter((candidate) => candidate.trimStart().startsWith('**Review.**')).at(-1);
-  const match = receiptPattern.exec(line?.trimStart() ?? '');
+  const lines = (body ?? '').split('\n');
+  const index = lines.findLastIndex((candidate) => candidate.trimStart().startsWith('**Review.**'));
+  const match = receiptPattern.exec(lines[index]?.trimStart() ?? '');
   if (!match) return null;
   const [, grade, fixed, rejected, open, sha, base] = match;
-  return { grade: grade.toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base };
+  const declined = lines.slice(index + 1).map((line) => declinedPattern.exec(line.trim())).filter(Boolean)
+    .map(([, raisedBy]) => ({ raisedBy: raisedBy.split(/,|\band\b/).map((model) => model.trim()).filter(Boolean) }));
+  return { grade: grade.toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base, declined };
 };
 
 export const parseDoor = (body) => {
@@ -80,7 +88,11 @@ export const decide = (facts) => {
   else {
     if (receipt.grade === 'panel' || receipt.grade === 'high') holds.push(`review-it graded ${receipt.grade}`);
     if (receipt.grade === 'skip') holds.push('graded skip: no reviewer saw the change');
-    if (receipt.rejected > 0) holds.push(`${receipt.rejected} rejected review finding(s): reviewers did not all agree`);
+    if (receipt.rejected > 0) {
+      const declined = receipt.declined ?? [];
+      if (declined.length !== receipt.rejected) holds.push(`${receipt.rejected} rejected review finding(s) without one \`- Declined:\` reason each`);
+      else if (declined.some((entry) => entry.raisedBy.length > 1)) holds.push('a declined finding was raised by more than one reviewer');
+    }
     if (receipt.open > 0) holds.push(`${receipt.open} review finding(s) or blocker(s) left open`);
     if (receipt.base !== pr.baseRefName) holds.push(`reviewed on ${receipt.base}, but the base is now ${pr.baseRefName}`);
     if (facts.reviewed && !facts.reviewed.matches) holds.push(facts.reviewed.reason);
