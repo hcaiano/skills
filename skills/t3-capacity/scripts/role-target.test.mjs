@@ -16,14 +16,14 @@ const catalog = { providers: [
 const mapped = [
   { id: 'codex', driver: 'codex', pools: ['codex:default'] },
   { id: 'codex_second', driver: 'codex', pools: ['codex:second'] },
-  { id: 'claude', driver: 'claudeAgent', pools: ['claude'] },
+  { id: 'claude', driver: 'claudeAgent', pools: ['claude:games'] },
   { id: 'grok', driver: 'grok', pools: ['grok'] },
   { id: 'cursor', driver: 'cursor', pools: ['cursor_models', 'other_models'] },
 ];
 const pool = (state, pace) => ({ state, reading: { pace, used_percent: 40 } });
 const accounts = {
   'codex:default': pool('protected', 1.3), 'codex:second': pool('available', 0.6),
-  claude: pool('available', 0.4), grok: pool('available', 0.3),
+  'claude:games': pool('available', 0.4), grok: pool('available', 0.3),
   cursor_models: pool('available', 0.2), other_models: pool('unavailable', 2),
 };
 const resolve = (text, role, providers = catalog.providers, readings = accounts, mappings = mapped) =>
@@ -59,7 +59,7 @@ test('equal models compete by capacity within their tier', () => {
 test('a protected first tier yields only to the immediate next tier', () => {
   const readings = { ...accounts, 'codex:second': pool('unavailable', 2) };
   assert.equal(resolve('fix: capacity[sol > opus > fast]', 'fix', catalog.providers, readings)[0].target.model, 'opus');
-  readings.claude = pool('unavailable', 2);
+  readings['claude:games'] = pool('unavailable', 2);
   assert.equal(resolve('fix: capacity[sol > opus > fast]', 'fix', catalog.providers, readings)[0].target.model, 'sol');
 });
 
@@ -89,7 +89,7 @@ test('a missing catalog model is reported and later tiers can still take work', 
 test('unavailable and unknown capacity never produce a target', () => {
   const [seat] = resolve('fix: capacity[sol > opus]', 'fix', catalog.providers,
     { ...accounts, 'codex:default': pool('unknown', null), 'codex:second': pool('unavailable', 2),
-      claude: pool('unknown', null) });
+      'claude:games': pool('unknown', null) });
   assert.equal(seat.choice, null);
   assert.equal(seat.target, null);
   assert.match(seat.reason, /known available or protected capacity/u);

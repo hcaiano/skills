@@ -158,7 +158,6 @@ test("on macOS a Claude credentials file proves no account, since the quota read
     const t3Home = join(home, ".t3", "claude-home");
     mkdirSync(t3Home, { recursive: true });
     linkSync(join(home, ".claude", ".credentials.json"), join(t3Home, ".credentials.json"));
-    // A Keychain login that expires later than the file: usage-state takes it.
     const keychain = securityStub(`#!/bin/sh\nprintf '%s' '${JSON.stringify({
       claudeAiOauth: { accessToken: "keychain-token", expiresAt: now + 10 * 3600 * 1000 } })}'\n`);
     const seen = [];
@@ -178,14 +177,14 @@ test("on macOS a Claude credentials file proves no account, since the quota read
     try {
       const output = await run(args, env);
       assert.deepEqual(seen, ["Bearer keychain-token"]);
-      assert.equal(output.accounts.claude.state, "available");
+      assert.equal(output.accounts["claude:default"].state, "available");
       for (const instance of output.instances) {
         assert.deepEqual(instance.pools, [], `${instance.id} claims a read it cannot prove`);
         assert.match(instance.note, /Keychain/u);
       }
-      const declared = await run([...args, "--declare", "t3=claude"], env);
+      const declared = await run([...args, "--declare", "t3=claude:games"], env);
       assert.equal(declared.instances[0].proof, "user-declared");
-      assert.deepEqual(declared.instances[0].states, { claude: "available" });
+      assert.deepEqual(declared.instances[0].states, { "claude:games": "available" });
     } finally {
       server.close();
     }
@@ -345,4 +344,91 @@ test("role CLI reads the default models file and mapping, and returns complete d
     { encoding: "utf8", env: testEnv(env) });
   assert.equal(invalid.status, 2);
   assert.match(invalid.stderr, /cannot be combined/u);
+});
+
+test("named Claude mappings read independent accounts and select the one with capacity in candidate and role modes", async () => {
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-accounts-"));
+  const authDir = join(home, ".t3", "claude-auth-gatticaiano");
+  const games = { claudeAiOauth: { accessToken: "games-token" } };
+  const second = { claudeAiOauth: { accessToken: "second-token" } };
+  login(join(home, ".claude", ".credentials.json"), JSON.stringify(games));
+  login(join(authDir, ".credentials.json"), JSON.stringify(second));
+  const { createHash } = await import("node:crypto");
+  const service = `Claude Code-credentials-${createHash("sha256").update(authDir).digest("hex").slice(0, 8)}`;
+  const keychain = securityStub(`#!${process.execPath}
+console.log(JSON.stringify(process.argv[4] === ${JSON.stringify(service)} ? ${JSON.stringify(second)} : ${JSON.stringify(games)}));
+`);
+  const seen = [];
+  const server = await listen((request, response) => {
+    seen.push(request.headers.authorization);
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ seven_day: {
+      utilization: request.headers.authorization === "Bearer games-token" ? 95 : 10,
+      resets_at: new Date(Date.now() + 100 * 3600000).toISOString(),
+    } }));
+  });
+  const settings = settingsFile(home, {
+    claudeAgent: { driver: "claudeAgent", config: { binaryPath: "/opt/claude-launcher", homePath: join(home, "history") } },
+    claudeAgent_gatticaiano: { driver: "claudeAgent", config: { binaryPath: "/opt/claude-second", homePath: join(home, "history") } },
+    alias: { driver: "claudeAgent", config: {} },
+  });
+  const instances = {
+    claudeAgent: { driver: "claudeAgent", declare: "claude:games" },
+    claudeAgent_gatticaiano: { driver: "claudeAgent", declare: "claude:gatticaiano", secureStorageDir: authDir },
+    alias: { driver: "claudeAgent", declare: "claude:games" },
+  };
+  const mapping = join(home, "mapping.json");
+  writeFileSync(mapping, JSON.stringify({ settings, instances }));
+  const args = ["--mapping", mapping];
+  const env = { HOME: home, CODEX_BIN: join(home, "missing"), PATH: `${keychain}:${process.env.PATH}`,
+    CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/` };
+  try {
+    const output = await run([...args, "--candidate", "claudeAgent/opus,claudeAgent_gatticaiano/opus,alias/opus"], env);
+    assert.deepEqual(seen.sort(), ["Bearer games-token", "Bearer second-token"]);
+    assert.deepEqual(Object.keys(output.accounts).sort(),
+      ["claude:games", "claude:gatticaiano", "codex:default", "cursor_models", "grok", "other_models"]);
+    assert.deepEqual(output.accounts["claude:games"].instances, ["claudeAgent", "alias"]);
+    assert.deepEqual(output.accounts["claude:gatticaiano"].instances, ["claudeAgent_gatticaiano"]);
+    assert.equal(output.accounts["claude:games"].reading.used_percent, 95);
+    assert.equal(output.accounts["claude:gatticaiano"].reading.used_percent, 10);
+    assert.deepEqual(output.available, ["claude:gatticaiano"]);
+    assert.deepEqual(output.choice, { tier: 0, instance: "claudeAgent_gatticaiano", model: "opus",
+      pool: "claude:gatticaiano", state: "available", pace: 0.16, used_percent: 10 });
+    const capabilities = join(home, "capabilities.json");
+    writeFileSync(capabilities, JSON.stringify({ providers: ["claudeAgent", "claudeAgent_gatticaiano"].map((id) => ({
+      providerInstanceId: id, driverKind: "claudeAgent", models: [{ id: "opus", options: [
+        { id: "effort", options: [{ id: "medium" }, { id: "high" }] },
+      ] }],
+    })) }));
+    const models = join(home, "models.md");
+    writeFileSync(models, "# effort high: feature\nfeature: capacity[opus]\n");
+    const role = await run([...args, "--role", "feature", "--models", models, "--capabilities", capabilities], env);
+    assert.deepEqual(role.seats[0].target, { providerInstanceId: "claudeAgent_gatticaiano", model: "opus",
+      options: [{ id: "effort", value: "high" }] });
+    assert.deepEqual(role.seats[0].candidates.map(({ model, pool }) => [model, pool]),
+      [["opus", "claude:games"], ["opus", "claude:gatticaiano"]]);
+    assert.equal(seen.length, 2);
+    const override = await run([...args, "--secure-storage-dir", `claudeAgent_gatticaiano=${authDir}`], env);
+    assert.equal(override.accounts["claude:gatticaiano"].reading.used_percent, 10);
+    const bare = spawnSync(process.execPath, [script, ...args, "--declare", "claudeAgent=claude"],
+      { encoding: "utf8", env: testEnv(env) });
+    assert.equal(bare.status, 2);
+    assert.match(bare.stderr, /cannot bill claude/u);
+    writeFileSync(mapping, JSON.stringify({ settings, instances: {
+      ...instances, alias: { driver: "claudeAgent", declare: "claude:games", secureStorageDir: authDir },
+    } }));
+    const conflict = spawnSync(process.execPath, [script, ...args], { encoding: "utf8", env: testEnv(env) });
+    assert.equal(conflict.status, 2);
+    assert.match(conflict.stderr, /names different login locations/u);
+  } finally { server.close(); }
+});
+
+test("two Claude pool names for the default login still map to one account", async () => {
+  const home = mkdtempSync(join(tmpdir(), "t3-capacity-claude-alias-"));
+  const settings = settingsFile(home, { main: { driver: "claudeAgent" }, alias: { driver: "claudeAgent" } });
+  const output = await run(["--settings", settings, "--instance", "main:claudeAgent", "--instance", "alias:claudeAgent",
+    "--declare", "main=claude:games", "--declare", "alias=claude:alias"], { HOME: home, CODEX_BIN: join(home, "missing") });
+  assert.deepEqual(output.instances.map(({ pools }) => pools), [["claude:games"], ["claude:games"]]);
+  assert.equal(output.accounts["claude:alias"].same_account_as, "claude:games");
+  assert.deepEqual(output.accounts["claude:games"].instances, ["main", "alias"]);
 });

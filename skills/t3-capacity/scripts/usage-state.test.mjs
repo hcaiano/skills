@@ -14,7 +14,7 @@ const script = join(here, "usage-state.mjs");
 // The macOS login keychain ignores HOME: every helper spawned here finds this
 // stub `security` first, so a real Claude login never reaches a test.
 const stubBin = mkdtempSync(join(tmpdir(), "t3-capacity-usage-stub-"));
-writeFileSync(join(stubBin, "security"), "#!/bin/sh\nexit 44\n");
+writeFileSync(join(stubBin, "security"), '#!/bin/sh\ncat "$HOME/.claude/.credentials.json" 2>/dev/null\n');
 chmodSync(join(stubBin, "security"), 0o755);
 process.env.PATH = `${stubBin}:${process.env.PATH}`;
 // Retries of a refused fixture connection wait milliseconds, not seconds.
@@ -116,7 +116,7 @@ printf 'Usage • Ultra  Resets ${reset}\\n  Auto 5%% used\\n  API 95%% used\\n'
   assert.equal(offline.cursor, null);
   assert.equal(offline.states.cursor_models, "unknown");
   assert.deepEqual(JSON.parse(result.stdout).states, {
-    claude: "protected",
+    "claude:default": "protected",
     codex: "unknown",
     cursor_models: "available",
     other_models: "unavailable",
@@ -296,8 +296,11 @@ const claudeFixture = async () => {
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   fixture.close = () => server.close();
-  fixture.run = (mode = "--live", env = {}) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [script, mode], { env: {
+  fixture.run = (mode = "--live", env = {}, platform = process.platform) => new Promise((resolve, reject) => {
+    const entry = `Object.defineProperty(process, 'platform', { value: ${JSON.stringify(platform)} });
+const { pathToFileURL } = await import('node:url');
+await import(pathToFileURL(process.argv[1]));`;
+    const child = spawn(process.execPath, ["--input-type=module", "--eval", entry, script, ...[mode].flat()], { env: {
       ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1", CODEX_BIN: join(home, "no-codex"),
       CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/`, ...env,
     } });
@@ -315,33 +318,31 @@ test("live Claude usage outranks the statusline snapshot, and a failed read reus
   try {
     const fresh = await run();
     assert.equal(claude.seen[0].authorization, "Bearer fixture-token");
-    assert.equal(fresh.claude_source, "oauth/usage");
-    assert.equal(fresh.claude.used_percent, 64);
-    assert.equal(fresh.claude.short_window.used_percent, 31);
-    // 64% after 34 of 168 hours burns far faster than the rest can fund.
-    assert.equal(fresh.states.claude, "protected");
+    assert.equal(fresh.claude_identities.default.source, "oauth/usage");
+    assert.equal(fresh.claude_identities.default.pool.used_percent, 64);
+    assert.equal(fresh.claude_identities.default.pool.short_window.used_percent, 31);
+    assert.equal(fresh.states["claude:default"], "protected");
     endSpacing(home);
     claude.answers = [{ status: 429 }];
     const limited = await run();
-    assert.equal(limited.claude_source, "oauth/usage, cached");
-    assert.equal(limited.claude.used_percent, 64);
-    assert.equal(limited.claude.stale_minutes, 0);
-    assert.match(limited.claude_note, /429/u);
-    assert.equal(limited.claude_error, undefined);
-    assert.equal(limited.states.claude, "protected");
-    // A refused token says nothing about load, and offline never reads the cache.
+    assert.equal(limited.claude_identities.default.source, "oauth/usage, cached");
+    assert.equal(limited.claude_identities.default.pool.used_percent, 64);
+    assert.equal(limited.claude_identities.default.pool.stale_minutes, 0);
+    assert.match(limited.claude_identities.default.note, /429/u);
+    assert.equal(limited.claude_identities.default.error, undefined);
+    assert.equal(limited.states["claude:default"], "protected");
     endSpacing(home);
     claude.answers = [{ status: 401 }];
     const refused = await run();
-    assert.equal(refused.claude_source, "statusline");
-    assert.match(refused.claude_error, /401/u);
-    assert.equal(refused.states.claude, "unknown");
-    assert.equal((await run("--offline")).claude_note, undefined);
+    assert.equal(refused.claude_identities.default.source, "statusline");
+    assert.match(refused.claude_identities.default.error, /401/u);
+    assert.equal(refused.states["claude:default"], "unknown");
+    assert.equal((await run("--offline")).claude_identities.default.note, undefined);
     ageCache(home);
     claude.answers = [{ status: 429 }];
     const expired = await run();
-    assert.equal(expired.claude_source, "statusline");
-    assert.equal(expired.states.claude, "unknown");
+    assert.equal(expired.claude_identities.default.source, "statusline");
+    assert.equal(expired.states["claude:default"], "unknown");
   } finally {
     claude.close();
   }
@@ -353,18 +354,16 @@ test("concurrent runs share one live read per account every two minutes", async 
   try {
     const runs = await Promise.all(Array.from({ length: 5 }, () => claude.run()));
     assert.equal(claude.seen.length, 1);
-    assert.deepEqual(runs.map((output) => output.claude.used_percent), [64, 64, 64, 64, 64]);
-    assert.deepEqual(runs.map((output) => output.states.claude), Array(5).fill("protected"));
-    // The others waited for the one read and reused it, marked as such.
-    const reused = runs.filter((output) => output.claude_note);
+    assert.deepEqual(runs.map((output) => output.claude_identities.default.pool.used_percent), [64, 64, 64, 64, 64]);
+    assert.deepEqual(runs.map((output) => output.states["claude:default"]), Array(5).fill("protected"));
+    const reused = runs.filter((output) => output.claude_identities.default.note);
     assert.equal(reused.length, 4);
     for (const output of reused) {
-      assert.equal(output.claude_source, "oauth/usage, cached");
-      assert.match(output.claude_note, /skipped/u);
+      assert.equal(output.claude_identities.default.source, "oauth/usage, cached");
+      assert.match(output.claude_identities.default.note, /skipped/u);
     }
-    // A later run inside the spacing never reaches the endpoint either.
     claude.answers = [{ status: 429 }];
-    assert.equal((await claude.run()).states.claude, "protected");
+    assert.equal((await claude.run()).states["claude:default"], "protected");
     assert.equal(claude.seen.length, 1);
   } finally {
     claude.close();
@@ -383,7 +382,7 @@ test("a read left unfinished by a dead process, or its lock, does not block the 
   try {
     const output = await claude.run();
     assert.equal(claude.seen.length, 1);
-    assert.equal(output.claude_source, "oauth/usage");
+    assert.equal(output.claude_identities.default.source, "oauth/usage");
   } finally {
     claude.close();
   }
@@ -393,11 +392,11 @@ test("a run inside the spacing after a refused token stays unknown", async () =>
   const claude = await claudeFixture();
   claude.answers = [{ status: 401 }];
   try {
-    assert.equal((await claude.run()).states.claude, "unknown");
+    assert.equal((await claude.run()).states["claude:default"], "unknown");
     const spaced = await claude.run();
     assert.equal(claude.seen.length, 1);
-    assert.match(spaced.claude_error, /401/u);
-    assert.equal(spaced.states.claude, "unknown");
+    assert.match(spaced.claude_identities.default.error, /401/u);
+    assert.equal(spaced.states["claude:default"], "unknown");
   } finally {
     claude.close();
   }
@@ -412,15 +411,14 @@ test("a 429 retries once Retry-After has passed, and a run without a recent read
     const retried = await claude.run("--live", env);
     assert.equal(claude.seen.length, 2);
     assert.ok(claude.seen[1].at - claude.seen[0].at >= 1000);
-    assert.equal(retried.claude_source, "oauth/usage");
-    assert.equal(retried.claude.used_percent, 64);
+    assert.equal(retried.claude_identities.default.source, "oauth/usage");
+    assert.equal(retried.claude_identities.default.pool.used_percent, 64);
     ageCache(claude.home);
     claude.answers = [{ status: 503, headers: { "retry-after": "0" } }];
     const failed = await claude.run("--live", { USAGE_STATE_RETRY_BASE_MS: "1" });
-    // The first try and two retries, then the snapshot rule.
     assert.equal(claude.seen.length, 5);
-    assert.match(failed.claude_error, /503/u);
-    assert.equal(failed.states.claude, "unknown");
+    assert.match(failed.claude_identities.default.error, /503/u);
+    assert.equal(failed.states["claude:default"], "unknown");
   } finally {
     claude.close();
   }
@@ -432,21 +430,19 @@ test("a body cut off mid-read retries, and a long Retry-After holds every run of
   try {
     const retried = await claude.run();
     assert.equal(claude.seen.length, 2);
-    assert.equal(retried.claude_source, "oauth/usage");
+    assert.equal(retried.claude_identities.default.source, "oauth/usage");
     ageCache(claude.home);
     claude.answers = [{ status: 429, headers: { "retry-after": "300" } }];
     const limited = await claude.run();
-    // Too long to wait for here: one request, then the cache rule.
     assert.equal(claude.seen.length, 3);
-    assert.equal(limited.states.claude, "unknown");
-    // Past the two-minute spacing, the endpoint's five minutes still hold.
+    assert.equal(limited.states["claude:default"], "unknown");
     const file = join(claude.home, ".cache", "t3-capacity", "live-attempts.json");
     const attempts = JSON.parse(readFileSync(file, "utf8"));
     for (const attempt of Object.values(attempts)) attempt.started -= 3 * 60000;
     writeFileSync(file, JSON.stringify(attempts));
     const held = await claude.run();
     assert.equal(claude.seen.length, 3);
-    assert.match(held.claude_error, /skipped.*429/u);
+    assert.match(held.claude_identities.default.error, /skipped.*429/u);
   } finally {
     claude.close();
   }
@@ -487,15 +483,13 @@ test("reads are live by default, and a pool that empties early raises an alert",
   const env = { ...process.env, HOME: home, USAGE_STATE_SKIP_CURSOR: "1", CODEX_BIN: join(home, "no-codex"),
     CLAUDE_USAGE_URL: "http://127.0.0.1:9/" };
   const byDefault = JSON.parse(spawnSync(process.execPath, [script], { encoding: "utf8", env, timeout: 10000 }).stdout);
-  // The default run tried the live read (and failed here), so the snapshot is
-  // not account proof: it keeps its protected state but raises no alert.
-  assert.match(byDefault.claude_error, /live quota unavailable/u);
-  assert.equal(byDefault.states.claude, "protected");
+  assert.match(byDefault.claude_identities.default.error, /live quota unavailable/u);
+  assert.equal(byDefault.states["claude:default"], "protected");
   assert.deepEqual(byDefault.alerts, []);
   const offline = JSON.parse(spawnSync(process.execPath, [script, "--offline"], { encoding: "utf8", env, timeout: 10000 }).stdout);
-  assert.equal(offline.claude_error, undefined);
-  assert.deepEqual(offline.alerts.map((alert) => alert.pool), ["claude"]);
-  assert.equal(offline.states.claude, "protected");
+  assert.equal(offline.claude_identities.default.error, undefined);
+  assert.deepEqual(offline.alerts.map((alert) => alert.pool), ["claude:default"]);
+  assert.equal(offline.states["claude:default"], "protected");
 });
 
 test("a home reached under two identity names is one account, not a shared folder", () => {
@@ -533,8 +527,8 @@ test("an expired stored Claude login is refused before any request", async () =>
       CLAUDE_USAGE_URL: `http://127.0.0.1:${server.address().port}/`,
     } });
     const output = JSON.parse(run.stdout);
-    assert.match(output.claude_error, /expired/u);
-    assert.equal(output.states.claude, "unknown");
+    assert.match(output.claude_identities.default.error, /expired/u);
+    assert.equal(output.states["claude:default"], "unknown");
   } finally {
     server.close();
   }
@@ -554,4 +548,94 @@ test("a pool spending fast in its first hours already reads as protected", async
   assert.equal(poolState({ ...quiet, stale_minutes: 0 }), "available");
   // Early-empty alerts wait for 12 whole hours of history.
   assert.equal(pace(19, 168 - 11.75).elapsed_hours, 11);
+});
+
+test("Claude credentials follow Linux files and macOS Keychain services", async () => {
+  const fixture = await claudeFixture();
+  const named = join(fixture.home, "auth-second");
+  mkdirSync(named);
+  writeFileSync(join(named, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "linux-second" } }));
+  const keychain = join(fixture.home, "security");
+  const servicesFile = join(fixture.home, "services.jsonl");
+  writeFileSync(keychain, `#!${process.execPath}
+require('node:fs').appendFileSync(${JSON.stringify(servicesFile)}, JSON.stringify(process.argv.slice(2)) + '\\n');
+console.log(JSON.stringify({ claudeAiOauth: { accessToken: 'mac-login' } }));
+`);
+  chmodSync(keychain, 0o755);
+  try {
+    const linux = await fixture.run(["--claude-logins", JSON.stringify([{ name: "games" }, { name: "second", secureStorageDir: named }])], {}, "linux");
+    assert.deepEqual(fixture.seen.map(({ authorization }) => authorization).sort(), ["Bearer fixture-token", "Bearer linux-second"]);
+    assert.equal(linux.claude_identities.second.pool.used_percent, 64);
+    const missing = await fixture.run(["--claude-logins", JSON.stringify([{ name: "missing", secureStorageDir: join(named, "absent") }])], {}, "linux");
+    assert.equal(missing.claude_identities.missing.state, "unknown");
+    assert.equal(fixture.seen.length, 2);
+    for (const dir of [null, "/Users/hcaiano/.t3/claude-home", "/Users/test/café", "/Users/test/cafe\u0301"]) {
+      const mac = await fixture.run(["--claude-logins", JSON.stringify([{ name: "mac", secureStorageDir: dir }])],
+        { PATH: `${fixture.home}:${process.env.PATH}` }, "darwin");
+      assert.equal(mac.claude_identities.mac.pool.used_percent, 64);
+    }
+    assert.deepEqual(JSON.parse('[' + readFileSync(servicesFile, 'utf8').trim().split('\n').join(',') + ']'), [
+      ["find-generic-password", "-s", "Claude Code-credentials", "-w"],
+      ["find-generic-password", "-s", "Claude Code-credentials-3b43c7fd", "-w"],
+      ["find-generic-password", "-s", "Claude Code-credentials-ec5578f1", "-w"],
+      ["find-generic-password", "-s", "Claude Code-credentials-ec5578f1", "-w"],
+    ]);
+    assert.deepEqual(fixture.seen.map(({ authorization }) => authorization).sort(),
+      ["Bearer fixture-token", "Bearer linux-second", "Bearer mac-login"]);
+  } finally { fixture.close(); }
+});
+
+test("Claude login names normalize paths and reject conflicting pool locations", async () => {
+  const { parseClaudeLogins } = await import("./usage-state.mjs");
+  assert.deepEqual(parseClaudeLogins([
+    { name: "games" }, { name: "second", secureStorageDir: "~/.t3/cafe\u0301" }, { name: "games", secureStorageDir: "" },
+  ], "/Users/test"), [
+    { name: "games", secureStorageDir: null }, { name: "second", secureStorageDir: "/Users/test/.t3/cafe\u0301" },
+  ]);
+  assert.throws(() => parseClaudeLogins([{ name: "games" }, { name: "games", secureStorageDir: "/other" }]),
+    /names different login locations/u);
+  assert.throws(() => parseClaudeLogins([{ name: "../bad" }]), /simple name/u);
+  assert.throws(() => parseClaudeLogins([{ name: "games", secureStorageDir: 3 }]), /secureStorageDir string/u);
+
+});
+
+test("named Claude accounts read their own tokens and cache, and only the default login gets the statusline", async () => {
+  const fixture = await claudeFixture();
+  const named = join(fixture.home, ".t3", "claude-auth-second");
+  mkdirSync(named, { recursive: true });
+  writeFileSync(join(named, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "second-token" } }));
+  const service = `Claude Code-credentials-${createHash("sha256").update(named).digest("hex").slice(0, 8)}`;
+  const keychain = join(fixture.home, "security");
+  writeFileSync(keychain, `#!${process.execPath}
+const fs = require('node:fs');
+const dir = process.argv[4] === ${JSON.stringify(service)} ? ${JSON.stringify(named)} : process.env.HOME + '/.claude';
+process.stdout.write(fs.readFileSync(dir + '/.credentials.json', 'utf8'));
+`);
+  chmodSync(keychain, 0o755);
+  const logins = JSON.stringify([{ name: "games" }, { name: "second", secureStorageDir: named }]);
+  try {
+    const env = { PATH: `${fixture.home}:${process.env.PATH}` };
+    const live = await fixture.run(["--live", "--claude-logins", logins], env);
+    assert.deepEqual(fixture.seen.map(({ authorization }) => authorization).sort(), ["Bearer fixture-token", "Bearer second-token"]);
+    assert.deepEqual(Object.keys(live.claude_identities).sort(), ["games", "second"]);
+    assert.deepEqual(live.states, { "claude:games": "protected", "claude:second": "protected",
+      codex: "unknown", cursor_models: "unknown", other_models: "unknown" });
+    assert.equal(live.claude_identities.games.pool.used_percent, 64);
+    assert.equal(live.claude_identities.second.pool.used_percent, 64);
+    const cached = await fixture.run(["--live", "--claude-logins", logins], env);
+    assert.equal(fixture.seen.length, 2);
+    assert.equal(cached.claude_identities.games.source, "oauth/usage, cached");
+    assert.equal(cached.claude_identities.second.source, "oauth/usage, cached");
+    const offline = await fixture.run(["--offline", "--claude-logins", logins], env);
+    assert.equal(offline.claude_identities.games.pool.used_percent, 10);
+    assert.equal(offline.claude_identities.games.source, "statusline");
+    assert.deepEqual(offline.claude_identities.second, { secure_storage_dir: named, pool: null, source: null, state: "unknown" });
+    writeFileSync(join(named, ".credentials.json"), JSON.stringify({ claudeAiOauth: { accessToken: "second-token", expiresAt: 1 } }));
+    const expired = await fixture.run(["--live", "--claude-logins", logins], env);
+    assert.equal(expired.claude_identities.games.pool.used_percent, 64);
+    assert.equal(expired.claude_identities.second.state, "unknown");
+    assert.equal(expired.claude_identities.second.pool, null);
+    assert.match(expired.claude_identities.second.error, /expired/u);
+    assert.equal(fixture.seen.length, 2);
+  } finally { fixture.close(); }
 });

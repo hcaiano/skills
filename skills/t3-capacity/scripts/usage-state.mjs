@@ -15,7 +15,7 @@
 //   days_to_empty    (100 - used) / burn_per_day; compare against days_left
 //   short_window     the pool's burst limit, when it publishes one
 //   stale_minutes    age of the snapshot; a stale pool reads cooler than it is
-// `states` classifies claude, codex, cursor_models, and other_models with
+// `states` classifies claude:<name>, codex, cursor_models, and other_models with
 // poolState below: no reading is unknown; >=90% of the window or the burst
 // window is unavailable; pace > 1 is protected; a snapshot older than 15
 // minutes is unknown. The first two outrank staleness, so a stale reading can
@@ -457,6 +457,41 @@ try {
 return codex;
 };
 
+export const parseClaudeLogins = (entries, home = os.homedir()) => {
+  if (!Array.isArray(entries)) throw new Error('Claude logins must be a list');
+  const logins = new Map();
+  for (const entry of entries) {
+    if (!entry || typeof entry.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]*$/u.test(entry.name ?? '')
+        || (entry.secureStorageDir != null && typeof entry.secureStorageDir !== 'string')) {
+      throw new Error('Claude login needs a simple name and optional secureStorageDir string');
+    }
+    const secureStorageDir = entry.secureStorageDir
+      ? path.resolve(entry.secureStorageDir.replace(/^~(?=\/|$)/u, home)) : null;
+    if (logins.has(entry.name) && logins.get(entry.name).secureStorageDir !== secureStorageDir) {
+      throw new Error(`Claude pool ${entry.name} names different login locations`);
+    }
+    logins.set(entry.name, { name: entry.name, secureStorageDir });
+  }
+  return [...logins.values()];
+};
+
+const claudeCredential = (secureStorageDir) => {
+  let text;
+  if (process.platform === 'darwin') {
+    const suffix = secureStorageDir
+      ? `-${crypto.createHash('sha256').update(secureStorageDir.normalize('NFC')).digest('hex').slice(0, 8)}` : '';
+    text = spawnSync('security', ['find-generic-password', '-s', `Claude Code-credentials${suffix}`, '-w'],
+      { encoding: 'utf8', timeout: 3000 }).stdout;
+  } else {
+    try { text = fs.readFileSync(path.join(secureStorageDir || path.join(os.homedir(), '.claude'), '.credentials.json'), 'utf8'); }
+    catch { return null; }
+  }
+  try {
+    const stored = JSON.parse(text).claudeAiOauth;
+    return stored?.accessToken ? stored : null;
+  } catch { return null; }
+};
+
 const main = async () => {
   let claude = null;
   try {
@@ -472,12 +507,16 @@ const main = async () => {
     };
   } catch {}
 
-  // Live is the default because staffing on hours-old snapshots misled
-  // September's gates. --live stays accepted for callers written before.
   const args = process.argv.slice(2);
-  const unknownArgs = args.filter((arg) => arg !== '--live' && arg !== '--offline');
-  if (unknownArgs.length || (args.includes('--live') && args.includes('--offline')))
-    throw new Error('usage: usage-state.mjs [--offline]');
+  let logins = [{ name: 'default', secureStorageDir: null }];
+  const flags = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--claude-logins') logins = parseClaudeLogins(JSON.parse(args[++i]));
+    else flags.push(args[i]);
+  }
+  if (flags.some((arg) => arg !== '--live' && arg !== '--offline')
+      || (flags.includes('--live') && flags.includes('--offline')))
+    throw new Error('usage: usage-state.mjs [--offline] [--claude-logins <JSON list>]');
   const live = !args.includes('--offline');
 
   // The statusline writes its snapshot only while an interactive Claude Code
@@ -486,25 +525,6 @@ const main = async () => {
   // with the token the CLI stored: the credentials file on Linux, the login
   // keychain on macOS. The helper never refreshes or writes the token; an
   // expired one fails the read like a failed Codex read.
-  // A credentials file left by an older install can outlive the keychain login
-  // Claude Code now uses on macOS, so take the credential that expires last,
-  // and refuse an expired one before it costs a request.
-  const claudeCredential = () => {
-    const found = [];
-    try {
-      const stored = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', '.credentials.json'), 'utf8'));
-      if (stored.claudeAiOauth?.accessToken) found.push(stored.claudeAiOauth);
-    } catch {}
-    if (process.platform === 'darwin') {
-      const keychain = spawnSync('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w'],
-        { encoding: 'utf8', timeout: 3000 });
-      try {
-        const stored = JSON.parse(keychain.stdout).claudeAiOauth;
-        if (stored?.accessToken) found.push(stored);
-      } catch {}
-    }
-    return found.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))[0] ?? null;
-  };
   // A missing or expired login fails before it claims a read or costs a request.
   const claudeRefusal = (credential) => {
     if (!credential) return 'no Claude Code login token';
@@ -526,11 +546,23 @@ const main = async () => {
     if (!poolFromRaw(raw)) throw new Error('usage endpoint sent an expired weekly window');
     return raw;
   };
-  // Each account is independent: start the Claude read now, join it below.
-  const credential = live ? claudeCredential() : null;
-  const refusal = live ? claudeRefusal(credential) : null;
-  const claudeLive = !live ? null : refusal ? Promise.resolve({ error: new Error(refusal) })
-    : liveRead(accountKey('claude', credential.accessToken), () => readClaudeLive(credential), { snapshot: claude });
+  const claudeReads = Promise.all(logins.map(async ({ name, secureStorageDir }) => {
+    let pool = secureStorageDir ? null : claude;
+    let source = pool ? 'statusline' : null;
+    let error = null;
+    let note = null;
+    if (live) {
+      const credential = claudeCredential(secureStorageDir);
+      const refusal = claudeRefusal(credential);
+      const read = refusal ? { error: new Error(refusal) }
+        : await liveRead(accountKey('claude', credential.accessToken), () => readClaudeLive(credential), { snapshot: pool });
+      if (read.error) error = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
+      else [pool, note, source] = [read.pool, read.note ?? null, read.note ? 'oauth/usage, cached' : 'oauth/usage'];
+    }
+    return [name, { secure_storage_dir: secureStorageDir, pool, source,
+      state: error && !['protected', 'unavailable'].includes(poolState(pool)) ? 'unknown' : poolState(pool),
+      ...(error ? { error } : {}), ...(note ? { note } : {}) }];
+  }));
   const homes = listCodexHomes();
 
   const measuredRaw = (reading) => {
@@ -598,33 +630,15 @@ const main = async () => {
   const codex = codexIdentities.default?.pool ?? null;
 
   const cursor = await readCursorUsage(live);
-  let claudeSource = claude ? 'statusline' : null;
-  let claudeError = null;
-  let claudeNote = null;
-  if (claudeLive) {
-    const read = await claudeLive;
-    if (read.error) claudeError = `live quota unavailable (${read.error.message}); snapshot is not current account proof`;
-    else [claude, claudeNote, claudeSource] = [read.pool, read.note ?? null, read.note ? 'oauth/usage, cached' : 'oauth/usage'];
-  }
-  // One state per pool, so a caller acts on `states` instead of re-deriving the
-  // thresholds. Codex takes its best identity's state: work can go to whichever
-  // account has room, and each identity's state already keeps a failed live
-  // read from reporting a snapshot as current headroom. Cursor's
-  // monthly pools share the snapshot age of the one /usage read.
+  const claudeIdentities = Object.fromEntries(await claudeReads);
   const cursorPool = (pool) => (pool ? { ...pool, stale_minutes: cursor.stale_minutes } : null);
-  const claudeState = claudeError && !['protected', 'unavailable'].includes(poolState(claude))
-    ? 'unknown' : poolState(claude);
   const states = {
-    claude: claudeState,
+    ...Object.fromEntries(Object.entries(claudeIdentities).map(([name, entry]) => [`claude:${name}`, entry.state])),
     codex: ['available', 'protected', 'unknown', 'unavailable']
       .find((state) => Object.values(codexIdentities).some((entry) => entry.state === state)) ?? poolState(null),
     cursor_models: poolState(cursorPool(cursor?.cursor_models)),
     other_models: poolState(cursorPool(cursor?.other_models)),
   };
-  // A pool that empties more than a day before its reset strands the rest of
-  // its window; the roster tells the lead what to do about it. Only a current
-  // reading with half a day of history can raise one: a failed live read keeps
-  // a stale snapshot's protected state, but never turns it into a new alert.
   const alerts = [];
   const earlyEmpty = (name, pool, failedRead) => {
     if (failedRead || pool?.stale_minutes == null || pool.stale_minutes > 15) return;
@@ -633,15 +647,15 @@ const main = async () => {
       alerts.push({ pool: name, days_to_empty: pool.days_to_empty, days_left: pool.days_left });
     }
   };
-  earlyEmpty('claude', claude, Boolean(claudeError || claudeNote));
+  for (const [name, entry] of Object.entries(claudeIdentities)) {
+    earlyEmpty(`claude:${name}`, entry.pool, Boolean(entry.error || entry.note));
+  }
   for (const [name, entry] of Object.entries(codexIdentities)) {
     earlyEmpty(`codex:${name}`, entry.pool, Boolean(entry.error || entry.note));
   }
   earlyEmpty('cursor_models', cursorPool(cursor?.cursor_models), false);
   earlyEmpty('other_models', cursorPool(cursor?.other_models), false);
-  console.log(JSON.stringify({ alerts, claude, claude_source: claudeSource,
-    ...(claudeError ? { claude_error: claudeError } : {}),
-    ...(claudeNote ? { claude_note: claudeNote } : {}),
+  console.log(JSON.stringify({ alerts, claude_identities: claudeIdentities,
     codex, cursor, codex_identities: codexIdentities,
     recommended_codex_identity: eligible[0]?.[0] ?? null, states }));
 };
