@@ -38,7 +38,8 @@ resolved with `t3-capacity`: two reviewers in parallel, at `high` for
 `standard` and `xhigh` for `high`. Each brief also carries the absolute path of
 the [review brief](references/review-brief.md), the worktree, and the paths of
 any spec, issue and repo instruction files. Its Act On findings are the
-findings. A reviewer from the author's family is a normal review.
+findings; a Consider finding you do not apply counts as `open`, and a Dismissed
+one as `rejected`, so the receipt shows every disagreement. A reviewer from the author's family is a normal review.
 
 Staff every reviewer through `delegate_task` in runtime mode `full-access` with
 the read-only brief: a headless run has nobody to approve it. When every model

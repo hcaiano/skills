@@ -52,7 +52,8 @@ Drop findings already open in a PR or proposed in an earlier retro thread.
 
 ## 3. Act
 
-Change only `hcaiano/skills`; this run writes nothing in any other repository.
+Change only `hcaiano/skills`; apart from the reinstall below, this run writes
+nothing in any other repository.
 A defect inside one of its skills gets fixed: branch, edit in the
 `writing-for-agents` style, run `review-it`, open the PR with `write-pr`, merge
 once the review is clean and checks pass, then reinstall on the Mac, the fleet
