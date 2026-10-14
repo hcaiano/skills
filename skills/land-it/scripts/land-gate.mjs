@@ -28,7 +28,9 @@
 //
 // --merge uses the first merge method the repository allows (squash, merge,
 // rebase) with --match-head-commit, so a push after the decision fails the
-// merge instead of landing unreviewed code. It never uses --admin. Git runs
+// merge instead of landing unreviewed code. It uses --admin only when
+// GitHub blocks a PR that passed every rule above and the viewer may always
+// bypass every ruleset on the base, as on an owner-only branch. Git runs
 // in the current directory, a checkout of the PR's repository.
 import { execFileSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
@@ -119,7 +121,12 @@ export const decide = (facts) => {
   if (holds.length) return { action: 'hold', reasons: [...holds, ...waits] };
   if (waits.length) return { action: 'wait', reasons: waits };
   if (pr.mergeStateStatus === 'BEHIND') return { action: 'update-branch', reasons: ['branch is behind its base'] };
-  if (pr.mergeStateStatus === 'BLOCKED') return { action: 'hold', reasons: ['branch protection blocks the merge'] };
+  if (pr.mergeStateStatus === 'BLOCKED') {
+    // A ruleset the viewer may always bypass (an owner-only branch) blocks a
+    // plain merge; every rule above already passed, so merge as that owner.
+    if (facts.rulesetBypass && pr.reviewDecision !== 'REVIEW_REQUIRED') return { action: 'merge', reasons: [], admin: true };
+    return { action: 'hold', reasons: ['branch protection blocks the merge'] };
+  }
   return { action: 'merge', reasons: [] };
 };
 
@@ -176,11 +183,19 @@ const gather = (target) => {
     unresolvedThreads += page.nodes.filter((thread) => !thread.isResolved).length;
     ({ hasNextPage: more, endCursor: after } = page.pageInfo);
   }
+  let rulesetBypass = false;
+  try {
+    const rules = JSON.parse(gh('api', `repos/${owner}/${name}/rules/branches/${encodeURIComponent(pr.baseRefName)}`));
+    const ids = [...new Set(rules.map((rule) => rule.ruleset_id))];
+    rulesetBypass = ids.length > 0 && ids.every((id) => JSON.parse(gh('api', `repos/${owner}/${name}/rulesets/${id}`)).current_user_can_bypass === 'always');
+  } catch {
+    rulesetBypass = false;
+  }
   const receipt = parseReceipt(pr.body);
   const reviewed = receipt && pr.state === 'OPEN' ? compareTrees(pr, receipt.sha, `${owner}/${name}`) : null;
   return {
     repo, owner, name,
-    facts: { pr, viewer, receipt, reviewed, unresolvedThreads, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body) },
+    facts: { pr, viewer, receipt, reviewed, unresolvedThreads, rulesetBypass, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body) },
   };
 };
 
@@ -198,7 +213,7 @@ const act = ({ repo, owner, name, facts }, decision) => {
   const method = repo.squashMergeAllowed ? '--squash' : repo.mergeCommitAllowed ? '--merge' : repo.rebaseMergeAllowed ? '--rebase' : null;
   if (!method) return { decision: { action: 'hold', reasons: ['the repository allows no merge method'] }, acted: null };
   try {
-    gh('pr', 'merge', String(pr.number), '-R', slug, method, '--match-head-commit', pr.headRefOid);
+    gh('pr', 'merge', String(pr.number), '-R', slug, method, '--match-head-commit', pr.headRefOid, ...(decision.admin ? ['--admin'] : []));
   } catch (error) {
     return { decision: { action: 'hold', reasons: [`merge rejected: ${firstLine(error)}`] }, acted: null };
   }

@@ -108,6 +108,12 @@ test("reasoned declines land; unexplained or shared ones hold", () => {
   assert.deepEqual(decide(facts({ body: repeated })).reasons, ["2 rejected review finding(s) without one `- Declined:` reason each"]);
 });
 
+test("an owner-only ruleset merges as the owner; anything else blocked holds", () => {
+  assert.deepEqual(decide(facts({ mergeStateStatus: "BLOCKED" }, { rulesetBypass: true })), { action: "merge", reasons: [], admin: true });
+  assert.deepEqual(decide(facts({ mergeStateStatus: "BLOCKED" }, { rulesetBypass: false })).reasons, ["branch protection blocks the merge"]);
+  assert.deepEqual(decide(facts({ mergeStateStatus: "BLOCKED", reviewDecision: "REVIEW_REQUIRED" }, { rulesetBypass: true })).reasons, ["branch protection blocks the merge"]);
+});
+
 test("a standard receipt lands and a high receipt holds", () => {
   assert.equal(decide(facts({ body: body(`standard by claude-opus-5-5, gpt-6.1-sol; 1 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) })).action, "merge");
   assert.deepEqual(decide(facts({ body: body(`high by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) })).reasons, ["review-it graded high"]);

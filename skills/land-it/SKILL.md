@@ -36,7 +36,9 @@ lists every rule. Risk comes from what the PR already records: `Door:
 two-way` from `write-pr`, and the `review-it` receipt graded `standard` (or
 the older `single`) with no
 open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer, on the code and base being merged. It merges with a method the repository allows and leaves branch
-protection to GitHub; a rule it cannot satisfy becomes a hold.
+protection to GitHub; a rule it cannot satisfy becomes a hold. When only a
+ruleset the user may always bypass blocks a PR that passed every rule (an
+owner-only branch), it merges as the user.
 
 ## 3. Act on the action
 
