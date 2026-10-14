@@ -124,7 +124,7 @@ export const decide = (facts) => {
   if (pr.mergeStateStatus === 'BLOCKED') {
     // A ruleset the viewer may always bypass (an owner-only branch) blocks a
     // plain merge; every rule above already passed, so merge as that owner.
-    if (facts.rulesetBypass && pr.reviewDecision !== 'REVIEW_REQUIRED') return { action: 'merge', reasons: [], admin: true };
+    if (facts.rulesetBypass) return { action: 'merge', reasons: [], admin: true };
     return { action: 'hold', reasons: ['branch protection blocks the merge'] };
   }
   return { action: 'merge', reasons: [] };
@@ -169,6 +169,37 @@ const readPr = (target) => {
   return pr;
 };
 
+// Owner-only rulesets restrict who updates a branch; anything else they could
+// require is left to GitHub, so a ruleset with any other rule is never bypassed.
+const ownerOnlyRules = new Set(['creation', 'update', 'deletion', 'non_fast_forward']);
+
+// True only when --admin can bypass nothing but owner-only rulesets: every
+// ruleset on the base is owner-only and always bypassable by the viewer, and
+// every classic protection requirement is met by this PR.
+export const ownerBypass = (pr, slug, api = (path) => JSON.parse(gh('api', '--paginate', '--slurp', path))) => {
+  try {
+    const rules = api(`repos/${slug}/rules/branches/${encodeURIComponent(pr.baseRefName)}`).flat();
+    if (!rules.length || !rules.every((rule) => ownerOnlyRules.has(rule.type))) return false;
+    const ids = [...new Set(rules.map((rule) => rule.ruleset_id))];
+    if (!ids.every((id) => api(`repos/${slug}/rulesets/${id}`).flat()[0]?.current_user_can_bypass === 'always')) return false;
+    let protection = null;
+    try {
+      protection = api(`repos/${slug}/branches/${encodeURIComponent(pr.baseRefName)}/protection`).flat()[0];
+    } catch (error) {
+      // Private repositories on a free plan have no classic protection (HTTP 403/404).
+      if (!/HTTP 40[34]/.test(String(error.stderr ?? error.message))) return false;
+    }
+    if (!protection) return true;
+    if (protection.required_signatures?.enabled || protection.lock_branch?.enabled || protection.restrictions) return false;
+    if ((protection.required_pull_request_reviews?.required_approving_review_count ?? 0) > 0 && pr.reviewDecision !== 'APPROVED') return false;
+    const passed = new Set((pr.statusCheckRollup ?? []).filter((check) => checkState(check) === 'pass').map((check) => check.name ?? check.context));
+    const required = [...(protection.required_status_checks?.contexts ?? []), ...(protection.required_status_checks?.checks ?? []).map((check) => check.context)];
+    return required.every((context) => passed.has(context));
+  } catch {
+    return false;
+  }
+};
+
 const gather = (target) => {
   const pr = readPr(target);
   const [, owner, name] = new URL(pr.url).pathname.split('/');
@@ -183,14 +214,7 @@ const gather = (target) => {
     unresolvedThreads += page.nodes.filter((thread) => !thread.isResolved).length;
     ({ hasNextPage: more, endCursor: after } = page.pageInfo);
   }
-  let rulesetBypass = false;
-  try {
-    const rules = JSON.parse(gh('api', `repos/${owner}/${name}/rules/branches/${encodeURIComponent(pr.baseRefName)}`));
-    const ids = [...new Set(rules.map((rule) => rule.ruleset_id))];
-    rulesetBypass = ids.length > 0 && ids.every((id) => JSON.parse(gh('api', `repos/${owner}/${name}/rulesets/${id}`)).current_user_can_bypass === 'always');
-  } catch {
-    rulesetBypass = false;
-  }
+  const rulesetBypass = ownerBypass(pr, `${owner}/${name}`);
   const receipt = parseReceipt(pr.body);
   const reviewed = receipt && pr.state === 'OPEN' ? compareTrees(pr, receipt.sha, `${owner}/${name}`) : null;
   return {
