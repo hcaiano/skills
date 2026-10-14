@@ -33,7 +33,7 @@ real complexity. In this order:
    read from stills.
 5. **Checks.** The checks actually run, their results and the verified commit,
    local and CI apart.
-6. **Review.** The `review-it` receipt line.
+6. **Review.** The `review-it` receipt line, with its `- Declined:` lines under it.
 
 Shape, with sections that do not apply dropped:
 
@@ -55,6 +55,7 @@ Baseline `<sha>`, final `<sha>`.
 **Checks.** <Local: check, result, commit. CI: result, commit.>
 
 **Review.** <grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>
+- Declined: <finding> (raised by <model>): <reason>
 ```
 
 No code snippets, diffs, diagrams or file lists: the reviewer has the diff.

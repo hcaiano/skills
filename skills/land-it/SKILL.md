@@ -1,12 +1,13 @@
 ---
 name: land-it
-description: "Merge a low-risk PR that every reviewer approved, test it after merge, and hand the thread back ready to settle. Use when a PR reaches merge-ready."
+description: "Merge a low-risk PR whose review findings are all fixed or declined with a reason, test it after merge, and hand the thread back ready to settle. Use when a PR reaches merge-ready."
 ---
 
 # Land it
 
 A PR is _landable_ when the change is easy to revert, low risk, and every
-reviewer agreed on the code that merges. Landable PRs merge without asking
+review finding on the code that merges is fixed, or raised by one reviewer and
+declined with a written reason. Landable PRs merge without asking
 the user; everything else waits for the user with its reasons.
 
 ## 1. Check the conversation
@@ -34,7 +35,7 @@ It prints the `action` it took or needs, with `reasons`. The script header
 lists every rule. Risk comes from what the PR already records: `Door:
 two-way` from `write-pr`, and the `review-it` receipt graded `standard` (or
 the older `single`) with no
-rejected and no open findings, on the code and base being merged. It merges with a method the repository allows and leaves branch
+open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer, on the code and base being merged. It merges with a method the repository allows and leaves branch
 protection to GitHub; a rule it cannot satisfy becomes a hold.
 
 ## 3. Act on the action

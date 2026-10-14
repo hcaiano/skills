@@ -34,18 +34,10 @@ effort and whether `land-it` may merge without the user.
 
 ## 3. Review
 
-Choose the reviewer count:
-
-- One reviewer for a small `standard` change: one concern, about 150 changed
-  lines or fewer, that a reviewer reads in a few minutes.
-- Two reviewers in parallel for any other `standard` change and every `high`
-  one.
-
-Take reviewers from the `interrogate reviewers` line of `pstack-models.md`,
-resolved with `t3-capacity`: start with the seat whose lead model did not write
-the change, and let each seat fall through its tiers when a model is out of
-capacity. Reviewers run at `high` for `standard` and `xhigh` for `high`. Run
-two reviewers as one `interrogate` round. Every brief carries the intent and
+Run `interrogate` once on the pinned range: two reviewers in parallel from the
+`interrogate reviewers` line of `pstack-models.md`, resolved with
+`t3-capacity`, starting with the seat whose lead model did not write the
+change, each seat falling through its tiers when a model is out of capacity. Reviewers run at `high` for `standard` and `xhigh` for `high`. Every brief carries the intent and
 acceptance criteria, the pinned range, the absolute path of the
 [review brief](references/review-brief.md), the worktree, and the paths of any
 spec, issue and repo instruction files. The Act On findings are the findings; a
@@ -92,3 +84,10 @@ names the base branch and the head the last round saw, or the head after the
 fixes you checked against their findings when no confirmation ran:
 
 `**Review.** <skip | standard | high> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <short SHA> on <base branch>`
+
+Under it, write one line per rejected finding:
+
+`- Declined: <finding> (raised by <model>): <specific reason>`
+
+Name every model that raised the finding. A finding two reviewers raised
+cannot be declined: it stays `open`.
