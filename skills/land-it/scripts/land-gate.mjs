@@ -95,7 +95,8 @@ export const decide = (facts) => {
     if (receipt.rejected > 0) {
       const declined = (receipt.declined ?? []).filter((entry) => entry.finding && entry.reason && entry.raisedBy.length);
       const distinct = new Set(declined.map((entry) => entry.finding));
-      const named = declined.every((entry) => entry.raisedBy.every((model) => receipt.reviewers.includes(model.toLowerCase())));
+      const reviewers = new Set(receipt.reviewers.split(/,|\band\b/).map((model) => model.trim()).filter(Boolean));
+      const named = declined.every((entry) => entry.raisedBy.every((model) => reviewers.has(model.toLowerCase())));
       if (distinct.size !== receipt.rejected || declined.length !== receipt.rejected || !named) holds.push(`${receipt.rejected} rejected review finding(s) without one \`- Declined:\` reason each`);
       else if (declined.some((entry) => entry.raisedBy.length > 1)) holds.push('a declined finding was raised by more than one reviewer');
     }

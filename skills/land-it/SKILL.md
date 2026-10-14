@@ -1,12 +1,13 @@
 ---
 name: land-it
-description: "Merge a low-risk PR that every reviewer approved, test it after merge, and hand the thread back ready to settle. Use when a PR reaches merge-ready."
+description: "Merge a low-risk PR whose review findings are all fixed or declined with a reason, test it after merge, and hand the thread back ready to settle. Use when a PR reaches merge-ready."
 ---
 
 # Land it
 
 A PR is _landable_ when the change is easy to revert, low risk, and every
-reviewer agreed on the code that merges. Landable PRs merge without asking
+review finding on the code that merges is fixed, or raised by one reviewer and
+declined with a written reason. Landable PRs merge without asking
 the user; everything else waits for the user with its reasons.
 
 ## 1. Check the conversation

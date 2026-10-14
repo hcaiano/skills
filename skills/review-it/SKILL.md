@@ -36,8 +36,8 @@ effort and whether `land-it` may merge without the user.
 
 Run `interrogate` once on the pinned range: two reviewers in parallel from the
 `interrogate reviewers` line of `pstack-models.md`, resolved with
-`t3-capacity`, each seat falling through its tiers when a model is out of
-capacity. Reviewers run at `high` for `standard` and `xhigh` for `high`. Every brief carries the intent and
+`t3-capacity`, starting with the seat whose lead model did not write the
+change, each seat falling through its tiers when a model is out of capacity. Reviewers run at `high` for `standard` and `xhigh` for `high`. Every brief carries the intent and
 acceptance criteria, the pinned range, the absolute path of the
 [review brief](references/review-brief.md), the worktree, and the paths of any
 spec, issue and repo instruction files. The Act On findings are the findings; a
@@ -88,3 +88,6 @@ fixes you checked against their findings when no confirmation ran:
 Under it, write one line per rejected finding:
 
 `- Declined: <finding> (raised by <model>): <specific reason>`
+
+Name every model that raised the finding. A finding two reviewers raised
+cannot be declined: it stays `open`.
