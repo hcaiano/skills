@@ -10,39 +10,20 @@ Run on the PC. The MacBook is reachable as `ssh mbp`. Report in Portuguese.
 
 ## 1. Collect
 
-The window runs from the time in `~/.local/state/workflow-retro/last-run`, or
-the last 24 hours on a first run. Gather, from both machines:
+Read [the collection commands](references/collection.md) and run the maintained
+scripts on the PC and Mac for the same `[last-run, now)` UTC window. On a first
+run, use the last 24 hours. Collect T3 activity and parent chains from read-only
+SQLite, provider sessions, PR evidence through `gh`, and scheduled tasks from
+both databases. Done when each source has an index with machine, counts, and gaps.
 
-- T3 threads on the PC through `t3_thread_list` and `t3_thread_read`.
-- Provider session logs under `~/.t3/claude-home/projects`,
-  `~/.t3/codex-home/sessions`, `~/.t3/grok-home` and `~/.t3/cursor-home`.
-- Every PR those sessions opened or touched: body, review threads and checks,
-  through `gh`.
-- Every scheduled task: on the PC through `list_scheduled_tasks` for each
-  project from `t3_project_list`; on the MacBook from the `scheduled_tasks`
-  table of `~/.t3/userdata/statev2.sqlite`, opened read-only.
+Redaction is best-effort; keep outputs local under `~/.local/state`.
+Never paste raw evidence into PRs, issues, or other external services; quote only short, redacted excerpts.
 
-Select logs by modification time against a reference file
-(`TZ=UTC touch -t <CCYYMMDDhhmm.ss> <ref>`, then `find … -newer <ref>`): macOS
-`find -newermt` rejects ISO times and reads other forms as local time. Keep only
-events stamped inside the window. Grok sessions live under
-`sessions/<encoded cwd>/<id>/`: use the timestamped events in `updates.jsonl`
-to select activity, then read `chat_history.jsonl` for context. The chat history
-has no message timestamps. Cursor `chats/**/meta.json` with
-`hasConversation: false` records a probe, not a conversation. For conversations,
-read their timestamped transcript or T3 timeline; record missing evidence as a
-source gap. Claude transcripts under `subagents/` and T3 threads with a
-`parentThreadId` belong to their parent session. Judge thread activity by its
-message and event timestamps: a T3 restart stamps many threads with the same
-`updatedAt`.
-
-Keep tool names, structured inputs and results in any session extract, with
-secrets redacted. If an extract omits an invocation or truncates a required read,
-recover the original record before judging that action. Record unrecoverable
-content as a source gap rather than treating it as compliant.
-
-Skip earlier `workflow-retro` runs. Done when every other session and PR in the
-window is listed with its machine.
+Keep tool names, structured inputs, and results. Recover any invocation or read
+missing from an extract before judging it. Record unrecovered evidence in
+`LIMITS.md`. Cursor timelines live in the referenced T3 parts. Grok history is
+context, not timestamped activity. Exclude earlier `workflow-retro` runs at the
+judgment stage by explicit session IDs; retain their collection evidence.
 
 ## 2. Judge
 
@@ -89,9 +70,12 @@ removed or weakened rule.
 
 ## 4. Report
 
-Reply with the merged fixes and their PR links, then the proposals ranked by
-severity with their evidence. With nothing material, one line.
+Write `REPORT.md` with merged fixes and PR links first, then proposals ranked
+by severity with evidence. Keep coverage to one line with the window and counts
+per machine. Put source gaps, failed reads, and limits in `LIMITS.md` and link it.
+Reply with the fixes and proposals. With nothing material, reply in one line.
 
-When step 1 covered both machines, write the run's start time as ISO 8601 UTC
-to `~/.local/state/workflow-retro/last-run`. Otherwise keep the old time and
-report which machine or source failed, so the next run covers the gap.
+Write the run's start time as ISO 8601 UTC to
+`~/.local/state/workflow-retro/last-run` only after both hosts and all required
+sources have complete receipts or every gap has a documented recovery. Otherwise
+keep the old time and name the failed sources in `LIMITS.md`.
