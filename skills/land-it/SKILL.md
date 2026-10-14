@@ -45,8 +45,8 @@ protection to GitHub; a rule it cannot satisfy becomes a hold.
 - `hold` because the code or base changed since the review, or findings are
   `open` only because their fixes were never confirmed: run `review-it`'s
   confirmation review on what changed since the reviewed head, carry its
-  receipt into the body with `write-pr`, and run the gate again. When three
-  confirmations still leave findings or unconfirmed fixes, the PR is the
+  receipt into the body with `write-pr`, and run the gate again. When that
+  confirmation still leaves findings or unconfirmed fixes, the PR is the
   user's.
 - `hold` because the grade was `skip` or the receipt is missing or in an
   older shape: run `review-it` on the whole PR graded at least `single`,
