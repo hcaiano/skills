@@ -22,24 +22,35 @@ model families that wrote the change, delegated workers included.
 
 - `skip`: only docs, comments or copy; no code that runs and no agent
   instructions.
-- `high`: the change touches security, auth, permissions, payments,
-  migrations or destructive data, or it is a one-way door (a public contract or
-  stored format that is hard to revert).
+- `high`: you can name the concrete hazard: the diff changes how auth,
+  permissions, payments, secrets, migrations or stored data behave, or a public
+  contract or stored format that is hard to revert. A file in one of those areas
+  whose behaviour stays the same is not a hazard.
 - `standard`: every other change, however many files or subsystems it touches.
 
-A grade the user gives is a floor. `skip` goes straight to the receipt. The
-grade sets reviewer effort and whether `land-it` may merge without the user.
+`standard` is the grade unless you can name a `high` hazard. A grade the user
+gives is a floor. `skip` goes straight to the receipt. The grade sets reviewer
+effort and whether `land-it` may merge without the user.
 
 ## 3. Review
 
-Run `interrogate` once on the pinned range with the intent and acceptance
-criteria, its seats from the `interrogate reviewers` line of `pstack-models.md`
-resolved with `t3-capacity`: two reviewers in parallel, at `high` for
-`standard` and `xhigh` for `high`. Each brief also carries the absolute path of
-the [review brief](references/review-brief.md), the worktree, and the paths of
-any spec, issue and repo instruction files. Its Act On findings are the
-findings; a Consider finding you do not apply counts as `open`, and a Dismissed
-one as `rejected`, so the receipt shows every disagreement. A reviewer from the author's family is a normal review.
+Choose the reviewer count:
+
+- One reviewer for a small `standard` change: one concern, about 150 changed
+  lines or fewer, that a reviewer reads in a few minutes.
+- Two reviewers in parallel for any other `standard` change and every `high`
+  one.
+
+Take reviewers from the `interrogate reviewers` line of `pstack-models.md`,
+resolved with `t3-capacity`: start with the seat whose lead model did not write
+the change, and let each seat fall through its tiers when a model is out of
+capacity. Reviewers run at `high` for `standard` and `xhigh` for `high`. Run
+two reviewers as one `interrogate` round. Every brief carries the intent and
+acceptance criteria, the pinned range, the absolute path of the
+[review brief](references/review-brief.md), the worktree, and the paths of any
+spec, issue and repo instruction files. The Act On findings are the findings; a
+Consider finding you do not apply counts as `open`, and a Dismissed one as
+`rejected`, so the receipt shows every disagreement.
 
 Staff every reviewer through `delegate_task` in runtime mode `full-access` with
 the read-only brief: a headless run has nobody to approve it. When every model
@@ -52,8 +63,8 @@ A review counts once it returns a substantive verdict on the pinned HEAD; restaf
 refusals, quota errors and empty results. Watch every seat for a _stalled_ run as
 `~/.agents/skills/poteto-mode/references/t3-execution.md` describes: a stalled
 seat's final verdict counts as its review. A finding that names a concrete
-failure in a `high` category, or a race or compatibility break with a real
-consequence, raises the grade to `high`.
+`high` hazard raises the grade to `high` in the receipt, so the user merges; it
+adds no review round.
 
 ## 4. Fix
 
