@@ -17,6 +17,34 @@ server running this shell and one `--instance <id>:<driver>` per instance.
 Follow mapping notes; `--declare` and a recorded declaration need a
 user-stated mapping.
 
+Claude pools use `claude:<name>`. Record each instance's pool and login location:
+
+```json
+{
+  "settings": "~/.t3/userdata/settings.json",
+  "instances": {
+    "claudeAgent": {"driver": "claudeAgent", "declare": "claude:games"},
+    "claudeAgent_gatticaiano": {
+      "driver": "claudeAgent",
+      "declare": "claude:gatticaiano",
+      "secureStorageDir": "~/.t3/claude-auth-gatticaiano"
+    }
+  }
+}
+```
+
+Merge these entries into the recorded mapping. `secureStorageDir` is the
+launcher's `CLAUDE_SECURESTORAGE_CONFIG_DIR`, independent of its history home.
+Omitted or empty means the default login. If the launcher leaves that variable
+unset but sets `CLAUDE_CONFIG_DIR`, record the config directory as
+`secureStorageDir`. Coordinate the mapping migration with the installed-skill update.
+Flags use `--declare <id>=claude:<name>`
+and `--secure-storage-dir <id>=<dir>`. Bare `claude` declarations must migrate.
+On macOS, read the login's Keychain service; on Linux, its `.credentials.json`.
+Only the default login uses `~/.claude/usage-state.json` offline. Each named
+pool appears in `accounts`; instances sharing a pool share capacity. Two
+accounts serving the same model do not add model diversity.
+
 To pick a delegate, pass each preference tier as one `--candidate` flag,
 listing every instance that serves each model in that tier. Delegate to
 `choice`: it comes from the first tier with an available or protected

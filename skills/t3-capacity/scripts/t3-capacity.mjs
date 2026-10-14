@@ -3,7 +3,7 @@
 // one JSON object:
 //   instances  per --instance: the pools it bills, how that was proved, and
 //              their states; an unproved instance bills no known pool
-//   accounts   every pool read on this machine, keyed claude, codex:<name>,
+//   accounts   every pool read on this machine, keyed claude:<name>, codex:<name>,
 //              cursor_models, other_models, grok, with the instances proved
 //              to bill it (an empty list is a reading no instance claimed)
 //   available  mapped pools in the available state, lower pace first
@@ -28,7 +28,7 @@
 //
 // --mapping names a JSON file holding the settings path and the per-instance
 // drivers, login homes and declarations below, so one recorded statement maps
-// every run: {"settings": path, "instances": {id: {"driver", "authHome"?,
+// every run: {"settings": path, "instances": {id: {"driver", "authHome"?, "secureStorageDir"?,
 // "declare"?}}}. With neither --instance nor --mapping, the file
 // ~/.agents/t3-capacity.json is read when present. Flags add to the file.
 //
@@ -43,9 +43,8 @@
 //   same-file      the instance's login file is the reader's (device + inode)
 //   user-declared  --declare, from an explicit user statement; it names a
 //                  pool of the instance's own driver
-// On macOS, the usage reader's Claude read takes whichever of the credentials
-// file and the login Keychain expires last, and the Cursor CLI keeps its login
-// in the Keychain, so neither file says which account was read: Claude maps
+// On macOS, Claude and Cursor keep their logins in the Keychain, so no
+// file comparison says which account was read: Claude maps
 // there only by declaration, and Cursor only by default-login or declaration.
 // Nothing here prints a credential or runs a launcher; the only files written
 // are usage-state's cache of its last good live readings and its record of
@@ -63,18 +62,19 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { accountKey, fetchUsage, liveRead, poolFromRaw, poolState } from './usage-state.mjs';
+import { accountKey, fetchUsage, liveRead, poolFromRaw, poolState, parseClaudeLogins } from './usage-state.mjs';
 import { byPace, chooseCandidate, rankCandidates } from './capacity-choice.mjs';
 import { parseRole, resolveRole } from './role-target.mjs';
 
 const usage = 'usage: t3-capacity.mjs --instance <id>:<driverKind>... [--auth-home <id>=<dir>]... '
-  + '[--declare <id>=<claude|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
-  + '[--mapping <file>] [--candidate <id>/<model>[,<id>/<model>...]]... '
+  + '[--declare <id>=<claude:<name>|cursor|grok|codex:<name>>]... [--settings <t3-server-settings.json>] '
+  + '[--secure-storage-dir <id>=<dir>]... [--mapping <file>] [--candidate <id>/<model>[,<id>/<model>...]]... '
   + '[--role <name> --capabilities <file> [--models <pstack-models.md>]]';
 const fail = (message) => { console.error(message); process.exit(2); };
 
 const instances = [];
 const authHomes = new Map();
+const secureStorageDirs = new Map();
 const declared = new Map();
 let settingsFile = null;
 let mappingFile = null;
@@ -94,6 +94,7 @@ for (let i = 0; i < args.length; i += 2) {
   };
   if (flag === '--instance') { const [id, driver] = split(':'); instances.push({ id, driver }); }
   else if (flag === '--auth-home') { const [id, dir] = split('='); authHomes.set(id, expand(dir)); }
+  else if (flag === '--secure-storage-dir') { const [id, dir] = split('='); secureStorageDirs.set(id, expand(dir)); }
   else if (flag === '--declare') {
     const [id, pool] = split('=');
     declared.set(id, pool);
@@ -121,6 +122,10 @@ if (mappingFile) {
     if (!entry?.driver) fail(`mapping ${mappingFile} gives ${id} no driver`);
     if (!instances.some((instance) => instance.id === id)) instances.push({ id, driver: entry.driver });
     if (entry.authHome && !authHomes.has(id)) authHomes.set(id, expand(entry.authHome));
+    if (entry.secureStorageDir != null && !secureStorageDirs.has(id)) {
+      if (typeof entry.secureStorageDir !== 'string') fail(`mapping ${mappingFile} gives ${id} an invalid secureStorageDir`);
+      secureStorageDirs.set(id, entry.secureStorageDir ? expand(entry.secureStorageDir) : null);
+    }
     if (entry.declare && !declared.has(id)) declared.set(id, entry.declare);
   }
 }
@@ -148,19 +153,33 @@ for (const { instance } of tiers.flat()) {
 if (!instances.length && !role) fail(`name at least one instance from orchestrator_capabilities\n${usage}`);
 // A declaration names an account, never another subscription: the driver
 // decides which vendor bills the instance.
-const DECLARABLE = { codex: /^codex:[A-Za-z0-9][A-Za-z0-9_-]*$/u, claudeAgent: /^claude$/u, cursor: /^cursor$/u, grok: /^grok$/u };
+const DECLARABLE = { codex: /^codex:[A-Za-z0-9][A-Za-z0-9_-]*$/u, claudeAgent: /^claude:[A-Za-z0-9][A-Za-z0-9_-]*$/u, cursor: /^cursor$/u, grok: /^grok$/u };
 for (const [id, pool] of declared) {
   const driver = instances.find((instance) => instance.id === id)?.driver;
   if (!driver) fail(`--declare names ${id}, which no --instance lists`);
+  if (driver === 'claudeAgent' && pool === 'claude') fail('bare Claude pool was removed; declare claude:<name>');
   if (!DECLARABLE[driver]?.test(pool)) fail(`a ${driver} instance cannot bill ${pool}`);
 }
+
+for (const [id] of secureStorageDirs) {
+  if (instances.find((instance) => instance.id === id)?.driver !== 'claudeAgent') {
+    fail(`secureStorageDir needs a Claude instance, got ${id}`);
+  }
+  if (!declared.has(id)) fail(`secureStorageDir needs a named --declare for ${id}`);
+}
+let claudeLogins;
+try {
+  const entries = instances.filter(({ driver, id }) => driver === 'claudeAgent' && declared.has(id))
+    .map(({ id }) => ({ name: declared.get(id).slice('claude:'.length), secureStorageDir: secureStorageDirs.get(id) }));
+  claudeLogins = parseClaudeLogins(entries.length ? entries : [{ name: 'default' }]);
+} catch (error) { fail(error.message); }
 
 const home = os.homedir();
 const here = path.dirname(fileURLToPath(import.meta.url));
 const usageScript = path.join(here, 'usage-state.mjs');
 
 const readUsageState = () => new Promise((resolve) => {
-  const child = spawn(process.execPath, [usageScript], { stdio: ['ignore', 'pipe', 'ignore'] });
+  const child = spawn(process.execPath, [usageScript, '--claude-logins', JSON.stringify(claudeLogins)], { stdio: ['ignore', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', (chunk) => { out += chunk; });
   child.on('error', (error) => resolve({ error: `usage-state did not run: ${error.message}` }));
@@ -242,11 +261,13 @@ const [usageState, grok] = await Promise.all([
 const accounts = {};
 const account = (key, fields) => { accounts[key] = { state: 'unknown', reading: null, ...fields, instances: [] }; };
 if (usageState.error) {
-  for (const key of ['claude', 'cursor_models', 'other_models']) account(key, { error: usageState.error });
+  for (const key of [...claudeLogins.map(({ name }) => `claude:${name}`), 'cursor_models', 'other_models']) account(key, { error: usageState.error });
 } else {
-  account('claude', { state: usageState.states.claude, reading: usageState.claude, source: usageState.claude_source,
-    ...(usageState.claude_error ? { error: usageState.claude_error } : {}),
-    ...(usageState.claude_note ? { note: usageState.claude_note } : {}) });
+  for (const [name, entry] of Object.entries(usageState.claude_identities)) {
+    account(`claude:${name}`, { state: entry.state, reading: entry.pool, source: entry.source,
+      secure_storage_dir: entry.secure_storage_dir,
+      ...(entry.error ? { error: entry.error } : {}), ...(entry.note ? { note: entry.note } : {}) });
+  }
   for (const key of ['cursor_models', 'other_models']) {
     const reading = usageState.cursor?.[key] ?? null;
     account(key, { state: usageState.states[key], reading: reading && { ...reading, resets_on: usageState.cursor.resets_on },
@@ -263,7 +284,6 @@ account('grok', grok.reading
   : { error: grok.error });
 
 const fileId = (file) => { try { const s = fs.statSync(file); return `${s.dev}:${s.ino}`; } catch { return null; } };
-// Two Codex homes holding one login file are one account, read twice.
 const codexByLogin = new Map();
 for (const [key, entry] of Object.entries(accounts)) {
   if (!key.startsWith('codex:')) continue;
@@ -273,6 +293,14 @@ for (const [key, entry] of Object.entries(accounts)) {
   else codexByLogin.set(id, key);
 }
 
+const claudeByLogin = new Map();
+for (const { name, secureStorageDir } of claudeLogins) {
+  const key = `claude:${name}`;
+  const location = secureStorageDir ?? '';
+  if (claudeByLogin.has(location)) accounts[key].same_account_as = claudeByLogin.get(location);
+  else claudeByLogin.set(location, key);
+}
+
 const darwin = process.platform === 'darwin';
 const cursorLogin = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'cursor', 'auth.json');
 const KEYCHAIN = 'on macOS this login may live in the Keychain, which no file comparison reaches; only the user can declare it';
@@ -280,7 +308,9 @@ const DRIVERS = {
   codex: { cli: ['codex'], loginFile: 'auth.json', fileProof: true, defaultProof: true,
     readers: () => [...codexByLogin].map(([id, key]) => ({ id, pools: [key] })), defaultPools: ['codex:default'] },
   claudeAgent: { cli: ['claude'], loginFile: '.credentials.json', fileProof: !darwin, defaultProof: !darwin,
-    readers: () => [{ id: fileId(path.join(home, '.claude', '.credentials.json')), pools: ['claude'] }], defaultPools: ['claude'] },
+    readers: () => [...claudeByLogin].map(([dir, key]) => ({
+      id: fileId(path.join(dir || path.join(home, '.claude'), '.credentials.json')), pools: [key] })),
+    defaultPools: claudeByLogin.has('') ? [claudeByLogin.get('')] : [] },
   cursor: { cli: ['cursor-agent', 'agent'], loginFile: 'auth.json', fileProof: !darwin, defaultProof: true,
     readers: () => [{ id: fileId(cursorLogin), pools: ['cursor_models', 'other_models'] }], defaultPools: ['cursor_models', 'other_models'] },
   grok: { cli: ['grok'], loginFile: 'auth.json', fileProof: true, defaultProof: true,
@@ -321,6 +351,9 @@ const prove = ({ id, driver }) => {
       + 'read it and pass the login home it sets with --auth-home' };
   }
   if (!authHome && !settingsHome) {
+    if (spec.defaultProof && !spec.defaultPools.length) {
+      return { pools: [], proof: null, launcher, note: 'default login has no recorded pool; declare its account' };
+    }
     return spec.defaultProof
       ? { pools: spec.defaultPools, proof: 'default-login', launcher }
       : { pools: [], proof: null, launcher, note: KEYCHAIN };
