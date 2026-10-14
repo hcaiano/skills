@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
-import { decide, parseDoor, parseReceipt } from "./land-gate.mjs";
+import { ownerBypass, decide, parseDoor, parseReceipt } from "./land-gate.mjs";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "land-gate.mjs");
 const sha = "0123456789abcdef0123456789abcdef01234567";
@@ -106,6 +106,35 @@ test("reasoned declines land; unexplained or shared ones hold", () => {
   const two = `standard by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 2 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`;
   const repeated = `${body(two)}\n- Declined: rename (raised by gpt-6.1-sol): fits.\n- Declined: rename (raised by gpt-6.1-sol): fits.`;
   assert.deepEqual(decide(facts({ body: repeated })).reasons, ["2 rejected review finding(s) without one `- Declined:` reason each"]);
+});
+
+test("an owner-only ruleset merges as the owner; anything else blocked holds", () => {
+  assert.deepEqual(decide(facts({ mergeStateStatus: "BLOCKED" }, { rulesetBypass: true })), { action: "merge", reasons: [], admin: true });
+  assert.deepEqual(decide(facts({ mergeStateStatus: "BLOCKED" }, { rulesetBypass: false })).reasons, ["branch protection blocks the merge"]);
+});
+
+test("owner bypass only covers owner-only rulesets and met classic protection", () => {
+  const owner = { type: "update", ruleset_id: 1 };
+  const responses = (rules, ruleset, protection) => (path) => {
+    if (path.includes("/rules/branches/")) return [rules];
+    if (path.includes("/rulesets/")) return [ruleset];
+    if (protection instanceof Error) throw protection;
+    return [protection];
+  };
+  const p = pr();
+  const none = Object.assign(new Error("gh: Upgrade to GitHub Pro (HTTP 403)"), { stderr: "gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)" });
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, none)), true);
+  assert.equal(ownerBypass(p, "a/b", responses([owner, { type: "pull_request", ruleset_id: 1 }], { current_user_can_bypass: "always" }, none)), false);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_status_checks: { contexts: ["build-and-test"] } })), false);
+  assert.equal(ownerBypass(pr({ statusCheckRollup: [{ __typename: "CheckRun", name: "build-and-test", status: "COMPLETED", conclusion: "SUCCESS" }] }), "a/b",
+    responses([owner], { current_user_can_bypass: "always" }, { required_status_checks: { contexts: ["build-and-test"] } })), true);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_pull_request_reviews: { required_approving_review_count: 1 } })), false);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_signatures: { enabled: true } })), false);
+  assert.equal(ownerBypass(p, "a/b", () => { throw new Error("HTTP 500"); }), false);
+  assert.equal(ownerBypass(p, "a/b", responses([], { current_user_can_bypass: "always" }, none)), false);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "pull_requests_only" }, none)), true);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, Object.assign(new Error("x"), { stderr: "HTTP 403 Forbidden" }))), false);
+  assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_pull_request_reviews: { required_approving_review_count: 0, require_last_push_approval: true } })), false);
 });
 
 test("a standard receipt lands and a high receipt holds", () => {
