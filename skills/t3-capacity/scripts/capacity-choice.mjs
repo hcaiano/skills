@@ -10,12 +10,10 @@ export const rankCandidates = (tiers, mapped, accounts) => tiers.map((tier, inde
     pace: reading?.pace ?? null, used_percent: reading?.used_percent ?? null };
 }));
 
+const inState = (tier, state) => tier.filter((candidate) => candidate.state === state);
+const byPaceThenTier = (a, b) => (a.pace ?? 1) - (b.pace ?? 1) || a.tier - b.tier || byPace(a, b);
 export const chooseCandidate = (ranked) => {
-  const byState = (a, b) => (a.state === 'available' ? 0 : 1) - (b.state === 'available' ? 0 : 1) || byPace(a, b);
-  const best = ranked.map((tier) => tier.filter(({ state }) => state === 'available' || state === 'protected')
-    .sort(byState)[0]);
-  const first = best.findIndex(Boolean);
-  const yields = (protectedPick, next) => protectedPick.state === 'protected' && next != null
-    && (next.state === 'available' || (next.pace != null && protectedPick.pace != null && next.pace < protectedPick.pace));
-  return first < 0 ? null : yields(best[first], best[first + 1]) ? best[first + 1] : best[first];
+  const preferred = ranked.map((tier) => inState(tier, 'available')).find((tier) => tier.length);
+  if (preferred) return preferred.sort(byPace)[0];
+  return ranked.flatMap((tier) => inState(tier, 'protected')).sort(byPaceThenTier)[0] ?? null;
 };

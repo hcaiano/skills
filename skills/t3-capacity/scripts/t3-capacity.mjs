@@ -15,13 +15,11 @@
 //              or a null target with its reason
 //
 // Each --candidate flag is one preference tier of comma-separated
-// <instance>/<model> entries. Preference order comes first: the choice is
-// taken from the first tier holding an available or protected candidate,
-// preferring available over protected, then the lowest pace. When that best
-// candidate is protected and the very next tier's best is available or burns
-// at a lower pace, the next tier's candidate is chosen instead, so a pool
-// burning above pace hands work one step down and never further. Unknown and
-// unavailable pools are never chosen.
+// <instance>/<model> entries. The choice is the lowest-pace available
+// candidate of the first tier holding one, however far down that tier is.
+// With no available candidate anywhere, the protected candidate with the
+// lowest pace across all tiers takes the work, so the burn spreads to the
+// pool with the most room. Unknown and unavailable pools are never chosen.
 // Cursor bills its own models (Auto, Composer, Cursor Grok) to cursor_models
 // and every other model to other_models, which overflows into on-demand
 // spend, so a Cursor candidate takes the state of the pool its model bills.
