@@ -292,22 +292,20 @@ test("a recorded mapping maps every run, and the choice takes the first tier wit
     cursor: { cursor_models: "unknown", other_models: "unknown" },
   });
 
-  // A tier burning above pace hands work to the very next tier when that one
-  // has headroom, and within a tier headroom wins.
+  // Work falls through protected and spent tiers to the first one with headroom,
+  // however far down, and within a tier headroom wins.
   assert.equal((await pick("third/m", "second/m")).instance, "second");
   assert.equal((await pick("third/m,second/m")).instance, "second");
-  // Between two tiers above pace, the next one takes work only if it burns slower.
-  assert.equal((await pick("hot/m", "third/m")).instance, "third");
-  assert.equal((await pick("third/m", "hot/m")).instance, "third");
-  // It never skips further: past a spent next tier, preference order holds,
-  // and a next tier that took the work keeps it even when the one after has headroom.
-  assert.equal((await pick("third/m", "spent/m", "second/m")).instance, "third");
-  assert.equal((await pick("hot/m", "hot/m,third/m", "second/m")).instance, "third");
+  assert.equal((await pick("third/m", "hot/m", "second/m")).instance, "second");
+  assert.equal((await pick("third/m", "spent/m", "cursor/composer", "second/m")).instance, "second");
   // A tier with headroom keeps the work even when a later tier also has it.
   assert.equal((await pick("second/m", "third/m")).instance, "second");
-  // With no headroom anywhere, a protected pool still takes work; a spent one never does.
-  assert.equal((await pick("spent/m", "third/m")).instance, "third");
-  assert.equal(await pick("spent/m"), null);
+  // With no headroom anywhere, the protected pool burning slowest takes work in any tier.
+  assert.equal((await pick("hot/m", "third/m")).instance, "third");
+  assert.equal((await pick("third/m", "hot/m")).instance, "third");
+  assert.equal((await pick("spent/m", "hot/m", "cursor/composer", "third/m")).instance, "third");
+  // Spent and unknown pools never take work.
+  assert.equal(await pick("spent/m", "cursor/composer"), null);
 
   // Cursor's own models and every other model draw different pools.
   const cursor = await run(["--candidate", "cursor/grok-4.7,cursor/composer-2.5,cursor/claude-opus-5-5"], env);

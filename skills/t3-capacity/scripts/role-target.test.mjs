@@ -56,11 +56,23 @@ test('equal models compete by capacity within their tier', () => {
   assert.equal(seat.choice.tier, 0);
 });
 
-test('a protected first tier yields only to the immediate next tier', () => {
-  const readings = { ...accounts, 'codex:second': pool('unavailable', 2) };
-  assert.equal(resolve('fix: capacity[sol > opus > fast]', 'fix', catalog.providers, readings)[0].target.model, 'opus');
-  readings['claude:games'] = pool('unavailable', 2);
-  assert.equal(resolve('fix: capacity[sol > opus > fast]', 'fix', catalog.providers, readings)[0].target.model, 'sol');
+test('work falls through every protected or spent tier to the first available one', () => {
+  const readings = { ...accounts, 'codex:second': pool('unavailable', 2), 'claude:games': pool('protected', 1.5) };
+  const [seat] = resolve('fix: capacity[sol > opus > fast]', 'fix', catalog.providers, readings);
+  assert.deepEqual([seat.choice.instance, seat.choice.tier], ['grok', 2]);
+});
+
+test('an available earlier tier wins over a later tier with a lower pace', () => {
+  assert.equal(resolve('fix: capacity[sol > fast]', 'fix')[0].target.providerInstanceId, 'codex_second');
+});
+
+test('with no available tier the protected pool with the lowest pace takes work', () => {
+  const readings = { ...accounts, 'codex:second': pool('unavailable', 2), grok: pool('protected', 1.6),
+    'claude:games': pool('protected', 1.2) };
+  const [seat] = resolve('fix: capacity[fast > sol > opus]', 'fix', catalog.providers, readings);
+  assert.deepEqual([seat.choice.instance, seat.choice.tier], ['claude', 2]);
+  readings['claude:games'] = { state: 'protected', reading: { pace: 1.3, used_percent: 10 } };
+  assert.equal(resolve('fix: capacity[sol > opus]', 'fix', catalog.providers, readings)[0].choice.instance, 'codex');
 });
 
 test('effort discovery follows a renamed catalog key and skips unrelated option values', () => {
@@ -93,6 +105,9 @@ test('unavailable and unknown capacity never produce a target', () => {
   assert.equal(seat.choice, null);
   assert.equal(seat.target, null);
   assert.match(seat.reason, /known available or protected capacity/u);
+  const [fallback] = resolve('fix: capacity[sol > opus]', 'fix', catalog.providers,
+    { ...accounts, 'codex:second': pool('unknown', null), 'claude:games': pool('unavailable', 2) });
+  assert.equal(fallback.choice.instance, 'codex');
 });
 
 test('disabled providers and models without a supported budget are rejected', () => {
