@@ -18,7 +18,7 @@ test("a symlinked invocation prints usage when no PR is supplied", () => {
     const result = spawnSync(process.execPath, [...flags, linkedScript], { encoding: "utf8" });
     assert.equal(result.status, 2, result.stderr);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "usage: land-gate.mjs <pr-url|number> [--merge] [--user-ok]\n");
+    assert.equal(result.stderr, "usage: land-gate.mjs <pr-url|number> [--merge] [--user-ok <sha>]\n");
   }
 });
 
@@ -94,7 +94,9 @@ test("the Merge danger line decides the door, and any one-way mention wins", () 
 test("a visible change waits for the user's OK on its demo; an unmarked one holds", () => {
   const visible = body().replace("Visible: no", "Visible: yes");
   assert.deepEqual(decide(facts({ body: visible })), { action: "hold", reasons: ["visible change: waits for the user's OK on its demo"] });
-  assert.deepEqual(decide(facts({ body: visible }, { userOk: true })), { action: "merge", reasons: [] });
+  assert.deepEqual(decide(facts({ body: visible }, { userOk: { sha: "0123456", matches: true } })), { action: "merge", reasons: [] });
+  assert.deepEqual(decide(facts({ body: visible }, { userOk: { sha: "0123456", matches: false } })).reasons,
+    ["the change moved since the user OKed the demo of 0123456: show the new demo and ask again"]);
   assert.deepEqual(decide(facts({ body: body().replace(" Visible: no.", "") })).reasons, ["no `Visible: yes` or `Visible: no` on the Merge danger line"]);
   assert.equal(parseVisible("Visible: yes elsewhere.\n\n**Merge danger.** Door: two-way. Blast radius: small."), null);
 });
@@ -300,12 +302,25 @@ test("any change after the review holds, even one patch-id would call whitespace
   assert.deepEqual(out.merges, []);
 });
 
-test("only --user-ok lets a visible PR merge from the command line", () => {
+test("a visible PR merges from the command line only with an OK for the demoed change", () => {
   const fixture = { pr: pr({ body: body().replace("Visible: no", "Visible: yes") }), methods: { squashMergeAllowed: true }, afterMerge: "MERGED" };
   const held = cli(fixture);
   assert.deepEqual([held.action, held.reasons, held.merges], ["hold", ["visible change: waits for the user's OK on its demo"], []]);
-  const approved = cli(fixture, undefined, ["--user-ok"]);
+  const approved = cli(fixture, undefined, ["--user-ok", sha.slice(0, 7)]);
   assert.deepEqual([approved.action, approved.acted, approved.merges.length], ["merge", "merged", 1]);
+  const bare = spawnSync(process.execPath, [script, fixture.pr.url, "--user-ok"], { encoding: "utf8" });
+  assert.equal(bare.status, 2);
+});
+
+test("an OK survives a base update but not a change after the demo", () => {
+  const { work, reviewed, baseMerged, dedented, publish } = repoWithPr();
+  const visible = (head, at) => pr({ headRefOid: head, body: body(`single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${at.slice(0, 10)} on main`).replace("Visible: no", "Visible: yes") });
+  publish(baseMerged);
+  const updated = cli({ pr: visible(baseMerged, reviewed), methods: { squashMergeAllowed: true }, afterMerge: "MERGED" }, work, ["--user-ok", reviewed.slice(0, 10)]);
+  assert.deepEqual([updated.action, updated.acted], ["merge", "merged"]);
+  publish(dedented);
+  const moved = cli({ pr: visible(dedented, dedented), methods: { squashMergeAllowed: true } }, work, ["--user-ok", reviewed.slice(0, 10)]);
+  assert.deepEqual([moved.action, moved.reasons, moved.merges], ["hold", [`the change moved since the user OKed the demo of ${reviewed.slice(0, 10)}: show the new demo and ask again`], []]);
 });
 
 test("a workflow run still queued on a later page of the head's runs stops the merge", () => {

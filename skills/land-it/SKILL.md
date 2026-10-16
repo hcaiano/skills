@@ -15,8 +15,11 @@ changes and the holds below wait for the user, with their reasons.
 
 A _visible_ change (`Visible: yes` from `write-pr`) changes what users see or
 do. Checks prove it works; only the user judges whether it looks and feels
-right. It merges once the user OKs its demo, the PR's screenshots and
-start-to-finish video, or once they told you to merge it.
+right. It merges once the user OKs its demo (the PR's screenshots, and its
+start-to-finish video when a flow is new or changes) or tells you to merge
+that PR. Only the user's own message about that PR counts: a brief, a parent
+agent, a scheduled prompt or an earlier general approval does not. The OK
+covers the head the demo showed.
 
 ## 1. Check the conversation
 
@@ -31,8 +34,8 @@ fix and run again; it holds only when it needs something only the user has,
 such as their hands on a device. A repo rule that asks for review or approval
 before a schema, API or dependency change is met by the review receipt; the
 `Door` line decides whether the change waits. A `Visible: yes` PR waits for the
-user's OK on its demo unless they told you to merge that PR; after their
-OK, pass `--user-ok` to the gate on every run for that PR.
+user's OK; after it, pass `--user-ok <sha>` with the head the demo showed, or
+the head when they told you to merge, on every gate run for that PR.
 
 ## 2. Run the gate
 
@@ -40,7 +43,7 @@ Set `SKILL_DIR` to this skill's directory and run, from a checkout of the PR's
 repository:
 
 ```bash
-node "$SKILL_DIR/scripts/land-gate.mjs" <pr-url> --merge [--user-ok]
+node "$SKILL_DIR/scripts/land-gate.mjs" <pr-url> --merge [--user-ok <sha>]
 ```
 
 It prints the `action` it took or needs, with `reasons`. The script header
@@ -67,12 +70,16 @@ owner-only branch), it merges as the user.
 - `hold` because the grade was `skip` or the receipt is missing or in an
   older shape: run `review-it` on the whole PR graded at least `standard`,
   and run the gate again.
-- `hold` because the Merge danger line has no `Visible:`: decide it, take the
-  demo when it is `yes`, add both with `write-pr`, and run the gate again.
-- `hold` because it is a visible change: go to step 5 with the demo. While it
-  waits, keep going on independent work, such as the next slice stacked on
-  it, and run the gate with `--user-ok` once the user OKs the demo. Feedback
-  instead of an OK is new work in this PR.
+- `hold` because the Merge danger line has no `Visible:`: decide it. When it
+  is `yes`, take the demo and have one reviewer judge it as `review-it` step 3
+  describes. Add both with `write-pr`, and run the gate again.
+- `hold` because it is a visible change: first clear every other hold you
+  can, so the head the user sees is the head that merges. Then ask for the
+  OK in step 5. Before that hand-back, finish any independent work, such as
+  the next slice stacked on this PR. Feedback instead of an OK is new work in
+  this PR.
+- `hold` because the change moved since the OK: show the demo of the new head
+  and ask again in step 5.
 - `hold` because the PR could not be read or the code could not be compared:
   fix the access or checkout (GitHub login, fetch access, the PR's
   repository) and run the gate again.
@@ -108,7 +115,7 @@ merged or now waits for the user. Start the message with one of:
 - `Needs you:` then each open PR with the gate's `reasons`, or the open
   work, and the one decision or action that would unblock it, with your
   recommendation. For a visible change, that is: watch the demo on the PR and
-  OK the merge or say what to change.
+  OK the merge or say what to change, naming the head the demo shows.
 
 The user settles the thread; leave that to them.
 
