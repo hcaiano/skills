@@ -16,7 +16,9 @@ unchanged; `land-it` checks that by comparing trees. Review again only when the
 PR's own changes moved.
 
 Write down the intent and acceptance criteria, chat-only ones included, and the
-model families that wrote the change, delegated workers included.
+model families that wrote the change, delegated workers included. When the
+change is visible to users, capture `write-pr`'s screenshots and video from the
+pinned HEAD now: the reviewers judge the demo, and the user sees the same one.
 
 ## 2. Grade
 
@@ -42,7 +44,12 @@ Run `interrogate` once on the pinned range: two reviewers in parallel from the
 change, each seat falling through its tiers when a model is out of capacity. Reviewers run at `high` for `standard` and `xhigh` for `high`. Every brief carries the intent and
 acceptance criteria, the pinned range, the absolute path of the
 [review brief](references/review-brief.md), the worktree, and the paths of any
-spec, issue and repo instruction files. The Act On findings are the findings; a
+spec, issue and repo instruction files. For a visible change, every brief also
+carries the demo's paths and the prototype the user approved, and asks the
+reviewer to judge the demo as the user will, with the installed design skills
+such as `frontend-design` and `emil-design-eng`: whether it matches the
+prototype, and any stray, missing or misaligned element, uneven spacing, text
+users do not need, or a state that looks broken. The Act On findings are the findings; a
 Consider finding you do not apply counts as `rejected`, with its reason, so the
 receipt shows every disagreement. Dismissed items are the reviewers' own
 rejections and count nowhere.

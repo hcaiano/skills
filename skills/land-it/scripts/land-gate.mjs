@@ -12,6 +12,8 @@
 //     `epic/*` integration branch, not draft, with no hold label;
 //   - its `**Merge danger.**` line says `Door: two-way` and no `Door: one-way`
 //     appears anywhere in the body;
+//   - the same line says `Visible: no`, or `Visible: yes` and the caller
+//     passed --user-ok, which it does only after the user OKs the PR's demo;
 //   - its last `**Review.**` line is review-it's receipt
 //     `<grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>`
 //     graded standard or high (or the older single or panel) with no open findings, and one
@@ -63,6 +65,12 @@ export const parseReceipt = (body) => {
   return { grade: grade.toLowerCase(), reviewers: reviewers.replace(/^\s*by\s+/i, '').toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base, declined };
 };
 
+// `Visible: yes` marks a change users see; it merges only on the user's OK.
+export const parseVisible = (body) => {
+  const line = (body ?? '').split('\n').find((candidate) => candidate.trimStart().startsWith('**Merge danger.**'));
+  return /Visible:\s*(yes|no)\b/i.exec(line ?? '')?.[1].toLowerCase() ?? null;
+};
+
 export const parseDoor = (body) => {
   const text = body ?? '';
   if (/Door:\s*one-way/i.test(text)) return 'one-way';
@@ -79,8 +87,8 @@ const checkState = (check) => {
   return ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion) ? 'pass' : 'fail';
 };
 
-// facts: { pr, viewer, defaultBranch, unresolvedThreads, receipt, door,
-//          reviewed: { matches, reason } | null, runs: workflow runs for the head }
+// facts: { pr, viewer, defaultBranch, unresolvedThreads, receipt, door, visible,
+//          userOk, reviewed: { matches, reason } | null, runs: workflow runs for the head }
 export const decide = (facts) => {
   const { pr } = facts;
   if (pr.state !== 'OPEN') return { action: 'done', reasons: [pr.state === 'MERGED' ? 'PR is merged' : 'PR was closed without merging'] };
@@ -93,6 +101,8 @@ export const decide = (facts) => {
   const holdLabels = (pr.labels ?? []).map((label) => label.name).filter((label) => /\b(hold|do[- ]not[- ]merge|wip)\b/i.test(label));
   if (holdLabels.length) holds.push(`hold label: ${holdLabels.join(', ')}`);
   if (facts.door !== 'two-way') holds.push(facts.door === 'one-way' ? 'Door: one-way' : 'no `Door: two-way` on the Merge danger line');
+  if (!facts.visible) holds.push('no `Visible: yes` or `Visible: no` on the Merge danger line');
+  else if (facts.visible === 'yes' && !facts.userOk) holds.push("visible change: waits for the user's OK on its demo");
   const { receipt } = facts;
   if (!receipt) holds.push('no review-it receipt in the PR body');
   else {
@@ -241,7 +251,7 @@ const gather = (target) => {
   const reviewed = receipt && pr.state === 'OPEN' ? compareTrees(pr, receipt.sha, `${owner}/${name}`) : null;
   return {
     repo, owner, name,
-    facts: { pr, viewer, receipt, reviewed, runs, unresolvedThreads, rulesetBypass, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body) },
+    facts: { pr, viewer, receipt, reviewed, runs, unresolvedThreads, rulesetBypass, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body), visible: parseVisible(pr.body) },
   };
 };
 
@@ -271,9 +281,9 @@ const act = ({ repo, owner, name, facts }, decision) => {
 
 const main = () => {
   const args = process.argv.slice(2);
-  const target = args.filter((arg) => arg !== '--merge');
+  const target = args.filter((arg) => !['--merge', '--user-ok'].includes(arg));
   if (target.length !== 1) {
-    console.error('usage: land-gate.mjs <pr-url|number> [--merge]');
+    console.error('usage: land-gate.mjs <pr-url|number> [--merge] [--user-ok]');
     process.exit(2);
   }
   let gathered;
@@ -283,7 +293,7 @@ const main = () => {
     console.log(JSON.stringify({ pr: target[0], head: null, action: 'hold', reasons: [`could not read the PR: ${firstLine(error)}`], acted: null }, null, 2));
     return;
   }
-  let decision = decide(gathered.facts);
+  let decision = decide({ ...gathered.facts, userOk: args.includes('--user-ok') });
   let acted = null;
   if (args.includes('--merge') && ['merge', 'update-branch'].includes(decision.action)) ({ decision, acted } = act(gathered, decision));
   console.log(JSON.stringify({ pr: gathered.facts.pr.url, head: gathered.facts.pr.headRefOid, ...decision, acted }, null, 2));
