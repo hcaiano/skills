@@ -24,7 +24,7 @@ model families that wrote the change, delegated workers included.
   instructions.
 - `high`: you can name the concrete hazard: the diff changes how auth,
   permissions, payments, secrets, migrations or stored data behave, or a public
-  contract or stored format that is hard to revert. A file in one of those areas
+  contract or stored format in a way a revert cannot undo. A file in one of those areas
   whose behaviour stays the same is not a hazard.
 - `standard`: every other change, however many files or subsystems it touches.
 
@@ -97,5 +97,6 @@ Under it, write one line per rejected finding:
 `- Declined: <finding> (raised by <model>): <specific reason>`
 
 Name every model that raised the finding. A finding two reviewers raised
-cannot be declined: fix it, or it stays `open`. Only a follow-up issue may
-take it, as above.
+cannot be declined: fix it, or it stays `open`. When it is not a correctness or
+security bug, a follow-up issue may take it, with the reason
+`follow-up #<issue>`.

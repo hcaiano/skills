@@ -35,7 +35,6 @@ real complexity. In this order:
    Name the baseline and final commits.
 4. **Video**, when a user flow is new or changes: one start-to-finish
    recording of the real app that proves the feature works as intended.
-   Stills are enough when they already show the whole change.
 5. **Checks.** The checks actually run, their results and the verified commit,
    local and CI apart.
 6. **Review.** The `review-it` receipt line, with its `- Declined:` lines under it.

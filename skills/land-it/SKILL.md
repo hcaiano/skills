@@ -6,8 +6,9 @@ description: "Merge a revertible PR whose review findings are all fixed or decli
 # Land it
 
 A PR is _landable_ when a revert undoes it (`Door: two-way`) and every review
-finding on the code that merges is fixed, or raised by one reviewer and
-declined with a written reason. The review grade sets how hard the PR was
+finding on the code that merges is fixed, declined with a written reason when
+one reviewer raised it, or moved to a follow-up issue when it is not a
+correctness or security bug. The review grade sets how hard the PR was
 reviewed, not who merges: landable PRs merge without asking the user, and the
 after-merge test in step 4 is the safety net. Only one-way doors and the holds
 below wait for the user, with their reasons.
@@ -39,7 +40,7 @@ It prints the `action` it took or needs, with `reasons`. The script header
 lists every rule. Risk comes from what the PR already records: `Door:
 two-way` from `write-pr`, and the `review-it` receipt graded `standard` or
 `high` (or the older `single` or `panel`) with no
-open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer unless it went to a follow-up issue, on the code and base being merged. It merges with a method the repository allows and leaves branch
+open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer unless its reason starts `follow-up #<issue>`, on the code and base being merged. It merges with a method the repository allows and leaves branch
 protection to GitHub; a rule it cannot satisfy becomes a hold. When only a
 ruleset the user may always bypass blocks a PR that passed every rule (an
 owner-only branch), it merges as the user.
@@ -77,8 +78,8 @@ For each PR that landed, watch the merge commit's checks on the target branch
 and, when the repo deploys on merge, the deploy's status and health; when the
 target runs no checks after merge, the PR's own green checks stand. When the
 repo has a `verify-<app>` skill, run its journey for the changed feature
-against a preview or staging deploy, or the target branch locally; against
-production, run only journeys the skill marks production-safe. A red
+against a preview or staging deploy, or the target branch locally when there
+is neither; against production, run only journeys the skill marks production-safe. A red
 result is new work in this thread: fix forward in a new PR, or revert through
 a PR that lands by this skill when the fix is not obvious, and report it.
 
