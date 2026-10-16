@@ -1,6 +1,6 @@
 interface:
   display_name: "Land It"
-  short_description: "Merge a low-risk PR every reviewer approved and hand it back tested"
+  short_description: "Merge a revertible, reviewed PR and hand it back tested"
   default_prompt: "Use $land-it to decide whether this PR can merge without the user and land it."
 
 policy:

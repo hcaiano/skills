@@ -16,7 +16,8 @@
 //     `<grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>`
 //     graded standard or high (or the older single or panel) with no open findings, and one
 //     `- Declined: <finding> (raised by <model>): <reason>` line after it for
-//     each rejected finding, none raised by more than one reviewer;
+//     each rejected finding, none raised by more than one reviewer unless
+//     its reason is `follow-up #<issue>`;
 //   - the review saw this base, and the reviewed commit still describes the
 //     change: the head is that commit, or merging the reviewed commit with the
 //     base the head now contains gives exactly the head's tree;
@@ -99,7 +100,7 @@ export const decide = (facts) => {
       const reviewers = new Set(receipt.reviewers.split(/,|\band\b/).map((model) => model.trim()).filter(Boolean));
       const named = declined.every((entry) => entry.raisedBy.every((model) => reviewers.has(model.toLowerCase())));
       if (distinct.size !== receipt.rejected || declined.length !== receipt.rejected || !named) holds.push(`${receipt.rejected} rejected review finding(s) without one \`- Declined:\` reason each`);
-      else if (declined.some((entry) => entry.raisedBy.length > 1)) holds.push('a declined finding was raised by more than one reviewer');
+      else if (declined.some((entry) => entry.raisedBy.length > 1 && !/^follow-up #\d+\b/i.test(entry.reason))) holds.push('a declined finding was raised by more than one reviewer');
     }
     if (receipt.open > 0) holds.push(`${receipt.open} review finding(s) or blocker(s) left open`);
     if (receipt.base !== pr.baseRefName) holds.push(`reviewed on ${receipt.base}, but the base is now ${pr.baseRefName}`);

@@ -18,10 +18,11 @@ Every turn of this skill, wakes included, starts here. The gate reads only the
 PR. Before it runs, look for holds that live in the
 conversation, the task brief, the issue and the repo: the user asked to merge
 the PR themselves, not to merge, or to stay local; or the repo's instructions
-reserve merging to people. Any such hold makes the PR the user's: skip to
+name a person who must merge. Any such hold makes the PR the user's: skip to
 step 5 and name the hold. An acceptance check the task asks for (browser,
-device, end-to-end) is yours to run before the gate; it holds only when it
-needs something only the user has, such as their hands on a device. A repo rule that asks for approval
+device, end-to-end) is yours to run before the gate, and a failure is yours to
+fix and run again; it holds only when it needs something only the user has,
+such as their hands on a device. A repo rule that asks for review or approval
 before a schema, API or dependency change is met by the review receipt; the
 `Door` line decides whether the change waits.
 
@@ -38,7 +39,7 @@ It prints the `action` it took or needs, with `reasons`. The script header
 lists every rule. Risk comes from what the PR already records: `Door:
 two-way` from `write-pr`, and the `review-it` receipt graded `standard` or
 `high` (or the older `single` or `panel`) with no
-open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer, on the code and base being merged. It merges with a method the repository allows and leaves branch
+open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer unless it went to a follow-up issue, on the code and base being merged. It merges with a method the repository allows and leaves branch
 protection to GitHub; a rule it cannot satisfy becomes a hold. When only a
 ruleset the user may always bypass blocks a PR that passed every rule (an
 owner-only branch), it merges as the user.
@@ -67,15 +68,17 @@ owner-only branch), it merges as the user.
 
 PRs into the default branch or an `epic/*` integration branch land here. In a
 stack, the bottom PR lands first; the owner then rebases the next layer onto
-the default branch and retargets it, and that layer takes its one final review
+the bottom PR's base and retargets it, and that layer takes its one final review
 before the gate.
 
 ## 4. Test after merge
 
 For each PR that landed, watch the merge commit's checks on the target branch
-and, when the repo deploys on merge, the deploy's status and health. When the
+and, when the repo deploys on merge, the deploy's status and health; when the
+target runs no checks after merge, the PR's own green checks stand. When the
 repo has a `verify-<app>` skill, run its journey for the changed feature
-against the deployed app, or the target branch when nothing deploys. A red
+against a preview or staging deploy, or the target branch locally; against
+production, run only journeys the skill marks production-safe. A red
 result is new work in this thread: fix forward in a new PR, or revert through
 a PR that lands by this skill when the fix is not obvious, and report it.
 

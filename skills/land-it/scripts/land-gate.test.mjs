@@ -98,6 +98,8 @@ test("reasoned declines land; unexplained or shared ones hold", () => {
   assert.deepEqual(decide(facts({ body: body(receipt) })).reasons, ["1 rejected review finding(s) without one `- Declined:` reason each"]);
   const shared = `${body(receipt)}\n- Declined: drop the cache (raised by claude-opus-5-5, gpt-6.1-sol): it is measured.`;
   assert.deepEqual(decide(facts({ body: shared })).reasons, ["a declined finding was raised by more than one reviewer"]);
+  const followUp = `${body(receipt)}\n- Declined: split the parser (raised by claude-opus-5-5, gpt-6.1-sol): follow-up #42, a new design.`;
+  assert.equal(decide(facts({ body: followUp })).action, "merge");
   const hold = ["1 rejected review finding(s) without one `- Declined:` reason each"];
   for (const line of ["- Declined: x (raised by   ): reason", "- Declined: x (raised by ,): reason", "- Declined:    (raised by gpt-6.1-sol): reason", "- Declined: x (raised by gpt-6.1-sol):   ", "- Declined: x (raised by someone-else): reason", "- Declined: x (raised by a): reason", "- Declined: x (raised by sol): reason"]) {
     assert.deepEqual(decide(facts({ body: `${body(receipt)}\n${line}` })).reasons, hold, line);
