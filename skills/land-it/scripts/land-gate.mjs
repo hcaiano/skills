@@ -12,6 +12,9 @@
 //     `epic/*` integration branch, not draft, with no hold label;
 //   - its `**Merge danger.**` line says `Door: two-way` and no `Door: one-way`
 //     appears anywhere in the body;
+//   - the same line says `Visible: no`, or `Visible: yes` and the caller
+//     passed --user-ok <sha>, the head whose demo the user OKed, and that
+//     commit still describes the change the same way the reviewed one must;
 //   - its last `**Review.**` line is review-it's receipt
 //     `<grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>`
 //     graded standard or high (or the older single or panel) with no open findings, and one
@@ -63,6 +66,12 @@ export const parseReceipt = (body) => {
   return { grade: grade.toLowerCase(), reviewers: reviewers.replace(/^\s*by\s+/i, '').toLowerCase(), fixed: Number(fixed), rejected: Number(rejected), open: Number(open), sha: sha.toLowerCase(), base, declined };
 };
 
+// `Visible: yes` marks a change users see; it merges only on the user's OK.
+export const parseVisible = (body) => {
+  const line = (body ?? '').split('\n').find((candidate) => candidate.trimStart().startsWith('**Merge danger.**'));
+  return /Visible:\s*(yes|no)\b/i.exec(line ?? '')?.[1].toLowerCase() ?? null;
+};
+
 export const parseDoor = (body) => {
   const text = body ?? '';
   if (/Door:\s*one-way/i.test(text)) return 'one-way';
@@ -79,8 +88,9 @@ const checkState = (check) => {
   return ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(check.conclusion) ? 'pass' : 'fail';
 };
 
-// facts: { pr, viewer, defaultBranch, unresolvedThreads, receipt, door,
-//          reviewed: { matches, reason } | null, runs: workflow runs for the head }
+// facts: { pr, viewer, defaultBranch, unresolvedThreads, receipt, door, visible,
+//          userOk: { sha, matches } | null, reviewed: { matches, reason } | null,
+//          runs: workflow runs for the head }
 export const decide = (facts) => {
   const { pr } = facts;
   if (pr.state !== 'OPEN') return { action: 'done', reasons: [pr.state === 'MERGED' ? 'PR is merged' : 'PR was closed without merging'] };
@@ -93,6 +103,9 @@ export const decide = (facts) => {
   const holdLabels = (pr.labels ?? []).map((label) => label.name).filter((label) => /\b(hold|do[- ]not[- ]merge|wip)\b/i.test(label));
   if (holdLabels.length) holds.push(`hold label: ${holdLabels.join(', ')}`);
   if (facts.door !== 'two-way') holds.push(facts.door === 'one-way' ? 'Door: one-way' : 'no `Door: two-way` on the Merge danger line');
+  if (!facts.visible) holds.push('no `Visible: yes` or `Visible: no` on the Merge danger line');
+  else if (facts.visible === 'yes' && !facts.userOk) holds.push("visible change: waits for the user's OK on its demo");
+  else if (facts.visible === 'yes' && !facts.userOk.matches) holds.push(`the change moved since the user OKed the demo of ${facts.userOk.sha}: show the new demo and ask again`);
   const { receipt } = facts;
   if (!receipt) holds.push('no review-it receipt in the PR body');
   else {
@@ -218,7 +231,7 @@ export const ownerBypass = (pr, slug, api = (path) => JSON.parse(gh('api', '--pa
   }
 };
 
-const gather = (target) => {
+const gather = (target, userOkSha) => {
   const pr = readPr(target);
   const [, owner, name] = new URL(pr.url).pathname.split('/');
   const repo = JSON.parse(gh('repo', 'view', `${owner}/${name}`, '--json', 'defaultBranchRef,squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed'));
@@ -239,9 +252,11 @@ const gather = (target) => {
   const rulesetBypass = ownerBypass(pr, `${owner}/${name}`);
   const receipt = parseReceipt(pr.body);
   const reviewed = receipt && pr.state === 'OPEN' ? compareTrees(pr, receipt.sha, `${owner}/${name}`) : null;
+  const userOk = userOkSha && pr.state === 'OPEN'
+    ? { sha: userOkSha, matches: compareTrees(pr, userOkSha, `${owner}/${name}`).matches } : null;
   return {
     repo, owner, name,
-    facts: { pr, viewer, receipt, reviewed, runs, unresolvedThreads, rulesetBypass, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body) },
+    facts: { pr, viewer, receipt, reviewed, userOk, runs, unresolvedThreads, rulesetBypass, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body), visible: parseVisible(pr.body) },
   };
 };
 
@@ -271,14 +286,16 @@ const act = ({ repo, owner, name, facts }, decision) => {
 
 const main = () => {
   const args = process.argv.slice(2);
-  const target = args.filter((arg) => arg !== '--merge');
-  if (target.length !== 1) {
-    console.error('usage: land-gate.mjs <pr-url|number> [--merge]');
+  const okAt = args.indexOf('--user-ok');
+  const userOkSha = okAt === -1 ? null : args[okAt + 1]?.toLowerCase();
+  const target = args.filter((arg, index) => arg !== '--merge' && (okAt === -1 || (index !== okAt && index !== okAt + 1)));
+  if (target.length !== 1 || (okAt !== -1 && !/^[0-9a-f]{7,40}$/.test(userOkSha ?? ''))) {
+    console.error('usage: land-gate.mjs <pr-url|number> [--merge] [--user-ok <sha>]');
     process.exit(2);
   }
   let gathered;
   try {
-    gathered = gather(target[0]);
+    gathered = gather(target[0], userOkSha);
   } catch (error) {
     console.log(JSON.stringify({ pr: target[0], head: null, action: 'hold', reasons: [`could not read the PR: ${firstLine(error)}`], acted: null }, null, 2));
     return;

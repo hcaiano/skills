@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
-import { ownerBypass, decide, parseDoor, parseReceipt } from "./land-gate.mjs";
+import { ownerBypass, decide, parseDoor, parseReceipt, parseVisible } from "./land-gate.mjs";
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "land-gate.mjs");
 const sha = "0123456789abcdef0123456789abcdef01234567";
@@ -18,7 +18,7 @@ test("a symlinked invocation prints usage when no PR is supplied", () => {
     const result = spawnSync(process.execPath, [...flags, linkedScript], { encoding: "utf8" });
     assert.equal(result.status, 2, result.stderr);
     assert.equal(result.stdout, "");
-    assert.equal(result.stderr, "usage: land-gate.mjs <pr-url|number> [--merge]\n");
+    assert.equal(result.stderr, "usage: land-gate.mjs <pr-url|number> [--merge] [--user-ok <sha>]\n");
   }
 });
 
@@ -36,7 +36,7 @@ const green = [
   { __typename: "StatusContext", context: "CodeRabbit", state: "SUCCESS" },
 ];
 const body = (receipt = `single by gpt-6.1-sol; 1 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) =>
-  `Fix the thing.\n\n**Merge danger.** Door: two-way. Blast radius: small.\n\n**Review.** ${receipt}\n`;
+  `Fix the thing.\n\n**Merge danger.** Door: two-way. Visible: no. Blast radius: small.\n\n**Review.** ${receipt}\n`;
 const pr = (overrides = {}) => ({
   number: 7, url: "https://github.com/acme/app/pull/7", state: "OPEN", isDraft: false, body: body(),
   author: { login: "henrique" }, isCrossRepository: false, headRefOid: sha, baseRefName: "main",
@@ -48,7 +48,7 @@ const facts = (prOverrides = {}, overrides = {}) => {
   const p = pr(prOverrides);
   return {
     pr: p, viewer: "henrique", defaultBranch: "main", unresolvedThreads: 0,
-    receipt: parseReceipt(p.body), door: parseDoor(p.body), reviewed: { matches: true },
+    receipt: parseReceipt(p.body), door: parseDoor(p.body), visible: parseVisible(p.body), reviewed: { matches: true },
     ...overrides,
   };
 };
@@ -89,6 +89,16 @@ test("the Merge danger line decides the door, and any one-way mention wins", () 
   assert.equal(parseDoor("Old notes said Door: two-way.\n\n**Merge danger.** Door: one-way. Blast radius: data."), "one-way");
   assert.equal(parseDoor("We now read `Door: two-way` from write-pr.\n\n**Merge danger.** Blast radius: small."), null);
   assert.equal(parseDoor("**Merge danger.** Door: two-way. Blast radius: small."), "two-way");
+});
+
+test("a visible change waits for the user's OK on its demo; an unmarked one holds", () => {
+  const visible = body().replace("Visible: no", "Visible: yes");
+  assert.deepEqual(decide(facts({ body: visible })), { action: "hold", reasons: ["visible change: waits for the user's OK on its demo"] });
+  assert.deepEqual(decide(facts({ body: visible }, { userOk: { sha: "0123456", matches: true } })), { action: "merge", reasons: [] });
+  assert.deepEqual(decide(facts({ body: visible }, { userOk: { sha: "0123456", matches: false } })).reasons,
+    ["the change moved since the user OKed the demo of 0123456: show the new demo and ask again"]);
+  assert.deepEqual(decide(facts({ body: body().replace(" Visible: no.", "") })).reasons, ["no `Visible: yes` or `Visible: no` on the Merge danger line"]);
+  assert.equal(parseVisible("Visible: yes elsewhere.\n\n**Merge danger.** Door: two-way. Blast radius: small."), null);
 });
 
 test("reasoned declines land; unexplained or shared ones hold", () => {
@@ -229,11 +239,11 @@ else if (args[0] === 'pr' && args[1] === 'merge' && f.mergeError) { console.erro
 `);
 chmodSync(join(fakeGhDir, "gh"), 0o755);
 
-const cli = (fixture, cwd) => {
+const cli = (fixture, cwd, flags = []) => {
   const dir = mkdtempSync(join(tmpdir(), "land-gate-case-"));
   writeFileSync(join(dir, "fixture.json"), JSON.stringify(fixture));
   writeFileSync(join(dir, "log"), "");
-  const result = spawnSync("node", [script, fixture.pr.url, "--merge"], {
+  const result = spawnSync("node", [script, fixture.pr.url, "--merge", ...flags], {
     cwd, encoding: "utf8",
     env: { ...process.env, PATH: `${fakeGhDir}:${process.env.PATH}`, GH_FIXTURE: join(dir, "fixture.json"), GH_LOG: join(dir, "log") },
   });
@@ -290,6 +300,27 @@ test("any change after the review holds, even one patch-id would call whitespace
   assert.equal(out.action, "hold");
   assert.deepEqual(out.reasons, [`HEAD changed since the review of ${reviewed.slice(0, 10)}`]);
   assert.deepEqual(out.merges, []);
+});
+
+test("a visible PR merges from the command line only with an OK for the demoed change", () => {
+  const fixture = { pr: pr({ body: body().replace("Visible: no", "Visible: yes") }), methods: { squashMergeAllowed: true }, afterMerge: "MERGED" };
+  const held = cli(fixture);
+  assert.deepEqual([held.action, held.reasons, held.merges], ["hold", ["visible change: waits for the user's OK on its demo"], []]);
+  const approved = cli(fixture, undefined, ["--user-ok", sha.slice(0, 7)]);
+  assert.deepEqual([approved.action, approved.acted, approved.merges.length], ["merge", "merged", 1]);
+  const bare = spawnSync(process.execPath, [script, fixture.pr.url, "--user-ok"], { encoding: "utf8" });
+  assert.equal(bare.status, 2);
+});
+
+test("an OK survives a base update but not a change after the demo", () => {
+  const { work, reviewed, baseMerged, dedented, publish } = repoWithPr();
+  const visible = (head, at) => pr({ headRefOid: head, body: body(`single by gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed ${at.slice(0, 10)} on main`).replace("Visible: no", "Visible: yes") });
+  publish(baseMerged);
+  const updated = cli({ pr: visible(baseMerged, reviewed), methods: { squashMergeAllowed: true }, afterMerge: "MERGED" }, work, ["--user-ok", reviewed.slice(0, 10)]);
+  assert.deepEqual([updated.action, updated.acted], ["merge", "merged"]);
+  publish(dedented);
+  const moved = cli({ pr: visible(dedented, dedented), methods: { squashMergeAllowed: true } }, work, ["--user-ok", reviewed.slice(0, 10)]);
+  assert.deepEqual([moved.action, moved.reasons, moved.merges], ["hold", [`the change moved since the user OKed the demo of ${reviewed.slice(0, 10)}: show the new demo and ask again`], []]);
 });
 
 test("a workflow run still queued on a later page of the head's runs stops the merge", () => {

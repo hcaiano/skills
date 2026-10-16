@@ -62,7 +62,8 @@ leaves the globally installed copy in place.
   findings.
 - `land-it` — merge a revertible PR once its review findings are fixed or
   declined and CI is green, test it after merge, and tell the user the thread
-  is ready to settle; one-way doors wait for a person.
+  is ready to settle; one-way doors wait for a person, and a change users see
+  waits for their OK on its demo.
 - `write-pr` — write a short, human-first PR description: what and why, merge
   danger, before/after screenshots, checks, and review.
 - `cyber-audit` — audit this Linux or macOS machine read-only against a named CVE, malicious

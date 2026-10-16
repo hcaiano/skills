@@ -23,8 +23,10 @@ real complexity. In this order:
    code cannot read; a breaking change to a contract that callers outside the
    repo already use; an external side effect (messages sent, payments, a
    published release). Otherwise `two-way`, such as an additive column,
-   endpoint, tool or field that the previous code ignores. `Blast radius:` one
-   word. Add one sentence only for a material ramification.
+   endpoint, tool or field that the previous code ignores. `Visible: yes` when
+   the PR changes what users see or do: a screen, layout, style, copy or
+   interaction; otherwise `Visible: no`. Use the value `review-it` decided. `Blast radius:` one word. Add
+   one sentence only for a material ramification.
 3. **Screenshots**, for any visible change: one `| State | Before | After |`
    table with a row per affected state. Each pair comes from the real app
    with the same route, viewport, theme, role, locale and test data. Crop
@@ -35,6 +37,9 @@ real complexity. In this order:
    Name the baseline and final commits.
 4. **Video**, when a user flow is new or changes: one start-to-finish
    recording of the real app that proves the feature works as intended.
+   For `Visible: yes`, the screenshots, and the video when there is one, are
+   the demo the user OKs before `land-it` merges. They show the whole changed
+   flow at the PR's head; name that head.
 5. **Checks.** The checks actually run, their results and the verified commit,
    local and CI apart.
 6. **Review.** The `review-it` receipt line, with its `- Declined:` lines under it.
@@ -44,7 +49,7 @@ Shape, with sections that do not apply dropped:
 ```markdown
 <What and why paragraph.>
 
-**Merge danger.** Door: two-way. Blast radius: <word>.
+**Merge danger.** Door: two-way. Visible: <yes | no>. Blast radius: <word>.
 
 | State | Before | After |
 | --- | --- | --- |

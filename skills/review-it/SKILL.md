@@ -16,7 +16,10 @@ unchanged; `land-it` checks that by comparing trees. Review again only when the
 PR's own changes moved.
 
 Write down the intent and acceptance criteria, chat-only ones included, and the
-model families that wrote the change, delegated workers included.
+model families that wrote the change, delegated workers included. Decide
+`write-pr`'s `Visible:` value: `yes` when the change alters what users see or
+do. For `yes`, capture `write-pr`'s screenshots and video from the pinned HEAD
+now, so the reviewers judge the demo.
 
 ## 2. Grade
 
@@ -42,7 +45,14 @@ Run `interrogate` once on the pinned range: two reviewers in parallel from the
 change, each seat falling through its tiers when a model is out of capacity. Reviewers run at `high` for `standard` and `xhigh` for `high`. Every brief carries the intent and
 acceptance criteria, the pinned range, the absolute path of the
 [review brief](references/review-brief.md), the worktree, and the paths of any
-spec, issue and repo instruction files. The Act On findings are the findings; a
+spec, issue and repo instruction files, and your `Visible:` value; a reviewer
+who finds that the change alters what users see when it says `no` reports it as
+a finding. For `yes`, every brief also carries the demo's paths and the
+prototype the user approved, when there is one, and asks the reviewer to judge
+the demo as the user will, with the installed design skills such as
+`frontend-design` and `emil-design-eng`: whether it matches the prototype, and
+any stray, missing or misaligned element, uneven spacing, text users do not
+need, or a state that looks broken. The Act On findings are the findings; a
 Consider finding you do not apply counts as `rejected`, with its reason, so the
 receipt shows every disagreement. Dismissed items are the reviewers' own
 rejections and count nowhere.
@@ -70,7 +80,9 @@ findings raise yourself and record the choice in the PR's What and why. A fix
 that needs a new design or roughly doubles the diff becomes a follow-up issue,
 declined with the reason `follow-up #<issue>`, unless it is a correctness or
 security bug in this diff.
-Rerun the affected checks and commit.
+Rerun the affected checks and commit. When a fix changes what users see,
+capture the demo again from the new HEAD and check it against the findings
+yourself: the user OKs the demo of the head that merges.
 
 Check every fix yourself against its finding and commit it. Run a confirmation review only
 when a fix changed behaviour beyond what its finding named: one new reviewer at
