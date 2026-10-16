@@ -8,13 +8,13 @@
 //   acted    with --merge: merged, queued, branch-updated, or null
 //
 // A PR is landable when every rule in decide() passes:
-//   - the user's own same-repository PR into the default branch, not draft,
-//     with no hold label;
+//   - the user's own same-repository PR into the default branch or an
+//     `epic/*` integration branch, not draft, with no hold label;
 //   - its `**Merge danger.**` line says `Door: two-way` and no `Door: one-way`
 //     appears anywhere in the body;
 //   - its last `**Review.**` line is review-it's receipt
 //     `<grade> by <models>; <n> fixed, <n> rejected, <n> open; reviewed <sha> on <base>`
-//     graded standard (or the older single) with no open findings, and one
+//     graded standard or high (or the older single or panel) with no open findings, and one
 //     `- Declined: <finding> (raised by <model>): <reason>` line after it for
 //     each rejected finding, none raised by more than one reviewer;
 //   - the review saw this base, and the reviewed commit still describes the
@@ -84,7 +84,7 @@ export const decide = (facts) => {
   const waits = [];
   if (pr.isCrossRepository) holds.push('PR comes from a fork');
   if (pr.author?.login !== facts.viewer) holds.push(`PR author ${pr.author?.login} is not ${facts.viewer}`);
-  if (pr.baseRefName !== facts.defaultBranch) holds.push(`base ${pr.baseRefName} is not the default branch ${facts.defaultBranch}`);
+  if (pr.baseRefName !== facts.defaultBranch && !pr.baseRefName.startsWith('epic/')) holds.push(`base ${pr.baseRefName} is neither the default branch ${facts.defaultBranch} nor an epic/ branch`);
   if (pr.isDraft) holds.push('draft');
   const holdLabels = (pr.labels ?? []).map((label) => label.name).filter((label) => /\b(hold|do[- ]not[- ]merge|wip)\b/i.test(label));
   if (holdLabels.length) holds.push(`hold label: ${holdLabels.join(', ')}`);
@@ -92,7 +92,6 @@ export const decide = (facts) => {
   const { receipt } = facts;
   if (!receipt) holds.push('no review-it receipt in the PR body');
   else {
-    if (receipt.grade === 'panel' || receipt.grade === 'high') holds.push(`review-it graded ${receipt.grade}`);
     if (receipt.grade === 'skip') holds.push('graded skip: no reviewer saw the change');
     if (receipt.rejected > 0) {
       const declined = (receipt.declined ?? []).filter((entry) => entry.finding && entry.reason && entry.raisedBy.length);

@@ -17,9 +17,12 @@ real complexity. In this order:
 
 1. **What and why.** One paragraph of at most 80 words: the problem, the
    resulting behavior in plain words, and what the PR deliberately leaves out.
-2. **Merge danger.** `Door: one-way` when a revert cannot undo it (data
-   migrations, deletions, schema or public API changes, external side
-   effects), otherwise `two-way`. `Blast radius:` one word. Add one sentence
+2. **Merge danger.** `Door: one-way` when a revert cannot undo it: a
+   migration that drops or rewrites stored data, a deletion, a breaking change
+   to a contract that callers outside the repo already use, or an external side
+   effect (messages sent, payments, a published release). Otherwise `two-way`:
+   an additive schema change, a new endpoint, tool or field, and a contract
+   only this repo's code calls are revertible. `Blast radius:` one word. Add one sentence
    only for a material ramification.
 3. **Screenshots**, for any visible change: one `| State | Before | After |`
    table with a row per affected state. Each pair comes from the real app
@@ -29,8 +32,9 @@ real complexity. In this order:
    the component, not the full row. Take a missing before from a worktree at
    the baseline commit.
    Name the baseline and final commits.
-4. **Video**, only when movement, timing or a complex interaction cannot be
-   read from stills.
+4. **Video**, when it makes sense: one recording of the real app that demos the
+   feature from start to finish and proves it works as intended. A new or
+   changed user flow makes sense; a change that one still shows does not.
 5. **Checks.** The checks actually run, their results and the verified commit,
    local and CI apart.
 6. **Review.** The `review-it` receipt line, with its `- Declined:` lines under it.
@@ -66,8 +70,9 @@ Put logs, research and long output behind links or in collapsed `<details>`.
 `gh pr create|edit --body-file <body> --attach ./file.png`: gh swaps each
 reference for the uploaded asset, and a video reference becomes a player.
 Reference every attached file, since gh appends unreferenced ones to the end
-of the body. Keep media out of git. Missing browser, login or upload access is
-a blocker to report.
+of the body. Keep media out of git. Capture media in the project company's
+Chrome profile or the preview tools; when an upload still fails, open the PR
+without that file and name the gap in Checks.
 
 **Updates.** Update the body whenever a push, a review round, or a change in
 draft, CI or blocker state makes any line of it wrong. Rewrite it from the
@@ -77,5 +82,4 @@ pending CI or blocked. Link issues with `Refs #<n>` unless the PR completes
 the issue.
 
 Done when every applicable section is present, the body reads in under a
-minute, `gh pr view --json body` shows no `./` media paths left, and each
-image renders and each video plays on the PR page.
+minute, and `gh pr view --json body` shows no `./` media paths left.
