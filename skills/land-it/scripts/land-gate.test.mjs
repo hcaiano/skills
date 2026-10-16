@@ -179,6 +179,21 @@ test("pending checks and unknown mergeability wait; behind updates; protection b
   assert.deepEqual(decide(facts({ statusCheckRollup: [] })), { action: "hold", reasons: ["no checks reported"] });
 });
 
+test("a workflow run the rollup misses waits until it completes, and holds when it fails", () => {
+  const queued = { name: "Content CI", status: "queued", conclusion: null };
+  assert.deepEqual(decide(facts({}, { runs: [queued] })), { action: "wait", reasons: ["pending workflow runs: Content CI"] });
+  assert.deepEqual(decide(facts({ statusCheckRollup: [] }, { runs: [queued, { ...queued, status: "in_progress" }] })), {
+    action: "wait", reasons: ["pending workflow runs: Content CI"],
+  });
+  for (const conclusion of ["failure", "timed_out", "startup_failure"]) {
+    assert.deepEqual(decide(facts({}, { runs: [{ name: "Content CI", status: "completed", conclusion }] })), {
+      action: "hold", reasons: ["failed workflow runs: Content CI"],
+    }, conclusion);
+  }
+  const finished = ["success", "skipped", "cancelled"].map((conclusion) => ({ name: conclusion, status: "completed", conclusion }));
+  assert.deepEqual(decide(facts({}, { runs: finished })), { action: "merge", reasons: [] });
+});
+
 // A `gh` stand-in that answers from the fixture in $GH_FIXTURE and appends
 // every call to $GH_LOG, so a test sees which merge command ran.
 const fakeGhDir = mkdtempSync(join(tmpdir(), "land-gate-gh-"));
@@ -191,6 +206,11 @@ const out = (value) => console.log(JSON.stringify(value));
 if (args[0] === 'pr' && args[1] === 'view' && args.at(-1) === 'state') out({ state: f.afterMerge });
 else if (args[0] === 'pr' && args[1] === 'view') out(f.pr);
 else if (args[0] === 'repo') out({ defaultBranchRef: { name: 'main' }, ...f.methods });
+else if (args[0] === 'api' && args.at(-1).includes('/actions/runs')) {
+  const runs = args.at(-1).includes('head_sha=' + f.pr.headRefOid) ? f.runs ?? [] : [];
+  const pages = [{ total_count: runs.length, workflow_runs: [] }, { total_count: runs.length, workflow_runs: runs }];
+  out(args.includes('--paginate') && args.includes('--slurp') ? pages : pages[0]);
+}
 else if (args[0] === 'api' && args[1] === 'user') console.log('henrique');
 else if (args[0] === 'api') out({ data: { repository: { pullRequest: {
   reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] } } } } });
@@ -259,6 +279,11 @@ test("any change after the review holds, even one patch-id would call whitespace
   assert.equal(out.action, "hold");
   assert.deepEqual(out.reasons, [`HEAD changed since the review of ${reviewed.slice(0, 10)}`]);
   assert.deepEqual(out.merges, []);
+});
+
+test("a workflow run still queued on a later page of the head's runs stops the merge", () => {
+  const out = cli({ pr: pr(), methods: { squashMergeAllowed: true }, runs: [{ name: "Content CI", status: "queued", conclusion: null }] });
+  assert.deepEqual([out.action, out.reasons, out.merges], ["wait", ["pending workflow runs: Content CI"], []]);
 });
 
 test("a rejected or queued merge is reported, never claimed as merged", () => {
