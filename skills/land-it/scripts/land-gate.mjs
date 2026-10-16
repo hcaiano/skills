@@ -21,11 +21,14 @@
 //   - the review saw this base, and the reviewed commit still describes the
 //     change: the head is that commit, or merging the reviewed commit with the
 //     base the head now contains gives exactly the head's tree;
-//   - at least one check succeeded and none failed, every review thread is
-//     resolved, nothing requests changes, and GitHub reports no conflict or
-//     protection block.
-// Pending checks or unknown mergeability give wait; a branch behind its base
-// gives update-branch; any other failed rule gives hold.
+//   - at least one check succeeded and none failed, the latest GitHub Actions
+//     run of each workflow, event and branch for the head completed without
+//     failure, timed_out or startup_failure,
+//     every review thread is resolved, nothing requests changes, and GitHub
+//     reports no conflict or protection block.
+// Pending checks, a workflow run not yet completed, or unknown mergeability
+// give wait; a branch behind its base gives update-branch; any other failed
+// rule gives hold.
 //
 // --merge uses the first merge method the repository allows (squash, merge,
 // rebase) with --match-head-commit, so a push after the decision fails the
@@ -77,7 +80,7 @@ const checkState = (check) => {
 };
 
 // facts: { pr, viewer, defaultBranch, unresolvedThreads, receipt, door,
-//          reviewed: { matches, reason } | null }
+//          reviewed: { matches, reason } | null, runs: workflow runs for the head }
 export const decide = (facts) => {
   const { pr } = facts;
   if (pr.state !== 'OPEN') return { action: 'done', reasons: [pr.state === 'MERGED' ? 'PR is merged' : 'PR was closed without merging'] };
@@ -110,13 +113,26 @@ export const decide = (facts) => {
   if (pr.mergeable === 'CONFLICTING') holds.push('conflicts with the base');
   if (facts.unresolvedThreads) holds.push(`${facts.unresolvedThreads} unresolved review thread(s)`);
   const checks = pr.statusCheckRollup ?? [];
-  if (checks.length === 0) holds.push('no checks reported');
+  // A newer run of the same workflow for the same event and branch replaces
+  // an older one, as when a fresh run follows a failure.
+  const latest = new Map();
+  for (const run of facts.runs ?? []) {
+    const key = `${run.workflow_id} ${run.event} ${run.head_branch}`;
+    if (!(latest.get(key)?.run_number > run.run_number)) latest.set(key, run);
+  }
+  const runs = [...latest.values()];
+  const workflows = (selected) => [...new Set(selected.map((run) => run.name))].join(', ');
+  const pendingRuns = runs.filter((run) => run.status !== 'completed');
+  const failedRuns = runs.filter((run) => run.status === 'completed' && ['failure', 'timed_out', 'startup_failure'].includes(run.conclusion));
+  if (checks.length === 0 && !pendingRuns.length) holds.push('no checks reported');
   const states = checks.map((check) => [check.name ?? check.context, checkState(check)]);
   const failing = states.filter(([, state]) => state === 'fail').map(([name]) => name);
   if (failing.length) holds.push(`failing checks: ${failing.join(', ')}`);
+  if (failedRuns.length) holds.push(`failed workflow runs: ${workflows(failedRuns)}`);
   const pending = states.filter(([, state]) => state === 'pending').map(([name]) => name);
   if (pending.length) waits.push(`pending checks: ${pending.join(', ')}`);
-  else if (checks.length && !failing.length && !checks.some((check) => check.conclusion === 'SUCCESS' || check.state === 'SUCCESS')) holds.push('no check succeeded');
+  else if (checks.length && !failing.length && !pendingRuns.length && !checks.some((check) => check.conclusion === 'SUCCESS' || check.state === 'SUCCESS')) holds.push('no check succeeded');
+  if (pendingRuns.length) waits.push(`pending workflow runs: ${workflows(pendingRuns)}`);
   if (pr.mergeable === 'UNKNOWN') waits.push('GitHub is still computing mergeability');
   if (holds.length) return { action: 'hold', reasons: [...holds, ...waits] };
   if (waits.length) return { action: 'wait', reasons: waits };
@@ -216,12 +232,16 @@ const gather = (target) => {
     unresolvedThreads += page.nodes.filter((thread) => !thread.isResolved).length;
     ({ hasNextPage: more, endCursor: after } = page.pageInfo);
   }
+  // A job waiting for a runner has no check run yet, so the rollup misses its
+  // workflow until a runner picks it up; the workflow run exists from the push.
+  const runs = JSON.parse(gh('api', '--paginate', '--slurp', `repos/${owner}/${name}/actions/runs?head_sha=${pr.headRefOid}&per_page=100`))
+    .flatMap((page) => page.workflow_runs);
   const rulesetBypass = ownerBypass(pr, `${owner}/${name}`);
   const receipt = parseReceipt(pr.body);
   const reviewed = receipt && pr.state === 'OPEN' ? compareTrees(pr, receipt.sha, `${owner}/${name}`) : null;
   return {
     repo, owner, name,
-    facts: { pr, viewer, receipt, reviewed, unresolvedThreads, rulesetBypass, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body) },
+    facts: { pr, viewer, receipt, reviewed, runs, unresolvedThreads, rulesetBypass, defaultBranch: repo.defaultBranchRef.name, door: parseDoor(pr.body) },
   };
 };
 
