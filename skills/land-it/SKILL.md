@@ -1,26 +1,31 @@
 ---
 name: land-it
-description: "Merge a low-risk PR whose review findings are all fixed or declined with a reason, test it after merge, and hand the thread back ready to settle. Use when a PR reaches merge-ready."
+description: "Merge a revertible PR whose review findings are all fixed or declined with a reason, test it after merge, and hand the thread back ready to settle. Use when a PR reaches merge-ready."
 ---
 
 # Land it
 
-A PR is _landable_ when the change is easy to revert, low risk, and every
-review finding on the code that merges is fixed, or raised by one reviewer and
-declined with a written reason. Landable PRs merge without asking
-the user; everything else waits for the user with its reasons.
+A PR is _landable_ when a revert undoes it (`Door: two-way`) and every review
+finding on the code that merges is fixed, declined with a written reason when
+one reviewer raised it, or moved to a follow-up issue when it is not a
+correctness or security bug. The review grade sets how hard the PR was
+reviewed, not who merges: landable PRs merge without asking the user, and the
+after-merge test in step 4 is the safety net. Only one-way doors and the holds
+below wait for the user, with their reasons.
 
 ## 1. Check the conversation
 
 Every turn of this skill, wakes included, starts here. The gate reads only the
 PR. Before it runs, look for holds that live in the
 conversation, the task brief, the issue and the repo: the user asked to merge
-himself, not to merge, to stay local, or for an acceptance check that has not
-passed yet (browser, device, end-to-end, production data); or the repo's
-instructions reserve merging to people. Any such hold makes the PR the user's:
-skip to step 5 and name the hold. A narrower grant the user gave elsewhere,
-such as merging children into an epic branch, keeps its own conditions; this
-skill adds no permission to it.
+the PR themselves, not to merge, or to stay local; or the repo's instructions
+name a person who must merge. Any such hold makes the PR the user's: skip to
+step 5 and name the hold. An acceptance check the task asks for (browser,
+device, end-to-end) is yours to run before the gate, and a failure is yours to
+fix and run again; it holds only when it needs something only the user has,
+such as their hands on a device. A repo rule that asks for review or approval
+before a schema, API or dependency change is met by the review receipt; the
+`Door` line decides whether the change waits.
 
 ## 2. Run the gate
 
@@ -33,9 +38,9 @@ node "$SKILL_DIR/scripts/land-gate.mjs" <pr-url> --merge
 
 It prints the `action` it took or needs, with `reasons`. The script header
 lists every rule. Risk comes from what the PR already records: `Door:
-two-way` from `write-pr`, and the `review-it` receipt graded `standard` (or
-the older `single`) with no
-open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer, on the code and base being merged. It merges with a method the repository allows and leaves branch
+two-way` from `write-pr`, and the `review-it` receipt graded `standard` or
+`high` (or the older `single` or `panel`) with no
+open findings and a `- Declined:` reason under it for each rejected finding, none raised by more than one reviewer unless its reason starts `follow-up #<issue>`, on the code and base being merged. It merges with a method the repository allows and leaves branch
 protection to GitHub; a rule it cannot satisfy becomes a hold. When only a
 ruleset the user may always bypass blocks a PR that passed every rule (an
 owner-only branch), it merges as the user.
@@ -62,18 +67,21 @@ owner-only branch), it merges as the user.
 - `done` with `PR is merged`: go to step 4 if its after-merge test has not run.
 - `done` with `PR was closed without merging`: report it in step 5.
 
-Only PRs into the default branch land here. In a stack, the bottom PR lands
-first; the owner then rebases the next layer onto the default branch and
-retargets it, and that layer takes its one final review before the gate.
+PRs into the default branch or an `epic/*` integration branch land here. In a
+stack, the bottom PR lands first; the owner then rebases the next layer onto
+the bottom PR's base and retargets it, and that layer takes its one final review
+before the gate.
 
 ## 4. Test after merge
 
-For each PR that landed, watch the merge commit's checks on the default branch
-and, when the repo deploys on merge, the deploy's status and health. That is
-the after-merge test: the change already proved itself before the PR opened.
-Run the task's acceptance check again against the deployed app or the default
-branch only when the user asked for one. A red result is new work in this
-thread, not a reason to stay silent.
+For each PR that landed, watch the merge commit's checks on the target branch
+and, when the repo deploys on merge, the deploy's status and health; when the
+target runs no checks after merge, the PR's own green checks stand. When the
+repo has a `verify-<app>` skill, run its journey for the changed feature
+against a preview or staging deploy, or the target branch locally when there
+is neither; against production, run only journeys the skill marks production-safe. A red
+result is new work in this thread: fix forward in a new PR, or revert through
+a PR that lands by this skill when the fix is not obvious, and report it.
 
 ## 5. Hand back
 
@@ -85,7 +93,8 @@ merged or now waits for the user. Start the message with one of:
   test, or was closed on purpose with the reason in this thread, and no child task, scheduled task or requested check is
   open. Name what landed and how it was tested.
 - `Needs you:` then each open PR with the gate's `reasons`, or the open
-  work, and the one decision or action that would unblock it.
+  work, and the one decision or action that would unblock it, with your
+  recommendation.
 
 The user settles the thread; leave that to them.
 

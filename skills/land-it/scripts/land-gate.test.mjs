@@ -69,11 +69,10 @@ test("risk, disagreement, foreign authorship and open review state each hold the
     reasons: [
       "PR comes from a fork",
       "PR author someone is not henrique",
-      "base feature/epic is not the default branch main",
+      "base feature/epic is neither the default branch main nor an epic/ branch",
       "draft",
       "hold label: do-not-merge",
       "Door: one-way",
-      "review-it graded panel",
       "2 rejected review finding(s) without one `- Declined:` reason each",
       "1 review finding(s) or blocker(s) left open",
       "reviewed on fix/below, but the base is now feature/epic",
@@ -99,6 +98,8 @@ test("reasoned declines land; unexplained or shared ones hold", () => {
   assert.deepEqual(decide(facts({ body: body(receipt) })).reasons, ["1 rejected review finding(s) without one `- Declined:` reason each"]);
   const shared = `${body(receipt)}\n- Declined: drop the cache (raised by claude-opus-5-5, gpt-6.1-sol): it is measured.`;
   assert.deepEqual(decide(facts({ body: shared })).reasons, ["a declined finding was raised by more than one reviewer"]);
+  const followUp = `${body(receipt)}\n- Declined: split the parser (raised by claude-opus-5-5, gpt-6.1-sol): follow-up #42, a new design.`;
+  assert.equal(decide(facts({ body: followUp })).action, "merge");
   const hold = ["1 rejected review finding(s) without one `- Declined:` reason each"];
   for (const line of ["- Declined: x (raised by   ): reason", "- Declined: x (raised by ,): reason", "- Declined:    (raised by gpt-6.1-sol): reason", "- Declined: x (raised by gpt-6.1-sol):   ", "- Declined: x (raised by someone-else): reason", "- Declined: x (raised by a): reason", "- Declined: x (raised by sol): reason"]) {
     assert.deepEqual(decide(facts({ body: `${body(receipt)}\n${line}` })).reasons, hold, line);
@@ -137,9 +138,18 @@ test("owner bypass only covers owner-only rulesets and met classic protection", 
   assert.equal(ownerBypass(p, "a/b", responses([owner], { current_user_can_bypass: "always" }, { required_pull_request_reviews: { required_approving_review_count: 0, require_last_push_approval: true } })), false);
 });
 
-test("a standard receipt lands and a high receipt holds", () => {
+test("standard and high receipts land on a two-way door; the door alone holds risk", () => {
   assert.equal(decide(facts({ body: body(`standard by claude-opus-5-5, gpt-6.1-sol; 1 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) })).action, "merge");
-  assert.deepEqual(decide(facts({ body: body(`high by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`) })).reasons, ["review-it graded high"]);
+  const high = body(`high by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on main`);
+  assert.equal(decide(facts({ body: high })).action, "merge");
+  assert.deepEqual(decide(facts({ body: high.replace("two-way", "one-way") })).reasons, ["Door: one-way"]);
+});
+
+test("an epic child lands into its epic/ branch; any other non-default base holds", () => {
+  const epic = body(`standard by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on epic/7014-publish-queue`);
+  assert.equal(decide(facts({ body: epic, baseRefName: "epic/7014-publish-queue" })).action, "merge");
+  const stacked = body(`standard by claude-opus-5-5, gpt-6.1-sol; 0 fixed, 0 rejected, 0 open; reviewed \`${sha.slice(0, 7)}\` on feat/below`);
+  assert.deepEqual(decide(facts({ body: stacked, baseRefName: "feat/below" })).reasons, ["base feat/below is neither the default branch main nor an epic/ branch"]);
 });
 
 test("an old receipt, a skip grade, a closed PR and a rollup with no success each stop the merge", () => {

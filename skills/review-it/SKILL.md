@@ -24,13 +24,15 @@ model families that wrote the change, delegated workers included.
   instructions.
 - `high`: you can name the concrete hazard: the diff changes how auth,
   permissions, payments, secrets, migrations or stored data behave, or a public
-  contract or stored format that is hard to revert. A file in one of those areas
+  contract or stored format in a way a revert cannot undo. A file in one of those areas
   whose behaviour stays the same is not a hazard.
 - `standard`: every other change, however many files or subsystems it touches.
 
 `standard` is the grade unless you can name a `high` hazard. A grade the user
 gives is a floor. `skip` goes straight to the receipt. The grade sets reviewer
-effort and whether `land-it` may merge without the user.
+effort; `write-pr`'s `Door` line, not the grade, decides whether `land-it`
+merges without the user. A `high` hazard a revert cannot undo makes the PR
+`Door: one-way`.
 
 ## 3. Review
 
@@ -41,8 +43,9 @@ change, each seat falling through its tiers when a model is out of capacity. Rev
 acceptance criteria, the pinned range, the absolute path of the
 [review brief](references/review-brief.md), the worktree, and the paths of any
 spec, issue and repo instruction files. The Act On findings are the findings; a
-Consider finding you do not apply counts as `open`, and a Dismissed one as
-`rejected`, so the receipt shows every disagreement.
+Consider finding you do not apply counts as `rejected`, with its reason, so the
+receipt shows every disagreement. Dismissed items are the reviewers' own
+rejections and count nowhere.
 
 Staff every reviewer through `delegate_task` in runtime mode `full-access` with
 the read-only brief: a headless run has nobody to approve it. When every model
@@ -55,23 +58,27 @@ A review counts once it returns a substantive verdict on the pinned HEAD; restaf
 refusals, quota errors and empty results. Watch every seat for a _stalled_ run as
 `~/.agents/skills/poteto-mode/references/t3-execution.md` describes: a stalled
 seat's final verdict counts as its review. A finding that names a concrete
-`high` hazard raises the grade to `high` in the receipt, so the user merges; it
-adds no review round.
+`high` hazard raises the grade to `high` in the receipt; it adds no review
+round. A finding that names a hazard a revert cannot undo sets `Door: one-way`
+unless a fix removes the hazard.
 
 ## 4. Fix
 
 Verify and deduplicate the findings, then apply the valid in-scope ones,
-structural simplifications included, in one batch. Out-of-scope ideas become
-follow-ups. New contracts, architecture changes or fixes that roughly double
-the diff go to the user. Rerun the affected checks and commit.
+structural simplifications included, in one batch. Decide design questions the
+findings raise yourself and record the choice in the PR's What and why. A fix
+that needs a new design or roughly doubles the diff becomes a follow-up issue,
+declined with the reason `follow-up #<issue>`, unless it is a correctness or
+security bug in this diff.
+Rerun the affected checks and commit.
 
 Check every fix yourself against its finding and commit it. Run a confirmation review only
 when a fix changed behaviour beyond what its finding named: one new reviewer at
 `high` from the `interrogate reviewers` line, preferably one that did not
 write the fixes, reads only the fix range (the last reviewed head to the new
 HEAD) with the prior findings. Apply, check and commit its valid findings. After
-that one confirmation, or for a finding that needs a new design, the remaining
-findings count as `open` and go to the user. A PR gets one full review;
+that one confirmation, the correctness and security findings still unfixed
+count as `open` and go to the user. A PR gets one full review;
 confirmations only read fixes.
 
 ## 5. Receipt
@@ -90,4 +97,6 @@ Under it, write one line per rejected finding:
 `- Declined: <finding> (raised by <model>): <specific reason>`
 
 Name every model that raised the finding. A finding two reviewers raised
-cannot be declined: it stays `open`.
+cannot be declined: fix it, or it stays `open`. When it is not a correctness or
+security bug, a follow-up issue may take it, with the reason
+`follow-up #<issue>`.
