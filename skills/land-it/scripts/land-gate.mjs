@@ -21,8 +21,9 @@
 //   - the review saw this base, and the reviewed commit still describes the
 //     change: the head is that commit, or merging the reviewed commit with the
 //     base the head now contains gives exactly the head's tree;
-//   - at least one check succeeded and none failed, every GitHub Actions run
-//     for the head completed without failure, timed_out or startup_failure,
+//   - at least one check succeeded and none failed, the latest GitHub Actions
+//     run of each workflow, event and branch for the head completed without
+//     failure, timed_out or startup_failure,
 //     every review thread is resolved, nothing requests changes, and GitHub
 //     reports no conflict or protection block.
 // Pending checks, a workflow run not yet completed, or unknown mergeability
@@ -112,7 +113,14 @@ export const decide = (facts) => {
   if (pr.mergeable === 'CONFLICTING') holds.push('conflicts with the base');
   if (facts.unresolvedThreads) holds.push(`${facts.unresolvedThreads} unresolved review thread(s)`);
   const checks = pr.statusCheckRollup ?? [];
-  const runs = facts.runs ?? [];
+  // A newer run of the same workflow for the same event and branch replaces
+  // an older one, as when a fresh run follows a failure.
+  const latest = new Map();
+  for (const run of facts.runs ?? []) {
+    const key = `${run.workflow_id} ${run.event} ${run.head_branch}`;
+    if (!(latest.get(key)?.run_number > run.run_number)) latest.set(key, run);
+  }
+  const runs = [...latest.values()];
   const workflows = (selected) => [...new Set(selected.map((run) => run.name))].join(', ');
   const pendingRuns = runs.filter((run) => run.status !== 'completed');
   const failedRuns = runs.filter((run) => run.status === 'completed' && ['failure', 'timed_out', 'startup_failure'].includes(run.conclusion));

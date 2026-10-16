@@ -179,19 +179,30 @@ test("pending checks and unknown mergeability wait; behind updates; protection b
   assert.deepEqual(decide(facts({ statusCheckRollup: [] })), { action: "hold", reasons: ["no checks reported"] });
 });
 
+const run = (name, status, conclusion = null, overrides = {}) =>
+  ({ name, workflow_id: name, event: "pull_request", head_branch: "fix", run_number: 1, status, conclusion, ...overrides });
+
 test("a workflow run the rollup misses waits until it completes, and holds when it fails", () => {
-  const queued = { name: "Content CI", status: "queued", conclusion: null };
+  const queued = run("Content CI", "queued");
   assert.deepEqual(decide(facts({}, { runs: [queued] })), { action: "wait", reasons: ["pending workflow runs: Content CI"] });
-  assert.deepEqual(decide(facts({ statusCheckRollup: [] }, { runs: [queued, { ...queued, status: "in_progress" }] })), {
+  assert.deepEqual(decide(facts({ statusCheckRollup: [] }, { runs: [queued, { ...queued, event: "push", status: "in_progress" }] })), {
     action: "wait", reasons: ["pending workflow runs: Content CI"],
   });
   for (const conclusion of ["failure", "timed_out", "startup_failure"]) {
-    assert.deepEqual(decide(facts({}, { runs: [{ name: "Content CI", status: "completed", conclusion }] })), {
+    assert.deepEqual(decide(facts({}, { runs: [run("Content CI", "completed", conclusion)] })), {
       action: "hold", reasons: ["failed workflow runs: Content CI"],
     }, conclusion);
   }
-  const finished = ["success", "skipped", "cancelled"].map((conclusion) => ({ name: conclusion, status: "completed", conclusion }));
+  const finished = ["success", "skipped", "cancelled"].map((conclusion) => run(conclusion, "completed", conclusion));
   assert.deepEqual(decide(facts({}, { runs: finished })), { action: "merge", reasons: [] });
+});
+
+test("only the latest run of a workflow, event and branch counts", () => {
+  const failed = run("Content CI", "completed", "failure");
+  const passed = run("Content CI", "completed", "success", { run_number: 2 });
+  assert.deepEqual(decide(facts({}, { runs: [passed, failed] })), { action: "merge", reasons: [] });
+  assert.deepEqual(decide(facts({}, { runs: [passed, { ...failed, event: "push" }] })).reasons, ["failed workflow runs: Content CI"]);
+  assert.deepEqual(decide(facts({}, { runs: [failed, { ...passed, status: "queued", conclusion: null }] })).reasons, ["pending workflow runs: Content CI"]);
 });
 
 // A `gh` stand-in that answers from the fixture in $GH_FIXTURE and appends
@@ -282,7 +293,7 @@ test("any change after the review holds, even one patch-id would call whitespace
 });
 
 test("a workflow run still queued on a later page of the head's runs stops the merge", () => {
-  const out = cli({ pr: pr(), methods: { squashMergeAllowed: true }, runs: [{ name: "Content CI", status: "queued", conclusion: null }] });
+  const out = cli({ pr: pr(), methods: { squashMergeAllowed: true }, runs: [run("Content CI", "queued")] });
   assert.deepEqual([out.action, out.reasons, out.merges], ["wait", ["pending workflow runs: Content CI"], []]);
 });
 
